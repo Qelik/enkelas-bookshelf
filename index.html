@@ -50,7 +50,10 @@
     <section class="view" id="view-reading">
       <div class="view-head">
         <h2>Currently Reading</h2>
-        <button class="primary" data-add="reading">＋ Add a book</button>
+        <div class="head-controls">
+          <input type="search" id="reading-search" class="input search" placeholder="🔍 Search title, author, tag" />
+          <button class="primary" data-add="reading">＋ Add a book</button>
+        </div>
       </div>
       <div class="card-grid" id="reading-list"></div>
       <p class="empty" id="reading-empty" hidden>You're not reading anything yet. Add a book to start logging your pages.</p>
@@ -61,6 +64,8 @@
       <div class="view-head">
         <h2>Library</h2>
         <div class="head-controls">
+          <input type="search" id="library-search" class="input search" placeholder="🔍 Search title, author, tag" />
+          <select id="library-tag" class="select"><option value="">All genres</option></select>
           <select id="library-sort" class="select">
             <option value="finished-desc">Recently finished</option>
             <option value="finished-asc">Oldest finished</option>
@@ -175,6 +180,11 @@
           </div>
         </div>
 
+        <label for="f-tags">Genres / tags <span class="muted">(comma-separated)</span></label>
+        <input type="text" id="f-tags" class="input" placeholder="Fantasy, Adventure, Favourites" list="tags-datalist" />
+        <datalist id="tags-datalist"></datalist>
+        <div class="tag-suggest" id="tag-suggest"></div>
+
         <label for="f-review">My notes / review <span class="muted">(optional)</span></label>
         <textarea id="f-review" class="input" rows="3" placeholder="What did you think? Favourite quotes, thoughts…"></textarea>
 
@@ -264,6 +274,17 @@
           <button type="submit" class="primary">Mark as finished</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- BOOK DETAIL + PROGRESS CHART -->
+  <div class="modal-backdrop" id="detail-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <div class="modal-head">
+        <h3 id="detail-title">Book</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="detail-body"></div>
     </div>
   </div>
 

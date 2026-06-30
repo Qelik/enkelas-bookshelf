@@ -40,6 +40,9 @@
   let knownBadges = new Set();    // ids of badges already unlocked (for toast detection)
   let activeView = "reading";
   let storagePersisted = false;   // whether the browser granted persistent storage
+  let readingQuery = "";          // search text for the Reading view
+  let libraryQuery = "";          // search text for the Library view
+  let libraryTag = "";            // active genre/tag filter in the Library view
 
   const supportsFS = "showSaveFilePicker" in window && "showOpenFilePicker" in window;
 
@@ -81,6 +84,35 @@
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
   function num(n) { return Number(n || 0).toLocaleString(); }
+  function parseTags(str) {
+    const seen = new Set(), out = [];
+    String(str || "").split(",").forEach((t) => {
+      const v = t.trim();
+      const key = v.toLowerCase();
+      if (v && !seen.has(key)) { seen.add(key); out.push(v); }
+    });
+    return out;
+  }
+  function allTags() {
+    const seen = new Map(); // lowercase -> display
+    state.books.forEach((b) => (b.tags || []).forEach((t) => {
+      const key = t.toLowerCase();
+      if (!seen.has(key)) seen.set(key, t);
+    }));
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }
+  function bookMatches(book, q) {
+    if (!q) return true;
+    q = q.toLowerCase();
+    return book.title.toLowerCase().includes(q)
+      || (book.author || "").toLowerCase().includes(q)
+      || (book.tags || []).some((t) => t.toLowerCase().includes(q));
+  }
+  function tagsHTML(book, clickable) {
+    if (!book.tags || !book.tags.length) return "";
+    return `<div class="tags">${book.tags.map((t) =>
+      `<span class="tag${clickable ? " clickable" : ""}"${clickable ? ` data-tag="${esc(t)}"` : ""}>${esc(t)}</span>`).join("")}</div>`;
+  }
 
   // ---------------------------------------------------------------------------
   // Persistence
@@ -115,6 +147,7 @@
       coverUrl: b.coverUrl || "",
       isbn: b.isbn || "",
       review: b.review || "",
+      tags: Array.isArray(b.tags) ? b.tags.map((t) => String(t).trim()).filter(Boolean) : [],
       status: b.status === "finished" ? "finished" : "reading",
       rating: b.rating ? Number(b.rating) : null,
       startedAt: b.startedAt || null,
@@ -284,7 +317,7 @@
     if (title) params.set("title", title);
     if (author) params.set("author", author);
     params.set("limit", "6");
-    params.set("fields", "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,isbn");
+    params.set("fields", "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,isbn,subject");
     const url = "https://openlibrary.org/search.json?" + params.toString();
     const res = await fetch(url);
     if (!res.ok) throw new Error("Search failed");
@@ -328,10 +361,15 @@
   }
 
   function renderReading() {
-    const list = state.books.filter((b) => b.status === "reading")
+    const all = state.books.filter((b) => b.status === "reading");
+    const list = all.filter((b) => bookMatches(b, readingQuery))
       .sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
     const wrap = $("#reading-list");
-    $("#reading-empty").hidden = list.length > 0;
+    const empty = $("#reading-empty");
+    empty.hidden = list.length > 0;
+    empty.textContent = all.length === 0
+      ? "You're not reading anything yet. Add a book to start logging your pages."
+      : "No books match your search.";
     wrap.innerHTML = list.map((b) => {
       const read = pagesRead(b);
       const pct = b.totalPages ? Math.min(100, Math.round((read / b.totalPages) * 100)) : 0;
@@ -343,10 +381,11 @@
           <p class="book-author">${esc(b.author) || "Unknown author"}</p>
           <div class="progress"><span style="width:${pct}%"></span></div>
           <p class="progress-label">${num(read)}${b.totalPages ? " / " + num(b.totalPages) : ""} pages${b.totalPages ? " · " + pct + "%" : ""}</p>
+          ${tagsHTML(b, true)}
           <div class="card-actions">
             <button class="mini" data-action="log" data-id="${b.id}">＋ Log pages</button>
+            <button class="mini" data-action="detail" data-id="${b.id}">📈 Progress</button>
             <button class="mini" data-action="finish" data-id="${b.id}">✓ Finish</button>
-            <button class="mini" data-action="cover" data-id="${b.id}">🖼 Cover</button>
             <button class="mini" data-action="edit" data-id="${b.id}">✎ Edit</button>
             <button class="mini danger" data-action="delete" data-id="${b.id}">🗑</button>
           </div>
@@ -374,7 +413,17 @@
   }
 
   function renderLibrary() {
-    let list = booksFinished();
+    // Populate the genre filter dropdown (keeping the current selection).
+    const tagSel = $("#library-tag");
+    const tags = allTags();
+    if (libraryTag && !tags.some((t) => t.toLowerCase() === libraryTag.toLowerCase())) libraryTag = "";
+    tagSel.innerHTML = `<option value="">All genres</option>` + tags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    tagSel.value = libraryTag;
+
+    const finished = booksFinished();
+    let list = finished
+      .filter((b) => bookMatches(b, libraryQuery))
+      .filter((b) => !libraryTag || (b.tags || []).some((t) => t.toLowerCase() === libraryTag.toLowerCase()));
     const sort = $("#library-sort").value;
     list.sort((a, b) => {
       if (sort === "finished-asc") return new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0);
@@ -383,7 +432,11 @@
       return new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0); // finished-desc
     });
     const wrap = $("#library-list");
-    $("#library-empty").hidden = list.length > 0;
+    const empty = $("#library-empty");
+    empty.hidden = list.length > 0;
+    empty.textContent = finished.length === 0
+      ? "No finished books yet. Add books you've already read, or finish one you're reading."
+      : "No books match your search or filter.";
     wrap.innerHTML = list.map((b) => `
       <article class="book-card lib-card" data-id="${b.id}">
         ${coverHTML(b)}
@@ -391,9 +444,10 @@
         <p class="book-author">${esc(b.author) || "Unknown author"}</p>
         ${starsHTML(b.rating)}
         <p class="lib-date">Finished ${fmtDate(b.finishedAt)} · ${num(pagesRead(b) || b.totalPages)}p</p>
+        ${tagsHTML(b, true)}
         <div class="card-actions">
+          <button class="mini" data-action="detail" data-id="${b.id}">📈 Progress</button>
           <button class="mini" data-action="rate" data-id="${b.id}">★ Rate</button>
-          <button class="mini" data-action="cover" data-id="${b.id}">🖼 Cover</button>
           <button class="mini" data-action="edit" data-id="${b.id}">✎ Edit</button>
           <button class="mini danger" data-action="delete" data-id="${b.id}">🗑</button>
         </div>
@@ -515,6 +569,90 @@
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMinYMid meet" role="img" aria-label="bar chart">${out}</svg>`;
   }
 
+  // ---------------------------------------------------------------------------
+  // Book detail + per-book progress chart
+  // ---------------------------------------------------------------------------
+  function openDetailModal(book) {
+    $("#detail-title").textContent = book.title;
+    const read = pagesRead(book);
+    const pct = book.totalPages ? Math.min(100, Math.round((read / book.totalPages) * 100)) : 0;
+    const logs = book.logs.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+    const statusLabel = book.status === "finished" ? "Finished" : "Currently reading";
+    const dates = book.status === "finished"
+      ? (book.finishedAt ? "Finished " + fmtDate(book.finishedAt) : "")
+      : (book.startedAt ? "Started " + fmtDate(book.startedAt) : "");
+    $("#detail-body").innerHTML = `
+      <div class="detail-top">
+        ${coverHTML(book)}
+        <div class="detail-info">
+          <h4>${esc(book.title)}</h4>
+          <p class="by">${esc(book.author) || "Unknown author"}</p>
+          <div class="detail-meta">
+            <span>${statusLabel}${book.rating ? " · " + starsHTML(book.rating) : ""}</span>
+            <span>${num(read)}${book.totalPages ? " / " + num(book.totalPages) : ""} pages${book.totalPages ? " · " + pct + "%" : ""}</span>
+            ${dates ? `<span>${dates}</span>` : ""}
+          </div>
+          ${tagsHTML(book, false)}
+          <div class="detail-actions">
+            ${book.status === "reading" ? `<button class="mini" data-detail-action="log" data-id="${book.id}">＋ Log pages</button>` : ""}
+            <button class="mini" data-detail-action="edit" data-id="${book.id}">✎ Edit</button>
+          </div>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h5>📈 Reading progress</h5>
+        <div class="progress-chart">${svgProgress(book)}</div>
+      </div>
+      <div class="detail-section">
+        <h5>Sessions (${book.logs.length})</h5>
+        <div class="logs detail-logs">
+          ${logs.length ? logs.map((l) => `<div class="log-row">
+            <span class="l-pages">+${num(l.pages)}p</span>
+            <span class="l-when">${fmtDateTime(l.date)}</span>
+            <span class="l-note">${l.note ? "“" + esc(l.note) + "”" : ""}</span>
+          </div>`).join("") : `<p class="muted">No sessions logged yet.</p>`}
+        </div>
+      </div>
+      ${book.review ? `<div class="detail-section"><h5>My notes</h5><p class="detail-review">${esc(book.review)}</p></div>` : ""}`;
+    showModal("detail-modal");
+  }
+
+  // Cumulative pages-read-over-time line/area chart for one book.
+  function svgProgress(book) {
+    const logs = book.logs.slice()
+      .filter((l) => !isNaN(new Date(l.date)))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (!logs.length) return `<p class="muted">No reading sessions yet — log some pages to see your progress.</p>`;
+    const W = 520, H = 200, padL = 44, padR = 16, padT = 14, padB = 30;
+    const aw = W - padL - padR, ah = H - padT - padB;
+    let cum = 0;
+    const pts = logs.map((l) => { cum += Number(l.pages) || 0; return { t: new Date(l.date).getTime(), y: cum, date: l.date }; });
+    const total = book.totalPages || cum;
+    const maxY = Math.max(total, cum, 1);
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t, span = t1 - t0;
+    const xOf = (t, i) => span > 0 ? padL + ((t - t0) / span) * aw : padL + (pts.length === 1 ? aw : (i / (pts.length - 1)) * aw);
+    const yOf = (v) => padT + ah - (v / maxY) * ah;
+    const baseY = padT + ah;
+    const linePath = pts.map((p, i) => (i ? "L" : "M") + xOf(p.t, i).toFixed(1) + " " + yOf(p.y).toFixed(1)).join(" ");
+    const areaPath = `M${xOf(pts[0].t, 0).toFixed(1)} ${baseY.toFixed(1)} `
+      + pts.map((p, i) => "L" + xOf(p.t, i).toFixed(1) + " " + yOf(p.y).toFixed(1)).join(" ")
+      + ` L${xOf(t1, pts.length - 1).toFixed(1)} ${baseY.toFixed(1)} Z`;
+    const dots = pts.map((p, i) => `<circle class="prog-dot" cx="${xOf(p.t, i).toFixed(1)}" cy="${yOf(p.y).toFixed(1)}" r="3.5"><title>${fmtDate(p.date)}: ${num(p.y)}${book.totalPages ? " / " + num(book.totalPages) : ""} pages</title></circle>`).join("");
+    let target = "";
+    if (book.totalPages) {
+      const ty = yOf(book.totalPages);
+      target = `<line class="prog-target" x1="${padL}" y1="${ty.toFixed(1)}" x2="${W - padR}" y2="${ty.toFixed(1)}"/>`
+        + `<text class="prog-axis" x="${W - padR}" y="${(ty - 4).toFixed(1)}" text-anchor="end" font-size="9">goal ${num(book.totalPages)}p</text>`;
+    }
+    const axis = `<line x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" stroke="var(--line)" stroke-width="1"/>`
+      + `<text class="prog-axis" x="${padL - 6}" y="${(padT + 4).toFixed(1)}" text-anchor="end" font-size="9">${num(maxY)}</text>`
+      + `<text class="prog-axis" x="${padL - 6}" y="${baseY.toFixed(1)}" text-anchor="end" font-size="9">0</text>`
+      + `<text class="prog-axis" x="${padL}" y="${H - 10}" font-size="9">${fmtDate(pts[0].date)}</text>`
+      + (pts.length > 1 ? `<text class="prog-axis" x="${W - padR}" y="${H - 10}" text-anchor="end" font-size="9">${fmtDate(pts[pts.length - 1].date)}</text>` : "");
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="reading progress over time">`
+      + `${axis}${target}<path class="prog-area" d="${areaPath}"/><path class="prog-line" d="${linePath}"/>${dots}</svg>`;
+  }
+
   function renderStorageStatus() {
     const el = $("#storage-status");
     if (fileHandle) {
@@ -556,6 +694,8 @@
     $("#f-isbn").value = book ? book.isbn : "";
     $("#f-cover").value = book ? book.coverUrl : "";
     $("#f-review").value = book ? (book.review || "") : "";
+    $("#f-tags").value = book && book.tags ? book.tags.join(", ") : "";
+    renderTagHelpers();
     $("#cover-candidates").innerHTML = "";
     setCoverPreview(book ? book.coverUrl : "");
 
@@ -581,6 +721,15 @@
     box.innerHTML = url ? `<img src="${esc(url)}" alt="cover" onerror="this.parentNode.innerHTML='<span class=\\'cover-ph\\'>No cover</span>'" />` : `<span class="cover-ph">No cover</span>`;
   }
 
+  // Datalist autocomplete + quick-add chips for genres already used elsewhere.
+  function renderTagHelpers() {
+    const tags = allTags();
+    $("#tags-datalist").innerHTML = tags.map((t) => `<option value="${esc(t)}"></option>`).join("");
+    const current = parseTags($("#f-tags").value).map((t) => t.toLowerCase());
+    const suggest = tags.filter((t) => !current.includes(t.toLowerCase())).slice(0, 12);
+    $("#tag-suggest").innerHTML = suggest.map((t) => `<span class="tag" data-add-tag="${esc(t)}">+ ${esc(t)}</span>`).join("");
+  }
+
   async function handleFetch() {
     const title = $("#f-title").value.trim();
     const author = $("#f-author").value.trim();
@@ -597,8 +746,15 @@
       if (!$("#f-isbn").value && top.isbn && top.isbn[0]) $("#f-isbn").value = top.isbn[0];
       const firstCover = top.cover_i ? coverFromId(top.cover_i) : (top.isbn ? coverFromIsbn(top.isbn[0]) : "");
       if (firstCover) { $("#f-cover").value = firstCover; setCoverPreview(firstCover); }
+      // Suggest a few genres from Open Library subjects (only if none entered yet).
+      if (!$("#f-tags").value.trim() && Array.isArray(top.subject)) {
+        const picks = top.subject
+          .filter((s) => s.length < 24 && !/\d|fiction in|accessible|reading level|nyt:/i.test(s))
+          .slice(0, 3);
+        if (picks.length) { $("#f-tags").value = picks.join(", "); renderTagHelpers(); }
+      }
       renderCandidates(docs);
-      toast("✨", "Found it!", "Wrong cover? Pick another below.");
+      toast("✨", "Found it!", "Wrong cover or genres? Tweak them below.");
     } catch (e) {
       console.warn(e);
       toast("⚠️", "Lookup failed", "Check your connection, or paste a cover URL.");
@@ -628,6 +784,7 @@
     book.isbn = $("#f-isbn").value.trim();
     book.coverUrl = $("#f-cover").value.trim();
     book.review = $("#f-review").value.trim();
+    book.tags = parseTags($("#f-tags").value);
     book.status = status;
 
     if (status === "reading") {
@@ -824,6 +981,7 @@
       if (!book) return;
       const action = actBtn.dataset.action;
       if (action === "log") openLogModal(book);
+      else if (action === "detail") openDetailModal(book);
       else if (action === "finish") openFinishModal(book);
       else if (action === "edit") openBookModal({ book });
       else if (action === "cover") { openBookModal({ book }); setTimeout(() => $("#btn-fetch").focus(), 80); }
@@ -849,6 +1007,13 @@
       }
       return;
     }
+    const tagChip = e.target.closest("[data-tag]");
+    if (tagChip) {
+      const tag = tagChip.dataset.tag;
+      if (activeView === "library") { libraryTag = tag; $("#library-tag").value = tag; renderLibrary(); }
+      else { readingQuery = tag; $("#reading-search").value = tag; renderReading(); }
+      return;
+    }
     const addBtn = e.target.closest("[data-add]");
     if (addBtn) openBookModal({ status: addBtn.dataset.add });
   }
@@ -863,8 +1028,33 @@
     // Main delegated clicks (cards + add buttons)
     $("#main").addEventListener("click", onMainClick);
 
-    // Library sort
+    // Search + genre filter
+    $("#reading-search").addEventListener("input", (e) => { readingQuery = e.target.value.trim(); renderReading(); });
+    $("#library-search").addEventListener("input", (e) => { libraryQuery = e.target.value.trim(); renderLibrary(); });
+    $("#library-tag").addEventListener("change", (e) => { libraryTag = e.target.value; renderLibrary(); });
     $("#library-sort").addEventListener("change", renderLibrary);
+
+    // Quick-add genre chips in the book form
+    $("#tag-suggest").addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-add-tag]");
+      if (!chip) return;
+      const tags = parseTags($("#f-tags").value);
+      tags.push(chip.dataset.addTag);
+      $("#f-tags").value = parseTags(tags.join(",")).join(", ");
+      renderTagHelpers();
+    });
+    $("#f-tags").addEventListener("input", renderTagHelpers);
+
+    // Actions inside the detail modal (it lives outside #main)
+    $("#detail-body").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-detail-action]");
+      if (!b) return;
+      const book = state.books.find((x) => x.id === b.dataset.id);
+      if (!book) return;
+      closeModals();
+      if (b.dataset.detailAction === "log") openLogModal(book);
+      else if (b.dataset.detailAction === "edit") openBookModal({ book });
+    });
 
     // Book modal
     $("#book-form").addEventListener("submit", saveBookFromForm);

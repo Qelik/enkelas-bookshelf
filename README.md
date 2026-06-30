@@ -10,7 +10,9 @@ On a phone, open that link and use the browser's **Share → Add to Home Screen*
 
 - **Currently reading** — add a book and log each reading session (pages + date/time + an optional note). A progress bar fills as you go.
 - **Reading logs** — every session is timestamped, and each one can be **edited or deleted** later.
-- **Library** — books you've finished, with star ratings, finish dates, and covers. Sort by recent, rating, or title.
+- **Library** — books you've finished, with star ratings, finish dates, and covers. **Search** by title/author/tag, **filter by genre**, and sort by recent, rating, or title.
+- **Genre tags** — tag books with genres (auto-suggested from Open Library, with quick-add chips and autocomplete). Tap a tag to filter by it.
+- **Per-book progress chart** — tap **📈 Progress** on any book for a detail view with a cumulative pages-over-time chart, a goal line, and the full session history.
 - **Already-read books** — add books you read in the past, with their finish date and rating.
 - **Notes & reviews** — keep per-book notes or a review; they show on the reading and library cards.
 - **Yearly goal** — set how many books you want to read this year and watch the progress ring fill.
@@ -78,6 +80,7 @@ Hosting over **HTTPS** is what enables the offline/installable (PWA) features.
       "coverUrl": "https://covers.openlibrary.org/b/id/8231856-L.jpg",
       "isbn": "9780756404741",
       "review": "Kvothe's voice pulls you in immediately.",
+      "tags": ["Fantasy", "Adventure"],
       "status": "reading",
       "rating": null,
       "startedAt": "2026-06-01T00:00:00.000Z",
