@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Enkela's Bookshelf</title>
+  <link rel="preconnect" href="https://covers.openlibrary.org" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📚%3C/text%3E%3C/svg%3E" />
+  <!-- PWA: installable + offline + persistent storage on phones -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#9c5b3a" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Bookshelf" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark">📚</span>
+      <div>
+        <h1>Enkela's Bookshelf</h1>
+        <p class="tagline">Track every page, celebrate every milestone.</p>
+      </div>
+    </div>
+    <div class="data-menu">
+      <button id="btn-theme" class="ghost" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+      <button id="btn-connect-file" class="ghost" title="Read & write a bookshelf.json file on your computer">🔗 Connect file</button>
+      <button id="btn-export" class="ghost" title="Download your data as JSON">⬇ Export</button>
+      <button id="btn-import" class="ghost" title="Load data from a JSON file">⬆ Import</button>
+      <input type="file" id="import-input" accept="application/json,.json" hidden />
+      <span id="storage-status" class="storage-status" title="Where your data is stored"></span>
+    </div>
+  </header>
+
+  <section class="stats-strip" id="stats-strip"><!-- rendered by JS --></section>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="reading">📖 Currently Reading</button>
+    <button class="tab" data-view="library">🗂️ Library</button>
+    <button class="tab" data-view="achievements">🏅 Achievements</button>
+    <button class="tab" data-view="goals">🎯 Goals</button>
+    <button class="tab" data-view="stats">📊 Stats</button>
+  </nav>
+
+  <main id="main">
+    <!-- READING -->
+    <section class="view" id="view-reading">
+      <div class="view-head">
+        <h2>Currently Reading</h2>
+        <button class="primary" data-add="reading">＋ Add a book</button>
+      </div>
+      <div class="card-grid" id="reading-list"></div>
+      <p class="empty" id="reading-empty" hidden>You're not reading anything yet. Add a book to start logging your pages.</p>
+    </section>
+
+    <!-- LIBRARY -->
+    <section class="view" id="view-library" hidden>
+      <div class="view-head">
+        <h2>Library</h2>
+        <div class="head-controls">
+          <select id="library-sort" class="select">
+            <option value="finished-desc">Recently finished</option>
+            <option value="finished-asc">Oldest finished</option>
+            <option value="rating-desc">Highest rated</option>
+            <option value="title-asc">Title A–Z</option>
+          </select>
+          <button class="primary" data-add="finished">＋ Add a read book</button>
+        </div>
+      </div>
+      <div class="card-grid library" id="library-list"></div>
+      <p class="empty" id="library-empty" hidden>No finished books yet. Add books you've already read, or finish one you're reading.</p>
+    </section>
+
+    <!-- ACHIEVEMENTS -->
+    <section class="view" id="view-achievements" hidden>
+      <div class="view-head"><h2>Achievements</h2></div>
+      <div class="ach-group">
+        <h3>📄 Pages read <span id="ach-pages-value" class="muted"></span></h3>
+        <div class="badge-grid" id="badges-pages"></div>
+      </div>
+      <div class="ach-group">
+        <h3>📚 Books finished <span id="ach-books-value" class="muted"></span></h3>
+        <div class="badge-grid" id="badges-books"></div>
+      </div>
+      <div class="ach-group">
+        <h3>✨ Special</h3>
+        <div class="badge-grid" id="badges-special"></div>
+      </div>
+    </section>
+
+    <!-- GOALS -->
+    <section class="view" id="view-goals" hidden>
+      <div class="view-head"><h2>Reading Goal</h2></div>
+      <div class="goal-panel">
+        <div class="goal-ring-wrap">
+          <svg class="goal-ring" viewBox="0 0 120 120" width="180" height="180" aria-hidden="true">
+            <circle class="ring-bg" cx="60" cy="60" r="52" />
+            <circle class="ring-fg" id="goal-ring-fg" cx="60" cy="60" r="52" />
+          </svg>
+          <div class="goal-ring-text">
+            <span id="goal-count" class="goal-count">0</span>
+            <span id="goal-of" class="goal-of">of 0</span>
+            <span class="goal-label">books</span>
+          </div>
+        </div>
+        <div class="goal-controls">
+          <label for="goal-year">Year</label>
+          <input type="number" id="goal-year" class="input" min="2000" max="2100" />
+          <label for="goal-target">Books I want to read this year</label>
+          <input type="number" id="goal-target" class="input" min="1" max="999" />
+          <button class="primary" id="goal-save">Save goal</button>
+          <p class="goal-hint" id="goal-hint"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="view" id="view-stats" hidden>
+      <div class="view-head"><h2>Reading Stats</h2></div>
+      <div class="stat-cards" id="stat-cards"></div>
+      <div class="chart-card">
+        <h3>Pages per day <span class="muted">· last 30 days</span></h3>
+        <div class="chart" id="chart-daily"></div>
+      </div>
+      <div class="chart-card">
+        <h3>Pages per month <span class="muted">· last 12 months</span></h3>
+        <div class="chart" id="chart-monthly"></div>
+      </div>
+      <p class="empty" id="stats-empty" hidden>No reading logged yet. Log a session and your charts will appear here.</p>
+    </section>
+  </main>
+
+  <!-- ADD / EDIT BOOK MODAL -->
+  <div class="modal-backdrop" id="book-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="book-modal-title">
+      <div class="modal-head">
+        <h3 id="book-modal-title">Add a book</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <form id="book-form" class="modal-body">
+        <input type="hidden" id="f-id" />
+
+        <div class="cover-fetch">
+          <div class="cover-preview" id="f-cover-preview"><span class="cover-ph">No cover</span></div>
+          <div class="cover-actions">
+            <button type="button" class="ghost" id="btn-fetch">🔍 Auto-fetch details &amp; cover</button>
+            <div class="cover-candidates" id="cover-candidates"></div>
+            <label for="f-cover">Cover image URL <span class="muted">(auto-filled — edit if wrong)</span></label>
+            <input type="url" id="f-cover" class="input" placeholder="https://…" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <label for="f-title">Title *</label>
+            <input type="text" id="f-title" class="input" required />
+          </div>
+          <div>
+            <label for="f-author">Author</label>
+            <input type="text" id="f-author" class="input" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <label for="f-pages">Total pages</label>
+            <input type="number" id="f-pages" class="input" min="1" max="100000" />
+          </div>
+          <div>
+            <label for="f-isbn">ISBN <span class="muted">(optional, improves cover)</span></label>
+            <input type="text" id="f-isbn" class="input" />
+          </div>
+        </div>
+
+        <label for="f-review">My notes / review <span class="muted">(optional)</span></label>
+        <textarea id="f-review" class="input" rows="3" placeholder="What did you think? Favourite quotes, thoughts…"></textarea>
+
+        <fieldset class="status-fieldset">
+          <legend>Status</legend>
+          <label class="radio"><input type="radio" name="f-status" value="reading" checked /> Currently reading</label>
+          <label class="radio"><input type="radio" name="f-status" value="finished" /> Already finished</label>
+        </fieldset>
+
+        <div class="grid-2" id="reading-fields">
+          <div>
+            <label for="f-started">Started on</label>
+            <input type="date" id="f-started" class="input" />
+          </div>
+        </div>
+
+        <div class="grid-2" id="finished-fields" hidden>
+          <div>
+            <label for="f-finished">Finished on</label>
+            <input type="date" id="f-finished" class="input" />
+          </div>
+          <div>
+            <label>Your rating</label>
+            <div class="star-input" id="f-stars" data-rating="0">
+              <span data-star="1">★</span><span data-star="2">★</span><span data-star="3">★</span><span data-star="4">★</span><span data-star="5">★</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <button type="button" class="ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="primary" id="book-submit">Save book</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- LOG READING DIALOG -->
+  <div class="modal-backdrop" id="log-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="log-modal-title">
+      <div class="modal-head">
+        <h3 id="log-modal-title">Log a reading session</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <form id="log-form" class="modal-body">
+        <input type="hidden" id="log-book-id" />
+        <input type="hidden" id="log-id" />
+        <p class="log-book-name" id="log-book-name"></p>
+        <div class="grid-2">
+          <div>
+            <label for="log-pages">Pages read this session *</label>
+            <input type="number" id="log-pages" class="input" min="1" max="100000" required />
+          </div>
+          <div>
+            <label for="log-when">When</label>
+            <input type="datetime-local" id="log-when" class="input" />
+          </div>
+        </div>
+        <label for="log-note">Note <span class="muted">(optional)</span></label>
+        <input type="text" id="log-note" class="input" placeholder="Thoughts, a quote, where you stopped…" />
+        <div class="modal-foot">
+          <button type="button" class="ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="primary">Add log</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- FINISH BOOK DIALOG -->
+  <div class="modal-backdrop" id="finish-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="finish-modal-title">
+      <div class="modal-head">
+        <h3 id="finish-modal-title">Finish this book</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <form id="finish-form" class="modal-body">
+        <input type="hidden" id="finish-book-id" />
+        <p class="log-book-name" id="finish-book-name"></p>
+        <label for="finish-date">Finished on</label>
+        <input type="date" id="finish-date" class="input" />
+        <label>How would you rate it?</label>
+        <div class="star-input big" id="finish-stars" data-rating="0">
+          <span data-star="1">★</span><span data-star="2">★</span><span data-star="3">★</span><span data-star="4">★</span><span data-star="5">★</span>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="primary">Mark as finished</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
