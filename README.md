@@ -3,6 +3,9 @@
 A cozy, **backend-free** reading tracker. Everything runs in the browser and your
 data is stored as JSON — no server, no account, no build step.
 
+**▶ Live app: https://qelik.github.io/enkelas-bookshelf/**
+On a phone, open that link and use the browser's **Share → Add to Home Screen** so the data sticks and it works offline.
+
 ## Features
 
 - **Currently reading** — add a book and log each reading session (pages + date/time + an optional note). A progress bar fills as you go.
