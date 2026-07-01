@@ -8,7 +8,15 @@ On a phone, open that link and use the browser's **Share → Add to Home Screen*
 
 ## Features
 
-- **Currently reading** — add a book and log each reading session (pages + date/time + an optional note). A progress bar fills as you go.
+- **Want to Read (TBR)** — keep a wishlist of books to read next; one tap moves a book to "currently reading."
+- **Currently reading** — add a book and log each reading session (pages + date/time + an optional note, plus an optional built-in **session timer**). A progress bar fills as you go, with an **estimated finish date** based on your recent pace.
+- **Formats** — mark a book as physical 📖, e-book 📱, or audiobook 🎧 (audiobooks track minutes).
+- **Series & collections** — group books in a series (with book numbers) and file them on custom shelves like "Favourites" or "Book club."
+- **Did-not-finish** — mark a book DNF instead of forcing a finish.
+- **Barcode scanner** — on a phone, tap 📷 Scan in the add-book form to read a book's ISBN barcode and auto-fill it (Chrome/Android).
+- **Goodreads import** — bring in your whole Goodreads library from its CSV export (📥 Goodreads in the header).
+- **Library views** — browse as a **grid**, a visual **bookshelf** of spines, or **by author**. Search by title/author/tag, filter by genre or shelf, sort by recent/rating/length/title.
+- **Quotes & highlights** — save favourite lines per book (in the 📈 Progress view).
 - **Reading logs** — every session is timestamped, and each one can be **edited or deleted** later.
 - **Library** — books you've finished, with star ratings, finish dates, and covers. **Search** by title/author/tag, **filter by genre**, and sort by recent, rating, or title.
 - **Genre tags** — tag books with genres (auto-suggested from Open Library, with quick-add chips and autocomplete). Tap a tag to filter by it.
@@ -16,9 +24,11 @@ On a phone, open that link and use the browser's **Share → Add to Home Screen*
 - **Already-read books** — add books you read in the past, with their finish date and rating.
 - **Notes & reviews** — keep per-book notes or a review; they show on the reading and library cards.
 - **Yearly goal** — set how many books you want to read this year and watch the progress ring fill.
-- **Achievement badges** — unlock milestones for pages read (100 → 50,000), books finished (1st, 5th, 10th, …), reading **streaks** (3 / 7 / 30 days), plus special badges. A toast pops when you earn one.
+- **Goals** — set a books-per-year goal (with a progress ring), an optional **pages-per-year** goal, and a **daily reading goal** with a today check-in; a pacing line tells you if you're ahead of or behind schedule.
+- **Reading challenges** — playful yearly challenges (read 5 genres, finish a 500+ page book, books from 3 decades, a book every month, …) that unlock as you go.
+- **Achievement badges** — unlock milestones for pages read (100 → 50,000), books finished (1st, 5th, 10th, …), reading **streaks** (3 / 7 / 30 days), plus special badges. A toast (and 🎉 confetti) pops when you earn one.
 - **Reading streaks** — consecutive-day reading streaks (current + longest).
-- **Stats & charts** — a Stats tab with pages-per-day (last 30 days) and pages-per-month (last 12 months) bar charts, plus streaks, days read, average, and best day.
+- **Stats & charts** — a Stats tab with a **reading calendar heatmap**, pages-per-day and pages-per-month charts, a **by-genre** breakdown, a **ratings distribution**, and a shareable **Year in Review** recap.
 - **Dark mode** — a 🌙 / ☀️ toggle in the header; your choice is remembered.
 - **Auto cover art** — covers are fetched automatically from the free [Open Library](https://openlibrary.org) API by title/author/ISBN. Wrong cover? Pick another candidate or paste your own image URL.
 

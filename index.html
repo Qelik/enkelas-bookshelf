@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Enkela's Bookshelf</title>
   <link rel="preconnect" href="https://covers.openlibrary.org" />
+  <link rel="preconnect" href="https://openlibrary.org" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📚%3C/text%3E%3C/svg%3E" />
   <!-- PWA: installable + offline + persistent storage on phones -->
@@ -27,10 +28,12 @@
     </div>
     <div class="data-menu">
       <button id="btn-theme" class="ghost" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+      <button id="btn-goodreads" class="ghost" title="Import your Goodreads library (CSV export)">📥 Goodreads</button>
       <button id="btn-connect-file" class="ghost" title="Read & write a bookshelf.json file on your computer">🔗 Connect file</button>
       <button id="btn-export" class="ghost" title="Download your data as JSON">⬇ Export</button>
       <button id="btn-import" class="ghost" title="Load data from a JSON file">⬆ Import</button>
       <input type="file" id="import-input" accept="application/json,.json" hidden />
+      <input type="file" id="goodreads-input" accept=".csv,text/csv" hidden />
       <span id="storage-status" class="storage-status" title="Where your data is stored"></span>
     </div>
   </header>
@@ -38,11 +41,12 @@
   <section class="stats-strip" id="stats-strip"><!-- rendered by JS --></section>
 
   <nav class="tabs" id="tabs">
-    <button class="tab active" data-view="reading">📖 Currently Reading</button>
+    <button class="tab active" data-view="reading">📖 Reading</button>
+    <button class="tab" data-view="want">📌 Want to Read</button>
     <button class="tab" data-view="library">🗂️ Library</button>
-    <button class="tab" data-view="achievements">🏅 Achievements</button>
     <button class="tab" data-view="goals">🎯 Goals</button>
     <button class="tab" data-view="stats">📊 Stats</button>
+    <button class="tab" data-view="achievements">🏅 Achievements</button>
   </nav>
 
   <main id="main">
@@ -56,7 +60,20 @@
         </div>
       </div>
       <div class="card-grid" id="reading-list"></div>
-      <p class="empty" id="reading-empty" hidden>You're not reading anything yet. Add a book to start logging your pages.</p>
+      <p class="empty" id="reading-empty" hidden></p>
+    </section>
+
+    <!-- WANT TO READ -->
+    <section class="view" id="view-want" hidden>
+      <div class="view-head">
+        <h2>Want to Read</h2>
+        <div class="head-controls">
+          <input type="search" id="want-search" class="input search" placeholder="🔍 Search title, author, tag" />
+          <button class="primary" data-add="want">＋ Add to list</button>
+        </div>
+      </div>
+      <div class="card-grid" id="want-list"></div>
+      <p class="empty" id="want-empty" hidden></p>
     </section>
 
     <!-- LIBRARY -->
@@ -66,17 +83,85 @@
         <div class="head-controls">
           <input type="search" id="library-search" class="input search" placeholder="🔍 Search title, author, tag" />
           <select id="library-tag" class="select"><option value="">All genres</option></select>
+          <select id="library-collection" class="select"><option value="">All shelves</option></select>
           <select id="library-sort" class="select">
             <option value="finished-desc">Recently finished</option>
             <option value="finished-asc">Oldest finished</option>
             <option value="rating-desc">Highest rated</option>
+            <option value="pages-desc">Longest</option>
             <option value="title-asc">Title A–Z</option>
           </select>
+          <div class="view-toggle" id="library-view-toggle" role="group" aria-label="Library layout">
+            <button type="button" data-libview="grid" class="active" title="Grid">▦</button>
+            <button type="button" data-libview="shelf" title="Bookshelf">📚</button>
+            <button type="button" data-libview="author" title="By author">✍️</button>
+          </div>
           <button class="primary" data-add="finished">＋ Add a read book</button>
         </div>
       </div>
-      <div class="card-grid library" id="library-list"></div>
-      <p class="empty" id="library-empty" hidden>No finished books yet. Add books you've already read, or finish one you're reading.</p>
+      <div id="library-list"></div>
+      <p class="empty" id="library-empty" hidden></p>
+    </section>
+
+    <!-- GOALS -->
+    <section class="view" id="view-goals" hidden>
+      <div class="view-head"><h2>Goals &amp; Challenges</h2></div>
+      <div class="goal-panel">
+        <div class="goal-ring-wrap">
+          <svg class="goal-ring" viewBox="0 0 120 120" width="180" height="180" aria-hidden="true">
+            <circle class="ring-bg" cx="60" cy="60" r="52" />
+            <circle class="ring-fg" id="goal-ring-fg" cx="60" cy="60" r="52" />
+          </svg>
+          <div class="goal-ring-text">
+            <span id="goal-count" class="goal-count">0</span>
+            <span id="goal-of" class="goal-of">of 0</span>
+            <span class="goal-label">books</span>
+          </div>
+        </div>
+        <div class="goal-controls">
+          <label for="goal-year">Year</label>
+          <input type="number" id="goal-year" class="input" min="2000" max="2100" />
+          <label for="goal-target">Books I want to read</label>
+          <input type="number" id="goal-target" class="input" min="0" max="999" />
+          <label for="goal-pages">Pages this year <span class="muted">(optional)</span></label>
+          <input type="number" id="goal-pages" class="input" min="0" max="9999999" />
+          <label for="goal-daily">Daily reading goal — pages/day <span class="muted">(optional)</span></label>
+          <input type="number" id="goal-daily" class="input" min="0" max="100000" />
+          <button class="primary" id="goal-save">Save goals</button>
+          <p class="goal-hint" id="goal-hint"></p>
+        </div>
+      </div>
+      <div class="goal-extra" id="goal-extra"></div>
+      <div class="ach-group">
+        <h3>🎯 Reading challenges <span id="challenge-count" class="muted"></span></h3>
+        <div class="badge-grid" id="challenges"></div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="view" id="view-stats" hidden>
+      <div class="view-head">
+        <h2>Reading Stats</h2>
+        <button class="primary" id="btn-year-review">🎉 Year in Review</button>
+      </div>
+      <div class="stat-cards" id="stat-cards"></div>
+      <div class="chart-card">
+        <h3>Reading calendar <span class="muted" id="cal-sub"></span></h3>
+        <div class="chart" id="chart-calendar"></div>
+      </div>
+      <div class="chart-card">
+        <h3>Pages per day <span class="muted">· last 30 days</span></h3>
+        <div class="chart" id="chart-daily"></div>
+      </div>
+      <div class="chart-card">
+        <h3>Pages per month <span class="muted">· last 12 months</span></h3>
+        <div class="chart" id="chart-monthly"></div>
+      </div>
+      <div class="two-col">
+        <div class="chart-card"><h3>Books by genre</h3><div class="chart" id="chart-genre"></div></div>
+        <div class="chart-card"><h3>Your ratings</h3><div class="chart" id="chart-ratings"></div></div>
+      </div>
+      <p class="empty" id="stats-empty" hidden>No reading logged yet. Log a session and your charts will appear here.</p>
     </section>
 
     <!-- ACHIEVEMENTS -->
@@ -95,47 +180,6 @@
         <div class="badge-grid" id="badges-special"></div>
       </div>
     </section>
-
-    <!-- GOALS -->
-    <section class="view" id="view-goals" hidden>
-      <div class="view-head"><h2>Reading Goal</h2></div>
-      <div class="goal-panel">
-        <div class="goal-ring-wrap">
-          <svg class="goal-ring" viewBox="0 0 120 120" width="180" height="180" aria-hidden="true">
-            <circle class="ring-bg" cx="60" cy="60" r="52" />
-            <circle class="ring-fg" id="goal-ring-fg" cx="60" cy="60" r="52" />
-          </svg>
-          <div class="goal-ring-text">
-            <span id="goal-count" class="goal-count">0</span>
-            <span id="goal-of" class="goal-of">of 0</span>
-            <span class="goal-label">books</span>
-          </div>
-        </div>
-        <div class="goal-controls">
-          <label for="goal-year">Year</label>
-          <input type="number" id="goal-year" class="input" min="2000" max="2100" />
-          <label for="goal-target">Books I want to read this year</label>
-          <input type="number" id="goal-target" class="input" min="1" max="999" />
-          <button class="primary" id="goal-save">Save goal</button>
-          <p class="goal-hint" id="goal-hint"></p>
-        </div>
-      </div>
-    </section>
-
-    <!-- STATS -->
-    <section class="view" id="view-stats" hidden>
-      <div class="view-head"><h2>Reading Stats</h2></div>
-      <div class="stat-cards" id="stat-cards"></div>
-      <div class="chart-card">
-        <h3>Pages per day <span class="muted">· last 30 days</span></h3>
-        <div class="chart" id="chart-daily"></div>
-      </div>
-      <div class="chart-card">
-        <h3>Pages per month <span class="muted">· last 12 months</span></h3>
-        <div class="chart" id="chart-monthly"></div>
-      </div>
-      <p class="empty" id="stats-empty" hidden>No reading logged yet. Log a session and your charts will appear here.</p>
-    </section>
   </main>
 
   <!-- ADD / EDIT BOOK MODAL -->
@@ -151,7 +195,10 @@
         <div class="cover-fetch">
           <div class="cover-preview" id="f-cover-preview"><span class="cover-ph">No cover</span></div>
           <div class="cover-actions">
-            <button type="button" class="ghost" id="btn-fetch">🔍 Auto-fetch details &amp; cover</button>
+            <div class="fetch-row">
+              <button type="button" class="ghost" id="btn-fetch">🔍 Auto-fetch details &amp; cover</button>
+              <button type="button" class="ghost" id="btn-scan">📷 Scan barcode</button>
+            </div>
             <div class="cover-candidates" id="cover-candidates"></div>
             <label for="f-cover">Cover image URL <span class="muted">(auto-filled — edit if wrong)</span></label>
             <input type="url" id="f-cover" class="input" placeholder="https://…" />
@@ -175,21 +222,56 @@
             <input type="number" id="f-pages" class="input" min="1" max="100000" />
           </div>
           <div>
-            <label for="f-isbn">ISBN <span class="muted">(optional, improves cover)</span></label>
+            <label for="f-isbn">ISBN <span class="muted">(improves cover)</span></label>
             <input type="text" id="f-isbn" class="input" />
           </div>
         </div>
 
+        <div class="grid-2">
+          <div>
+            <label for="f-format">Format</label>
+            <select id="f-format" class="select">
+              <option value="physical">📖 Physical</option>
+              <option value="ebook">📱 E-book</option>
+              <option value="audio">🎧 Audiobook</option>
+            </select>
+          </div>
+          <div>
+            <label for="f-year">First published <span class="muted">(year)</span></label>
+            <input type="number" id="f-year" class="input" min="0" max="2100" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <label for="f-series">Series <span class="muted">(optional)</span></label>
+            <input type="text" id="f-series" class="input" placeholder="e.g. The Kingkiller Chronicle" />
+          </div>
+          <div>
+            <label for="f-series-num">Book # in series</label>
+            <input type="number" id="f-series-num" class="input" min="0" max="999" step="0.5" />
+          </div>
+        </div>
+
         <label for="f-tags">Genres / tags <span class="muted">(comma-separated)</span></label>
-        <input type="text" id="f-tags" class="input" placeholder="Fantasy, Adventure, Favourites" list="tags-datalist" />
+        <input type="text" id="f-tags" class="input" placeholder="Fantasy, Adventure" list="tags-datalist" />
         <datalist id="tags-datalist"></datalist>
         <div class="tag-suggest" id="tag-suggest"></div>
+
+        <label for="f-collections">Shelves / collections <span class="muted">(comma-separated)</span></label>
+        <input type="text" id="f-collections" class="input" placeholder="Favourites, Book club" list="collections-datalist" />
+        <datalist id="collections-datalist"></datalist>
+        <div class="tag-suggest" id="collection-suggest"></div>
+
+        <label for="f-desc">Description <span class="muted">(auto-filled — editable)</span></label>
+        <textarea id="f-desc" class="input" rows="2" placeholder="A short blurb about the book…"></textarea>
 
         <label for="f-review">My notes / review <span class="muted">(optional)</span></label>
         <textarea id="f-review" class="input" rows="3" placeholder="What did you think? Favourite quotes, thoughts…"></textarea>
 
         <fieldset class="status-fieldset">
           <legend>Status</legend>
+          <label class="radio"><input type="radio" name="f-status" value="want" /> Want to read</label>
           <label class="radio"><input type="radio" name="f-status" value="reading" checked /> Currently reading</label>
           <label class="radio"><input type="radio" name="f-status" value="finished" /> Already finished</label>
         </fieldset>
@@ -222,6 +304,21 @@
     </div>
   </div>
 
+  <!-- BARCODE SCANNER MODAL -->
+  <div class="modal-backdrop" id="scan-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="scan-title">
+      <div class="modal-head">
+        <h3 id="scan-title">Scan a barcode</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" id="scan-hint">Point your camera at the book's barcode (the ISBN on the back).</p>
+        <div class="scan-frame"><video id="scan-video" playsinline muted></video></div>
+        <div class="modal-foot"><button type="button" class="ghost" data-close-modal>Cancel</button></div>
+      </div>
+    </div>
+  </div>
+
   <!-- LOG READING DIALOG -->
   <div class="modal-backdrop" id="log-modal" hidden>
     <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="log-modal-title">
@@ -233,9 +330,13 @@
         <input type="hidden" id="log-book-id" />
         <input type="hidden" id="log-id" />
         <p class="log-book-name" id="log-book-name"></p>
+        <div class="timer" id="log-timer">
+          <button type="button" class="ghost" id="timer-btn">⏱ Start timer</button>
+          <span class="timer-read" id="timer-read" hidden>00:00</span>
+        </div>
         <div class="grid-2">
           <div>
-            <label for="log-pages">Pages read this session *</label>
+            <label for="log-pages"><span id="log-pages-label">Pages read this session *</span></label>
             <input type="number" id="log-pages" class="input" min="1" max="100000" required />
           </div>
           <div>
@@ -243,8 +344,16 @@
             <input type="datetime-local" id="log-when" class="input" />
           </div>
         </div>
-        <label for="log-note">Note <span class="muted">(optional)</span></label>
-        <input type="text" id="log-note" class="input" placeholder="Thoughts, a quote, where you stopped…" />
+        <div class="grid-2">
+          <div>
+            <label for="log-minutes">Minutes <span class="muted">(optional)</span></label>
+            <input type="number" id="log-minutes" class="input" min="0" max="100000" />
+          </div>
+          <div>
+            <label for="log-note">Note <span class="muted">(optional)</span></label>
+            <input type="text" id="log-note" class="input" placeholder="A thought, a quote…" />
+          </div>
+        </div>
         <div class="modal-foot">
           <button type="button" class="ghost" data-close-modal>Cancel</button>
           <button type="submit" class="primary">Add log</button>
@@ -285,6 +394,17 @@
         <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
       </div>
       <div class="modal-body" id="detail-body"></div>
+    </div>
+  </div>
+
+  <!-- YEAR IN REVIEW -->
+  <div class="modal-backdrop" id="year-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="year-title">
+      <div class="modal-head">
+        <h3 id="year-title">Year in Review</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="year-body"></div>
     </div>
   </div>
 
