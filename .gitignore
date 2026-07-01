@@ -5,3 +5,7 @@ enkelas-bookshelf.json
 goodreads_library_export.*
 *.csv
 *.numbers
+# Sync worker build artifacts + local secret
+sync-worker/node_modules/
+sync-worker/.wrangler/
+sync-worker/.dev.vars

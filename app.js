@@ -10,8 +10,14 @@
   // ---------------------------------------------------------------------------
   const STORAGE_KEY = "enkelas-bookshelf-v1";
   const THEME_KEY = "enkelas-bookshelf-theme";
+  const AUTH_KEY = "enkelas-bookshelf-auth";
+  const SYNCBASE_KEY = "enkelas-bookshelf-syncbase";
   const SCHEMA_VERSION = 1;
   const DAY = 86400000;
+  // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
+  // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
+  let SYNC_API = "https://enkelas-bookshelf-sync.enkela.workers.dev";
+  try { SYNC_API = localStorage.getItem("enkelas-sync-api") || SYNC_API; } catch (e) { /* ignore */ }
   const FORMAT_ICON = { physical: "📖", ebook: "📱", audio: "🎧" };
 
   const PAGE_MILESTONES = [
@@ -137,6 +143,7 @@
   function defaultState() {
     return {
       version: SCHEMA_VERSION,
+      updatedAt: new Date().toISOString(),
       settings: { goal: { year: new Date().getFullYear(), target: 12, pagesTarget: 0, dailyPages: 0 } },
       books: [],
     };
@@ -154,6 +161,7 @@
   function normalize(data) {
     const base = defaultState();
     if (!data || typeof data !== "object") return base;
+    if (data.updatedAt) base.updatedAt = data.updatedAt;
     base.settings.goal = Object.assign(base.settings.goal, (data.settings && data.settings.goal) || {});
     const STATUSES = ["want", "reading", "finished", "dnf"];
     base.books = Array.isArray(data.books) ? data.books.map((b) => ({
@@ -205,7 +213,7 @@
       }
     }
   }
-  function commit() { render(); persist(); }
+  function commit() { state.updatedAt = new Date().toISOString(); render(); persist(); schedulePush(); }
 
   // ---------------------------------------------------------------------------
   // Theme
@@ -220,6 +228,161 @@
     const next = loadTheme() === "dark" ? "light" : "dark";
     try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
     applyTheme(next);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Accounts + cross-device sync (optional; active only when SYNC_API is set)
+  // ---------------------------------------------------------------------------
+  let auth = loadAuth();
+  let pushTimer = null;
+  let authMode = "login";
+
+  function syncEnabled() { return !!SYNC_API; }
+  function loadAuth() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)) || null; } catch (e) { return null; } }
+  function saveAuth(a) { auth = a; try { a ? localStorage.setItem(AUTH_KEY, JSON.stringify(a)) : localStorage.removeItem(AUTH_KEY); } catch (e) { /* ignore */ } }
+  function loadSyncBase() { try { return localStorage.getItem(SYNCBASE_KEY) || null; } catch (e) { return null; } }
+  function saveSyncBase(v) { try { v ? localStorage.setItem(SYNCBASE_KEY, v) : localStorage.removeItem(SYNCBASE_KEY); } catch (e) { /* ignore */ } }
+
+  async function apiFetch(path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    if (auth && auth.token) headers["Authorization"] = "Bearer " + auth.token;
+    const res = await fetch(SYNC_API.replace(/\/$/, "") + path, Object.assign({}, opts, { headers }));
+    let data = null; try { data = await res.json(); } catch (e) { /* ignore */ }
+    return { res, data };
+  }
+
+  async function doAuth(mode, creds) {
+    const path = mode === "register" ? "/api/register" : "/api/login";
+    const body = mode === "register"
+      ? { email: creds.email, fullName: creds.fullName, password: creds.password }
+      : { email: creds.email, password: creds.password };
+    const { res, data } = await apiFetch(path, { method: "POST", body: JSON.stringify(body) });
+    if (!res.ok) throw new Error((data && data.error) || "Something went wrong. Please try again.");
+    saveAuth({ token: data.token, user: data.user });
+    saveSyncBase(null);
+    return data.user;
+  }
+
+  // Replace local state with the account's copy.
+  function adoptServer(blob, updatedAt) {
+    state = normalize(blob);
+    if (updatedAt) state.updatedAt = updatedAt;
+    saveSyncBase(updatedAt || null);
+    knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
+    persist();
+    render();
+  }
+
+  // After sign-in, reconcile this device's data with the account.
+  async function afterSignIn(mode) {
+    try {
+      const { data } = await apiFetch("/api/data", { method: "GET" });
+      const serverBlob = data && data.blob;
+      const localHasBooks = state.books.length > 0;
+      if (mode === "register") {
+        await pushData(true);
+      } else if (serverBlob && !localHasBooks) {
+        adoptServer(serverBlob, data.updatedAt);
+      } else if (serverBlob && localHasBooks) {
+        const useServer = confirm("This account already has a saved bookshelf.\n\nOK = load your account's books here (replaces what's on this device).\nCancel = keep this device's books and upload them to the account.");
+        if (useServer) adoptServer(serverBlob, data.updatedAt); else await pushData(true);
+      } else {
+        await pushData(true);
+      }
+    } catch (e) { /* offline; will sync on next change/load */ }
+    renderAccount();
+    renderStorageStatus();
+  }
+
+  function schedulePush() {
+    if (!syncEnabled() || !auth) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => pushData(false), 1200);
+  }
+  async function pushData(force) {
+    if (!syncEnabled() || !auth) return;
+    const body = { blob: state, updatedAt: state.updatedAt };
+    if (force) body.force = true; else body.baseUpdatedAt = loadSyncBase();
+    try {
+      const { res, data } = await apiFetch("/api/data", { method: "PUT", body: JSON.stringify(body) });
+      if (res.status === 401) { handleAuthExpired(); return; }
+      if (res.status === 409 && data && data.blob) {
+        const useServer = confirm("Your bookshelf was changed on another device.\n\nOK = use that newer version here.\nCancel = overwrite it with this device's version.");
+        if (useServer) adoptServer(data.blob, data.updatedAt); else await pushData(true);
+        return;
+      }
+      if (res.ok && data) { saveSyncBase(data.updatedAt); renderStorageStatus(); }
+    } catch (e) { renderStorageStatus(); /* offline; retries on next change */ }
+  }
+  async function pullData() {
+    if (!syncEnabled() || !auth) return;
+    try {
+      const { res, data } = await apiFetch("/api/data", { method: "GET" });
+      if (res.status === 401) { handleAuthExpired(); return; }
+      if (!res.ok || !data) return;
+      if (data.blob) {
+        const serverU = data.updatedAt || "";
+        if (serverU > (state.updatedAt || "")) adoptServer(data.blob, serverU);
+        else if ((state.updatedAt || "") > serverU) await pushData(false);
+        else saveSyncBase(serverU);
+      } else if (state.books.length) {
+        await pushData(true);
+      }
+      renderStorageStatus();
+    } catch (e) { renderStorageStatus(); }
+  }
+
+  function handleAuthExpired() { saveAuth(null); saveSyncBase(null); renderAccount(); renderStorageStatus(); toast("🔑", "Please sign in again", "Your session expired."); }
+  function logout() { saveAuth(null); saveSyncBase(null); closeAccountMenu(); renderAccount(); renderStorageStatus(); toast("👋", "Signed out", "Your books stay on this device and on your account."); }
+
+  function openAuthModal(mode) {
+    setAuthMode(mode || "login");
+    $("#auth-name").value = ""; $("#auth-email").value = ""; $("#auth-password").value = ""; $("#auth-error").textContent = "";
+    showModal("auth-modal");
+    setTimeout(() => $("#auth-email").focus(), 50);
+  }
+  function setAuthMode(mode) {
+    authMode = mode;
+    $("#tab-login").classList.toggle("active", mode === "login");
+    $("#tab-register").classList.toggle("active", mode === "register");
+    $("#auth-name-row").hidden = mode !== "register";
+    $("#auth-title").textContent = mode === "register" ? "Create your account" : "Log in";
+    $("#auth-submit").textContent = mode === "register" ? "Create account" : "Log in";
+    $("#auth-error").textContent = "";
+  }
+  async function onAuthSubmit(e) {
+    e.preventDefault();
+    const creds = { email: $("#auth-email").value.trim(), password: $("#auth-password").value, fullName: $("#auth-name").value.trim() };
+    $("#auth-error").textContent = "";
+    const submit = $("#auth-submit"); submit.disabled = true;
+    try {
+      const user = await doAuth(authMode, creds);
+      closeModals();
+      await afterSignIn(authMode);
+      toast("✅", authMode === "register" ? "Account created" : "Signed in", user.fullName);
+    } catch (err) {
+      $("#auth-error").textContent = err.message || "Something went wrong.";
+    } finally { submit.disabled = false; }
+  }
+
+  function closeAccountMenu() { const m = $("#account-menu"); if (m) m.hidden = true; }
+  function renderAccount() {
+    const wrap = $("#account-wrap");
+    if (!wrap) return;
+    if (!syncEnabled()) { wrap.style.display = "none"; return; }
+    wrap.style.display = "";
+    const btn = $("#btn-account");
+    if (auth && auth.user) {
+      const first = (auth.user.fullName || "").split(" ")[0] || "Account";
+      btn.textContent = "☁️ " + first;
+      btn.title = "Signed in as " + auth.user.fullName + " (" + auth.user.email + ")";
+      $("#am-name").textContent = auth.user.fullName + " · " + auth.user.email;
+    } else {
+      btn.textContent = "👤 Sign in";
+      btn.title = "Sign in to sync your books across devices";
+    }
+    closeAccountMenu();
   }
 
   // ---------------------------------------------------------------------------
@@ -896,6 +1059,11 @@
 
   function renderStorageStatus() {
     const el = $("#storage-status");
+    if (syncEnabled() && auth && auth.user) {
+      el.textContent = "☁️ Synced as " + ((auth.user.fullName || "").split(" ")[0] || "you");
+      el.title = "Your books sync privately to your account (" + auth.user.email + ").";
+      return;
+    }
     if (fileHandle) { el.textContent = "💾 synced to file"; el.title = "Changes are written to your connected JSON file."; return; }
     const lock = storagePersisted ? " 🔒" : "";
     el.textContent = (supportsFS ? "💾 saved in this browser" : "💾 saved on this device") + lock;
@@ -1487,6 +1655,20 @@
     $("#btn-connect-file").addEventListener("click", connectFile);
     $("#btn-theme").addEventListener("click", toggleTheme);
 
+    // Accounts + sync
+    if (syncEnabled()) {
+      $("#btn-account").addEventListener("click", () => {
+        if (auth) { const m = $("#account-menu"); m.hidden = !m.hidden; }
+        else openAuthModal("login");
+      });
+      $("#am-sync").addEventListener("click", () => { closeAccountMenu(); toast("🔄", "Syncing…", ""); pullData(); });
+      $("#am-signout").addEventListener("click", () => { if (confirm("Sign out on this device?")) logout(); });
+      $("#tab-login").addEventListener("click", () => setAuthMode("login"));
+      $("#tab-register").addEventListener("click", () => setAuthMode("register"));
+      $("#auth-form").addEventListener("submit", onAuthSubmit);
+      document.addEventListener("click", (e) => { if (!e.target.closest("#account-wrap")) closeAccountMenu(); });
+    }
+
     // Modal close
     $$(".modal-backdrop").forEach((m) => m.addEventListener("click", (e) => { if (e.target === m) closeModals(); }));
     document.addEventListener("click", (e) => { if (e.target.closest("[data-close-modal]")) closeModals(); });
@@ -1498,6 +1680,8 @@
     render();
     knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
     switchView("reading");
+    renderAccount();
+    if (syncEnabled() && auth) pullData();
     setupOfflineAndPersistence();
   }
 

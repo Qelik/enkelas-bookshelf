@@ -45,6 +45,17 @@ python3 -m http.server 8000
 
 > Cover lookup needs an internet connection (it calls Open Library). Everything else works offline.
 
+## Accounts & cross-device sync (optional)
+
+Sign in with **email + full name + password** (👤 in the header) to sync your bookshelf
+privately across devices — phone and computer stay in step automatically. Each account's
+data is isolated; nobody else can see it. Sign-in is **optional** — without it the app works
+exactly as before, fully local on the one device.
+
+- Backend: a small **Cloudflare Worker + KV** (free tier) in [`sync-worker/`](sync-worker/) — see its README to deploy your own. Passwords are salted + PBKDF2-hashed; sessions are signed, expiring tokens.
+- The app points at the worker via `SYNC_API` in `app.js` (a per-device `localStorage` override, `enkelas-sync-api`, is also supported).
+- No "forgot password" email in this version — the owner resets a password with one `wrangler kv key delete` command (see the worker README).
+
 ## Where your data lives
 
 Because there's no backend, data is persisted in three complementary ways:

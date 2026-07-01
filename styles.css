@@ -509,3 +509,22 @@ html[data-theme="dark"] .view-toggle button.active { background: var(--accent); 
 .prog-dot { fill: var(--accent-2); stroke: var(--paper-2); stroke-width: 1.5; }
 .prog-target { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 4 4; opacity: .7; }
 .prog-axis { fill: var(--ink-soft); font-family: var(--sans); }
+
+/* ---------- Accounts + sync ---------- */
+.account-wrap { position: relative; }
+.account-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 200px;
+  background: var(--paper-2); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 8px; display: flex; flex-direction: column; gap: 2px;
+}
+.account-menu .am-name { font-size: 12px; color: var(--ink-soft); padding: 6px 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px; word-break: break-word; }
+.account-menu .am-item { text-align: left; background: transparent; border: none; color: var(--ink); font-size: 13.5px; padding: 8px 10px; border-radius: 8px; }
+.account-menu .am-item:hover { background: rgba(0,0,0,.05); }
+html[data-theme="dark"] .account-menu .am-item:hover { background: rgba(255,255,255,.08); }
+
+.auth-tabs { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+.auth-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--ink-soft); font-weight: 600; font-size: 14px; padding: 8px 12px; }
+.auth-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+#auth-form label { margin-top: 10px; }
+.auth-error { color: #b3352c; font-size: 13px; min-height: 18px; margin: 8px 0 0; }
+.auth-note { margin: 14px 0 0; text-align: center; }
