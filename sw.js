@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell so Enkela's Bookshelf works offline
  * and installs to the home screen. Bump CACHE when files change. */
-const CACHE = "enkelas-bookshelf-v4";
+const CACHE = "enkelas-bookshelf-v5";
 const SHELL = [
   "./",
   "./index.html",
@@ -28,16 +28,26 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   // Only handle same-origin GETs; let cover-image API calls go straight to network.
   if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
+
+  const isHTML = req.mode === "navigate" || (req.headers.get("accept") || "").indexOf("text/html") >= 0;
+  if (isHTML) {
+    // Network-first for the page itself, so updates appear immediately when online.
+    e.respondWith(
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
+        return res;
+      }).catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
+    );
+    return;
+  }
+  // Cache-first for static assets (fast + offline), refresh in the background.
   e.respondWith(
     caches.match(req).then((cached) => {
       const network = fetch(req).then((res) => {
-        if (res && res.status === 200) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
+        if (res && res.status === 200) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
         return res;
       }).catch(() => cached);
-      // Cache-first for speed/offline, refresh in background.
       return cached || network;
     })
   );
