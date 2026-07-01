@@ -1,0 +1,14 @@
+name = "enkelas-bookshelf-sync"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+
+# KV namespace for users + per-user data.
+# The `id`/`preview_id` below are placeholders for local `wrangler dev`.
+# Before the first real deploy, run:
+#   npx wrangler kv namespace create BOOKSHELF
+#   npx wrangler kv namespace create BOOKSHELF --preview
+# and paste the returned ids here.
+[[kv_namespaces]]
+binding = "BOOKSHELF"
+id = "cdeead88aa7d42579a16de9aa549fc14"
+preview_id = "0f3b29b9ed2a4c6a9cbecf659eda13cc"

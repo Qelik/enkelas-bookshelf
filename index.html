@@ -27,6 +27,14 @@
       </div>
     </div>
     <div class="data-menu">
+      <div class="account-wrap" id="account-wrap" style="display:none">
+        <button id="btn-account" class="ghost" title="Sign in to sync across devices">👤 Sign in</button>
+        <div class="account-menu" id="account-menu" hidden>
+          <div class="am-name" id="am-name"></div>
+          <button class="am-item" id="am-sync">🔄 Sync now</button>
+          <button class="am-item" id="am-signout">Sign out</button>
+        </div>
+      </div>
       <button id="btn-theme" class="ghost" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
       <button id="btn-goodreads" class="ghost" title="Import your Goodreads library (CSV export)">📥 Goodreads</button>
       <button id="btn-connect-file" class="ghost" title="Read & write a bookshelf.json file on your computer">🔗 Connect file</button>
@@ -405,6 +413,38 @@
         <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
       </div>
       <div class="modal-body" id="year-body"></div>
+    </div>
+  </div>
+
+  <!-- SIGN IN / SIGN UP -->
+  <div class="modal-backdrop" id="auth-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <div class="modal-head">
+        <h3 id="auth-title">Log in</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="auth-tabs">
+          <button type="button" class="auth-tab active" id="tab-login">Log in</button>
+          <button type="button" class="auth-tab" id="tab-register">Sign up</button>
+        </div>
+        <form id="auth-form">
+          <div id="auth-name-row" hidden>
+            <label for="auth-name">Full name</label>
+            <input type="text" id="auth-name" class="input" autocomplete="name" />
+          </div>
+          <label for="auth-email">Email</label>
+          <input type="email" id="auth-email" class="input" autocomplete="email" />
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" class="input" autocomplete="current-password" />
+          <p class="auth-error" id="auth-error"></p>
+          <div class="modal-foot">
+            <button type="button" class="ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="primary" id="auth-submit">Log in</button>
+          </div>
+        </form>
+        <p class="auth-note muted">Your books sync privately to your account — nobody else can see them.</p>
+      </div>
     </div>
   </div>
 
