@@ -1293,7 +1293,12 @@
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const rows = parseCSV(reader.result);
+        const text = String(reader.result || "");
+        if (text.slice(0, 2) === "PK" && text.indexOf("\u0000") >= 0) {
+          toast("⚠️", "That's not a CSV", "Looks like a Numbers/Excel file. In Numbers: File → Export To → CSV, then import that.");
+          return;
+        }
+        const rows = parseCSV(text);
         if (rows.length < 2) throw 0;
         const header = rows[0].map((h) => h.trim());
         const idx = (name) => header.indexOf(name);
@@ -1302,7 +1307,11 @@
           cReview = idx("My Review"), cDateRead = idx("Date Read"), cISBN = idx("ISBN"),
           cISBN13 = idx("ISBN13"), cYear = idx("Original Publication Year");
         if (cTitle < 0) throw 0;
-        const clean = (s) => String(s == null ? "" : s).replace(/^="?/, "").replace(/"$/, "").trim();
+        const clean = (s) => {
+          let v = String(s == null ? "" : s).trim().replace(/^=/, "");
+          if (v.length >= 2 && ((v[0] === '"' && v[v.length - 1] === '"') || (v[0] === "'" && v[v.length - 1] === "'"))) v = v.slice(1, -1);
+          return v.trim();
+        };
         const existing = new Set(state.books.map((b) => (b.title + "|" + b.author).toLowerCase()));
         let added = 0;
         for (let r = 1; r < rows.length; r++) {
@@ -1314,7 +1323,10 @@
           if (existing.has(key)) continue;
           existing.add(key);
           const shelf = cShelf >= 0 ? clean(row[cShelf]) : "read";
-          const status = shelf === "currently-reading" ? "reading" : shelf === "to-read" ? "want" : "finished";
+          const status = shelf === "currently-reading" ? "reading"
+            : shelf === "to-read" ? "want"
+            : (shelf === "did-not-finish" || shelf === "dnf" || shelf === "abandoned") ? "dnf"
+            : "finished";
           const rating = cRating >= 0 ? Number(clean(row[cRating])) || 0 : 0;
           const pages = cPages >= 0 ? Number(clean(row[cPages])) || 0 : 0;
           const isbn = (cISBN13 >= 0 && clean(row[cISBN13])) || (cISBN >= 0 && clean(row[cISBN])) || "";
