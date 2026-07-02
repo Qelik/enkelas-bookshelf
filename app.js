@@ -145,6 +145,7 @@
       version: SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
       settings: { goal: { year: new Date().getFullYear(), target: 12, pagesTarget: 0, dailyPages: 0 } },
+      shelfOrder: [],
       books: [],
     };
   }
@@ -163,6 +164,7 @@
     if (!data || typeof data !== "object") return base;
     if (data.updatedAt) base.updatedAt = data.updatedAt;
     base.settings.goal = Object.assign(base.settings.goal, (data.settings && data.settings.goal) || {});
+    base.shelfOrder = Array.isArray(data.shelfOrder) ? data.shelfOrder.map(String) : [];
     const STATUSES = ["want", "reading", "finished", "dnf"];
     base.books = Array.isArray(data.books) ? data.books.map((b) => ({
       id: b.id || uid(),
@@ -179,9 +181,18 @@
       seriesName: b.seriesName || "",
       seriesNumber: b.seriesNumber != null && b.seriesNumber !== "" ? Number(b.seriesNumber) : null,
       publishedYear: b.publishedYear ? Number(b.publishedYear) : null,
-      quotes: Array.isArray(b.quotes) ? b.quotes.map((q) => ({ id: q.id || uid(), text: q.text || "", page: q.page != null ? Number(q.page) : null })) : [],
+      quotes: Array.isArray(b.quotes) ? b.quotes.map((q) => ({ id: q.id || uid(), text: q.text || "", page: q.page != null ? Number(q.page) : null, at: q.at || null })) : [],
       readCount: Number(b.readCount) || 1,
-      finishHistory: Array.isArray(b.finishHistory) ? b.finishHistory : [],
+      finishHistory: Array.isArray(b.finishHistory) ? b.finishHistory.map((f) =>
+        typeof f === "string" ? { date: f, rating: null } : { date: f.date || null, rating: f.rating ? Number(f.rating) : null }) : [],
+      journal: Array.isArray(b.journal) ? b.journal.map((j) => ({ id: j.id || uid(), date: j.date || new Date().toISOString(), page: j.page != null && j.page !== "" ? Number(j.page) : null, text: j.text || "" })) : [],
+      characters: Array.isArray(b.characters) ? b.characters.map((c) => ({ id: c.id || uid(), name: c.name || "", desc: c.desc || "" })) : [],
+      vocab: Array.isArray(b.vocab) ? b.vocab.map((v) => ({ id: v.id || uid(), word: v.word || "", def: v.def || "", page: v.page != null && v.page !== "" ? Number(v.page) : null })) : [],
+      bookmark: b.bookmark && (b.bookmark.note || b.bookmark.page != null) ? { page: b.bookmark.page != null && b.bookmark.page !== "" ? Number(b.bookmark.page) : null, note: String(b.bookmark.note || ""), date: b.bookmark.date || null } : null,
+      dnfReason: b.dnfReason || "",
+      pickReason: b.pickReason || "",
+      expectation: b.expectation ? Number(b.expectation) : null,
+      loanDue: b.loanDue || "",
       status: STATUSES.indexOf(b.status) >= 0 ? b.status : "reading",
       rating: b.rating ? Number(b.rating) : null,
       startedAt: b.startedAt || null,
@@ -192,6 +203,7 @@
         date: l.date || new Date().toISOString(),
         pages: Number(l.pages) || 0,
         minutes: Number(l.minutes) || 0,
+        mood: l.mood || "",
         note: l.note || "",
       })) : [],
     })) : [];
@@ -575,6 +587,7 @@
     renderReading();
     renderWant();
     renderLibrary();
+    renderJourney();
     renderAchievements();
     renderGoal();
     renderStatsView();
@@ -599,9 +612,35 @@
     return `<div class="cover ${cls || ""}">${esc(book.title)}</div>`;
   }
   function starsHTML(rating) {
+    const r = Number(rating) || 0;
     let out = "";
-    for (let i = 1; i <= 5; i++) out += `<span class="${i <= (rating || 0) ? "" : "off"}">★</span>`;
+    for (let i = 1; i <= 5; i++) {
+      if (r >= i) out += `<span>★</span>`;
+      else if (r >= i - 0.5) out += `<span class="half">★</span>`;
+      else out += `<span class="off">★</span>`;
+    }
     return `<span class="stars">${out}</span>`;
+  }
+  function fmtRating(r) { return r == null ? "" : (r % 1 === 0 ? String(r) : r.toFixed(1)); }
+
+  // Small per-book badges used across cards
+  function loanBadgeHTML(b) {
+    if (!b.loanDue) return "";
+    const due = startOfDay(new Date(b.loanDue + "T12:00:00"));
+    if (isNaN(due)) return "";
+    const days = Math.round((due - startOfDay(new Date())) / DAY);
+    const cls = days < 0 ? " overdue" : days <= 5 ? " soon" : "";
+    const label = days < 0 ? `overdue by ${Math.abs(days)}d` : days === 0 ? "due back today" : days <= 14 ? `due back in ${days}d` : `due ${fmtDate(new Date(due).toISOString())}`;
+    return `<span class="loan-badge${cls}" title="Borrowed copy — due back ${fmtDate(new Date(due).toISOString())}">📅 ${label}</span>`;
+  }
+  function tbrAgeHTML(b) {
+    const months = Math.floor((Date.now() - new Date(b.addedAt)) / (DAY * 30.44));
+    if (!(months >= 6)) return "";
+    return `<span class="tbr-badge" title="On your list since ${fmtDate(b.addedAt)}">🕰 ${months} months on your list</span>`;
+  }
+  function bookmarkHTML(b) {
+    if (!b.bookmark) return "";
+    return `<p class="bookmark-line" title="Bookmark saved ${fmtDate(b.bookmark.date)}">🔖 ${b.bookmark.page ? "p." + b.bookmark.page : "Where I left off"}${b.bookmark.note ? " — “" + esc(b.bookmark.note) + "”" : ""}</p>`;
   }
 
   function renderReading() {
@@ -619,12 +658,14 @@
         ${coverHTML(b)}
         <div class="book-meta">
           <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}</h3>
-          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
+          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${loanBadgeHTML(b)}</p>
           <div class="progress"><span style="width:${pct}%"></span></div>
           <p class="progress-label">${num(read)}${b.totalPages ? " / " + num(b.totalPages) : ""} ${unitLabel(b)}${b.totalPages ? " · " + pct + "%" : ""}${est ? ` · <span class="eta">≈ done ${fmtDate(est.date.toISOString())}</span>` : ""}</p>
+          ${bookmarkHTML(b)}
           ${chipsHTML(b, true)}
           <div class="card-actions">
             <button class="mini" data-action="log" data-id="${b.id}">＋ Log</button>
+            <button class="mini" data-action="bookmark" data-id="${b.id}" title="Where did you leave off?">🔖</button>
             <button class="mini" data-action="detail" data-id="${b.id}">📈 Progress</button>
             <button class="mini" data-action="finish" data-id="${b.id}">✓ Finish</button>
             <button class="mini" data-action="dnf" data-id="${b.id}">✕ DNF</button>
@@ -635,7 +676,7 @@
             ${recent.map((l) => `<div class="log-row">
               <span class="l-pages">+${num(l.pages)}${unitShort(b)}</span>
               <span class="l-when">${fmtDateTime(l.date)}${l.minutes ? " · " + l.minutes + "m" : ""}</span>
-              <span class="l-note">${l.note ? "“" + esc(l.note) + "”" : ""}</span>
+              <span class="l-note">${l.mood ? l.mood + " " : ""}${l.note ? "“" + esc(l.note) + "”" : ""}</span>
               <span class="log-actions">
                 <button data-action="edit-log" data-id="${b.id}" data-log="${l.id}" title="Edit log">✎</button>
                 <button data-action="del-log" data-id="${b.id}" data-log="${l.id}" title="Delete log">🗑</button>
@@ -659,7 +700,9 @@
         ${coverHTML(b)}
         <div class="book-meta">
           <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}</h3>
-          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
+          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${tbrAgeHTML(b)}${loanBadgeHTML(b)}</p>
+          ${b.pickReason ? `<p class="pick-reason">💭 ${esc(b.pickReason)}</p>` : ""}
+          ${b.expectation ? `<p class="pick-reason">Hoping for ${starsHTML(b.expectation)}</p>` : ""}
           ${chipsHTML(b, true)}
           <div class="card-actions">
             <button class="mini" data-action="start" data-id="${b.id}">▶ Start reading</button>
@@ -672,8 +715,8 @@
   }
 
   function libDate(b) {
-    if (b.status === "dnf") return `<span class="dnf-badge">Did not finish</span>`;
-    return `Finished ${fmtDate(b.finishedAt)}${b.readCount > 1 ? " · " + b.readCount + "× read" : ""} · ${num(pagesRead(b) || b.totalPages)}${unitShort(b)}`;
+    if (b.status === "dnf") return `<span class="dnf-badge" title="${b.dnfReason ? esc(b.dnfReason) : "Did not finish"}">Did not finish${b.dnfReason ? " · " + esc(b.dnfReason.length > 40 ? b.dnfReason.slice(0, 38) + "…" : b.dnfReason) : ""}</span>`;
+    return `Finished ${fmtDate(b.finishedAt)}${b.readCount > 1 ? " · " + b.readCount + "× read" : ""} · ${num(pagesRead(b) || b.totalPages)}${unitShort(b)}${b.loanDue ? " " + loanBadgeHTML(b) : ""}`;
   }
 
   function renderLibrary() {
@@ -708,8 +751,9 @@
     empty.textContent = done.length === 0 ? "No finished books yet. Add books you've already read, or finish one you're reading." : "No books match your search or filter.";
 
     const wrap = $("#library-list");
-    if (libraryView === "shelf") wrap.innerHTML = shelfHTML(list);
+    if (libraryView === "shelf") { wrap.innerHTML = shelfHTML(list); if (list.length) empty.hidden = true; }
     else if (libraryView === "author") wrap.innerHTML = `<div class="author-view">${authorHTML(list)}</div>`;
+    else if (libraryView === "series") { wrap.innerHTML = seriesHTML(); empty.hidden = true; }
     else wrap.innerHTML = `<div class="card-grid library">${list.map(libraryCardHTML).join("")}</div>`;
   }
 
@@ -732,12 +776,104 @@
   }
   function shelfHTML(list) {
     if (!list.length) return "";
-    const spines = list.map((b) => {
+    // Custom order: the user arranges their own shelf by dragging.
+    const idx = {};
+    (state.shelfOrder || []).forEach((id, i) => (idx[id] = i));
+    const ordered = list.slice().sort((a, b) => (idx[a.id] != null ? idx[a.id] : 1e9) - (idx[b.id] != null ? idx[b.id] : 1e9));
+    const slots = ordered.map((b, i) => {
       const hue = hashHue(b.title + b.author);
-      const h = Math.max(120, Math.min(230, 120 + (b.totalPages || 200) / 6));
-      return `<button class="spine" data-action="detail" data-id="${b.id}" style="--hue:${hue}; height:${h}px" title="${esc(b.title)} — ${esc(b.author)}"><span class="spine-title">${esc(b.title)}</span></button>`;
+      const h = Math.max(118, Math.min(205, 118 + (b.totalPages || 200) / 6));
+      const w = 34 + (hashHue(b.id) % 14); // varied thickness, stable per book
+      const lean = i % 11 === 4 ? " lean-l" : i % 7 === 5 ? " lean-r" : "";
+      return `<div class="shelf-slot" draggable="true" data-shelf-id="${b.id}">
+        <button class="spine${lean}" data-action="detail" data-id="${b.id}" style="--hue:${hue}; height:${h}px; width:${w}px" title="${esc(b.title)} — ${esc(b.author)}"><span class="spine-title">${esc(b.title)}</span></button>
+      </div>`;
     }).join("");
-    return `<div class="bookshelf">${spines}</div>`;
+    return `<p class="shelf-hint muted">🖐 Drag books to arrange your shelf however you like — your order is saved.</p><div class="bookshelf">${slots}</div>`;
+  }
+
+  // Drag & drop shelf rearranging (mouse via HTML5 DnD, touch via long-press).
+  function saveShelfOrderFromDOM(shelf) {
+    state.shelfOrder = $$(".shelf-slot", shelf).map((s) => s.dataset.shelfId);
+    commit();
+  }
+  function setupShelfDnD(root) {
+    let dragEl = null;
+    root.addEventListener("dragstart", (e) => {
+      const slot = e.target.closest(".shelf-slot");
+      if (!slot) return;
+      dragEl = slot;
+      slot.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", slot.dataset.shelfId); } catch (err) { /* old browsers */ }
+    });
+    root.addEventListener("dragover", (e) => {
+      if (!dragEl) return;
+      e.preventDefault();
+      const over = e.target.closest(".shelf-slot");
+      if (!over || over === dragEl || !over.parentNode) return;
+      const r = over.getBoundingClientRect();
+      over.parentNode.insertBefore(dragEl, e.clientX < r.left + r.width / 2 ? over : over.nextSibling);
+    });
+    root.addEventListener("drop", (e) => { if (dragEl) e.preventDefault(); });
+    root.addEventListener("dragend", () => {
+      if (!dragEl) return;
+      dragEl.classList.remove("dragging");
+      const shelf = dragEl.closest(".bookshelf");
+      dragEl = null;
+      if (shelf) saveShelfOrderFromDOM(shelf);
+    });
+    // Touch: hold a book for a moment, then drag it along the shelf.
+    let touchDrag = null, holdTimer = null, suppressClick = false;
+    root.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse") return;
+      const slot = e.target.closest(".shelf-slot");
+      if (!slot) return;
+      holdTimer = setTimeout(() => { touchDrag = slot; slot.classList.add("dragging"); }, 350);
+    });
+    root.addEventListener("pointermove", (e) => {
+      if (!touchDrag) { clearTimeout(holdTimer); return; }
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const over = el && el.closest(".shelf-slot");
+      if (!over || over === touchDrag || !over.parentNode) return;
+      const r = over.getBoundingClientRect();
+      over.parentNode.insertBefore(touchDrag, e.clientX < r.left + r.width / 2 ? over : over.nextSibling);
+    });
+    const endTouch = () => {
+      clearTimeout(holdTimer);
+      if (!touchDrag) return;
+      touchDrag.classList.remove("dragging");
+      const shelf = touchDrag.closest(".bookshelf");
+      touchDrag = null;
+      suppressClick = true;
+      setTimeout(() => (suppressClick = false), 350);
+      if (shelf) saveShelfOrderFromDOM(shelf);
+    };
+    root.addEventListener("pointerup", endTouch);
+    root.addEventListener("pointercancel", endTouch);
+    root.addEventListener("click", (e) => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+  }
+
+  // Series progress: every series you've touched, how far you are, what's next.
+  function seriesHTML() {
+    const groups = {};
+    state.books.forEach((b) => { if (b.seriesName) (groups[b.seriesName] = groups[b.seriesName] || []).push(b); });
+    const names = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    if (!names.length) return `<p class="empty">No series yet — set “Series” on a book and your progress will show up here.</p>`;
+    const STATUS_ICON = { finished: "✅", reading: "📖", want: "⏳", dnf: "🚧" };
+    return `<div class="series-view">` + names.map((name) => {
+      const books = groups[name].slice().sort((a, b) => (a.seriesNumber || 999) - (b.seriesNumber || 999) || a.title.localeCompare(b.title));
+      const read = books.filter((b) => b.status === "finished").length;
+      const next = books.find((b) => b.status !== "finished" && b.status !== "dnf");
+      const pct = Math.round((read / books.length) * 100);
+      return `<div class="series-group">
+        <h3 class="series-head">${esc(name)} <span class="muted">· ${read} of ${books.length} read</span></h3>
+        <div class="progress series-progress"><span style="width:${pct}%"></span></div>
+        ${next ? `<p class="series-next">👉 Next up: ${next.seriesNumber ? "#" + next.seriesNumber + " · " : ""}${esc(next.title)}</p>` : `<p class="series-next done">🎉 Series complete!</p>`}
+        <div class="author-books">${books.map((b) => `
+          <button class="author-book" data-action="detail" data-id="${b.id}">${coverHTML(b)}<span class="ab-title">${STATUS_ICON[b.status] || ""} ${b.seriesNumber ? "#" + b.seriesNumber + " · " : ""}${esc(b.title)}</span></button>`).join("")}</div>
+      </div>`;
+    }).join("") + `</div>`;
   }
   function authorHTML(list) {
     const groups = {};
@@ -888,7 +1024,7 @@
   }
   function ratingItems() {
     const counts = [0, 0, 0, 0, 0];
-    state.books.forEach((b) => { if (b.rating >= 1 && b.rating <= 5) counts[b.rating - 1]++; });
+    state.books.forEach((b) => { const r = Math.round(b.rating || 0); if (r >= 1 && r <= 5) counts[r - 1]++; });
     return counts.map((v, i) => ({ full: (i + 1) + " star", value: v, tick: (i + 1) + "★" }));
   }
   function svgBars(items, unit) {
@@ -945,8 +1081,20 @@
     if (book.publishedYear) meta.push(`First published ${book.publishedYear}`);
     if (dates) meta.push(dates);
     if (book.readCount > 1) meta.push(`Read ${book.readCount}×`);
+    if (book.expectation && book.rating) {
+      const diff = book.rating - book.expectation;
+      meta.push(`🔮 Expected ${starsHTML(book.expectation)} → got ${starsHTML(book.rating)} ${diff > 0 ? "— better than hoped!" : diff < 0 ? "— not quite what you hoped" : "— exactly as expected"}`);
+    } else if (book.expectation) {
+      meta.push(`🔮 Hoping for ${starsHTML(book.expectation)}`);
+    }
+    if (book.loanDue) meta.push(loanBadgeHTML(book));
+    if (book.bookmark) meta.push(`🔖 ${book.bookmark.page ? "p." + book.bookmark.page : "Bookmark"}${book.bookmark.note ? " — “" + esc(book.bookmark.note) + "”" : ""}`);
 
     const quotes = book.quotes || [];
+    const journal = (book.journal || []).slice().sort((a, b2) => new Date(b2.date) - new Date(a.date));
+    const chars = book.characters || [];
+    const vocab = book.vocab || [];
+    const history = (book.finishHistory || []).filter((f) => f.date);
     $("#detail-body").innerHTML = `
       <div class="detail-top">
         ${coverHTML(book)}
@@ -957,15 +1105,35 @@
           ${chipsHTML(book, false)}
           <div class="detail-actions">
             ${book.status === "reading" ? `<button class="mini" data-detail-action="log" data-id="${book.id}">＋ Log pages</button>` : ""}
+            ${book.status === "reading" ? `<button class="mini" data-detail-action="bookmark" data-id="${book.id}">🔖 Bookmark</button>` : ""}
             ${book.status === "finished" ? `<button class="mini" data-detail-action="reread" data-id="${book.id}">🔁 Read again</button>` : ""}
+            <button class="mini" data-detail-action="share-card" data-id="${book.id}">🖼 Share card</button>
+            <button class="mini" data-detail-action="export-md" data-id="${book.id}">⬇ Journal .md</button>
             <button class="mini" data-detail-action="edit" data-id="${book.id}">✎ Edit</button>
           </div>
         </div>
       </div>
       ${book.description ? `<div class="detail-section"><h5>About</h5><p class="detail-desc">${esc(book.description)}</p></div>` : ""}
+      ${book.pickReason ? `<div class="detail-section"><h5>💭 Why I picked it up</h5><p class="detail-desc">${esc(book.pickReason)}</p></div>` : ""}
+      ${book.dnfReason ? `<div class="detail-section"><h5>🚧 Why I set it aside</h5><p class="detail-desc">${esc(book.dnfReason)}</p></div>` : ""}
       <div class="detail-section">
         <h5>📈 Reading progress</h5>
         <div class="progress-chart">${svgProgress(book)}</div>
+      </div>
+      <div class="detail-section">
+        <h5>📓 Journal (${journal.length})</h5>
+        <div class="journal-list">${journal.map((j) => `<div class="journal-entry">
+          <div class="j-entry-head"><span class="j-entry-date">${fmtDateTime(j.date)}${j.page ? ` · p.${j.page}` : ""}</span>
+          <button class="icon-btn" data-detail-action="del-journal" data-id="${book.id}" data-journal="${j.id}" title="Delete entry">🗑</button></div>
+          <p class="j-entry-text">${esc(j.text)}</p>
+        </div>`).join("") || `<p class="muted">No entries yet — this is your diary for this book. Thoughts, theories, feelings…</p>`}</div>
+        <form id="journal-form" class="quote-form">
+          <textarea id="j-text" class="input" rows="2" placeholder="What's happening in the story? What do you think so far?"></textarea>
+          <div class="quote-form-row">
+            <input type="number" id="j-page" class="input" placeholder="Page #" min="0" max="100000" />
+            <button type="submit" class="primary">Add entry</button>
+          </div>
+        </form>
       </div>
       <div class="detail-section">
         <h5>❝ Quotes &amp; highlights (${quotes.length})</h5>
@@ -979,12 +1147,35 @@
         </form>
       </div>
       <div class="detail-section">
+        <h5>👥 Characters (${chars.length})</h5>
+        <div class="kv-list">${chars.map((c) => `<div class="kv-row"><span class="kv-key">${esc(c.name)}</span><span class="kv-val">${esc(c.desc)}</span><button class="icon-btn" data-detail-action="del-char" data-id="${book.id}" data-char="${c.id}" title="Delete">🗑</button></div>`).join("") || `<p class="muted">Keep track of who's who — handy for big casts and long series.</p>`}</div>
+        <form id="char-form" class="kv-form">
+          <input type="text" id="char-name" class="input" placeholder="Name" required />
+          <input type="text" id="char-desc" class="input" placeholder="Who are they? (your own words)" />
+          <button type="submit" class="primary">Add</button>
+        </form>
+      </div>
+      <div class="detail-section">
+        <h5>🔤 Vocabulary (${vocab.length})</h5>
+        <div class="kv-list">${vocab.map((v) => `<div class="kv-row"><span class="kv-key">${esc(v.word)}</span><span class="kv-val">${esc(v.def)}${v.page ? ` <span class="muted">— p.${v.page}</span>` : ""}</span><button class="icon-btn" data-detail-action="del-vocab" data-id="${book.id}" data-vocab="${v.id}" title="Delete">🗑</button></div>`).join("") || `<p class="muted">New words you met in this book, with what they mean.</p>`}</div>
+        <form id="vocab-form" class="kv-form">
+          <input type="text" id="vocab-word" class="input" placeholder="Word" required />
+          <input type="text" id="vocab-def" class="input" placeholder="Meaning" />
+          <input type="number" id="vocab-page" class="input kv-page" placeholder="p." min="0" max="100000" />
+          <button type="submit" class="primary">Add</button>
+        </form>
+      </div>
+      ${history.length ? `<div class="detail-section">
+        <h5>🔁 Read history</h5>
+        <div class="kv-list">${history.map((f, i) => `<div class="kv-row"><span class="kv-key">Read #${i + 1}</span><span class="kv-val">${fmtDate(f.date)}${f.rating ? " · " + starsHTML(f.rating) : ""}</span></div>`).join("")}</div>
+      </div>` : ""}
+      <div class="detail-section">
         <h5>Sessions (${book.logs.length})</h5>
         <div class="logs detail-logs">
           ${logs.length ? logs.map((l) => `<div class="log-row">
             <span class="l-pages">+${num(l.pages)}${unitShort(book)}</span>
             <span class="l-when">${fmtDateTime(l.date)}${l.minutes ? " · " + l.minutes + "m" : ""}</span>
-            <span class="l-note">${l.note ? "“" + esc(l.note) + "”" : ""}</span>
+            <span class="l-note">${l.mood ? l.mood + " " : ""}${l.note ? "“" + esc(l.note) + "”" : ""}</span>
           </div>`).join("") : `<p class="muted">No sessions logged yet.</p>`}
         </div>
       </div>
@@ -1061,8 +1252,355 @@
       </div>
       ${fav ? `<div class="yr-highlight"><h5>⭐ Favourite read</h5><div class="yr-book">${coverHTML(fav)}<div><strong>${esc(fav.title)}</strong><br><span class="muted">${esc(fav.author)}</span><br>${starsHTML(fav.rating)}</div></div></div>` : ""}
       ${longest && longest !== fav ? `<div class="yr-highlight"><h5>📏 Longest book</h5><div class="yr-book">${coverHTML(longest)}<div><strong>${esc(longest.title)}</strong><br><span class="muted">${num(longest.totalPages)} pages</span></div></div></div>` : ""}
+      <div class="yr-actions">
+        <button class="ghost" data-yr-action="image" data-year="${year}">🖼 Save as image</button>
+        <button class="ghost" data-yr-action="markdown" data-year="${year}">⬇ Export ${year} journal (.md)</button>
+      </div>
       ` : `<p class="empty">No books finished in ${year} yet. Come back once you've read some!</p>`}`;
     showModal("year-modal");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Keepsakes: downloads, markdown journals, shareable cards, monthly recap
+  // ---------------------------------------------------------------------------
+  function downloadBlob(name, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  }
+  function downloadText(name, text) { downloadBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" })); }
+  function slugify(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "book"; }
+  function appTitle() { return $("#app-title") ? $("#app-title").textContent : "Enkela's Bookshelf"; }
+
+  function bookMarkdown(b) {
+    const lines = [`# ${b.title}`, ""];
+    if (b.author) lines.push(`*by ${b.author}*`, "");
+    const meta = [];
+    if (b.rating) meta.push(`Rating: ${fmtRating(b.rating)}★`);
+    if (b.expectation) meta.push(`Expected: ${fmtRating(b.expectation)}★`);
+    if (b.status === "finished" && b.finishedAt) meta.push(`Finished: ${fmtDate(b.finishedAt)}`);
+    if (b.readCount > 1) meta.push(`Read ${b.readCount}×`);
+    if (b.totalPages) meta.push(`${num(b.totalPages)} ${unitLabel(b)}`);
+    if (b.seriesName) meta.push(`${b.seriesName}${b.seriesNumber ? " #" + b.seriesNumber : ""}`);
+    if (meta.length) lines.push(meta.join(" · "), "");
+    if (b.pickReason) lines.push(`## Why I picked it up`, "", b.pickReason, "");
+    if (b.review) lines.push(`## My review`, "", b.review, "");
+    if (b.dnfReason) lines.push(`## Why I set it aside`, "", b.dnfReason, "");
+    if ((b.journal || []).length) {
+      lines.push(`## Journal`, "");
+      b.journal.slice().sort((x, y) => new Date(x.date) - new Date(y.date))
+        .forEach((j) => lines.push(`- **${fmtDate(j.date)}**${j.page ? ` (p.${j.page})` : ""} — ${j.text}`));
+      lines.push("");
+    }
+    if ((b.quotes || []).length) {
+      lines.push(`## Quotes & highlights`, "");
+      b.quotes.forEach((q) => lines.push(`> ${q.text}${q.page ? ` — p.${q.page}` : ""}`, ""));
+    }
+    if ((b.characters || []).length) {
+      lines.push(`## Characters`, "");
+      b.characters.forEach((c) => lines.push(`- **${c.name}**${c.desc ? ` — ${c.desc}` : ""}`));
+      lines.push("");
+    }
+    if ((b.vocab || []).length) {
+      lines.push(`## Vocabulary`, "");
+      b.vocab.forEach((v) => lines.push(`- **${v.word}**${v.page ? ` (p.${v.page})` : ""}${v.def ? ` — ${v.def}` : ""}`));
+      lines.push("");
+    }
+    if (b.logs.length) {
+      lines.push(`## Reading sessions`, "");
+      b.logs.slice().sort((x, y) => new Date(x.date) - new Date(y.date))
+        .forEach((l) => lines.push(`- ${fmtDateTime(l.date)}: ${num(l.pages)} ${unitLabel(b)}${l.minutes ? `, ${l.minutes} min` : ""}${l.mood ? " " + l.mood : ""}${l.note ? ` — “${l.note}”` : ""}`));
+      lines.push("");
+    }
+    lines.push("---", `*Exported from ${appTitle()} on ${fmtDate(new Date().toISOString())}*`);
+    return lines.join("\n");
+  }
+  function yearMarkdown(year) {
+    const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year)
+      .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+    const lines = [`# My ${year} in books`, "", `${finished.length} books · ${num(pagesReadInYear(year))} pages`, ""];
+    finished.forEach((b) => {
+      lines.push(`## ${b.title}${b.author ? ` — ${b.author}` : ""}`, "");
+      const meta = [`Finished ${fmtDate(b.finishedAt)}`];
+      if (b.rating) meta.push(`${fmtRating(b.rating)}★`);
+      lines.push(meta.join(" · "), "");
+      if (b.review) lines.push(b.review, "");
+      (b.quotes || []).slice(0, 3).forEach((q) => lines.push(`> ${q.text}${q.page ? ` — p.${q.page}` : ""}`, ""));
+    });
+    lines.push("---", `*Exported from ${appTitle()}*`);
+    return lines.join("\n");
+  }
+
+  // --- Shareable card images (canvas → PNG download) ---
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+  function wrapText(ctx, text, x, y, maxW, lh, maxLines) {
+    const words = String(text).split(/\s+/);
+    let line = "", lines = 0;
+    for (let i = 0; i < words.length; i++) {
+      const test = line ? line + " " + words[i] : words[i];
+      if (ctx.measureText(test).width > maxW && line) {
+        if (lines + 1 >= maxLines) { ctx.fillText(line.replace(/.{3}$/, "") + "…", x, y); return y + lh; }
+        ctx.fillText(line, x, y); y += lh; lines++; line = words[i];
+      } else line = test;
+    }
+    if (line) { ctx.fillText(line, x, y); y += lh; }
+    return y;
+  }
+  function drawStars(ctx, rating, x, y, size) {
+    ctx.font = `${size}px serif`;
+    for (let i = 1; i <= 5; i++) {
+      const sx = x + (i - 1) * (size + 6);
+      ctx.fillStyle = rating >= i - 0.5 ? "#c98a4b" : "#e7d3bd";
+      ctx.fillText("★", sx, y);
+      if (rating >= i - 0.5 && rating < i) {
+        // half star: repaint the right half in the soft colour
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(sx + size / 2, y - size, size / 2 + 4, size * 1.3);
+        ctx.clip();
+        ctx.fillStyle = "#e7d3bd";
+        ctx.fillText("★", sx, y);
+        ctx.restore();
+      }
+    }
+  }
+  async function shareBookCard(b) {
+    const W = 1000, H = 1400;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#fbf7ef"); g.addColorStop(1, "#efe2ca");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "#c98a4b"; ctx.lineWidth = 5; ctx.strokeRect(42, 42, W - 84, H - 84);
+    ctx.strokeStyle = "rgba(201,138,75,.45)"; ctx.lineWidth = 1.5; ctx.strokeRect(56, 56, W - 112, H - 112);
+    const cw = 320, ch = 470, cx = (W - cw) / 2, cy = 110;
+    let drewCover = false;
+    if (b.coverUrl) {
+      try {
+        const img = await loadImage(b.coverUrl);
+        ctx.save();
+        ctx.shadowColor = "rgba(60,40,20,.4)"; ctx.shadowBlur = 34; ctx.shadowOffsetY = 14;
+        ctx.drawImage(img, cx, cy, cw, ch);
+        ctx.restore();
+        drewCover = true;
+      } catch (e) { /* CORS or broken cover — fall back */ }
+    }
+    if (!drewCover) {
+      const hue = hashHue(b.title + b.author);
+      ctx.save();
+      ctx.shadowColor = "rgba(60,40,20,.4)"; ctx.shadowBlur = 34; ctx.shadowOffsetY = 14;
+      ctx.fillStyle = `hsl(${hue}, 38%, 42%)`;
+      ctx.fillRect(cx, cy, cw, ch);
+      ctx.restore();
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "italic 30px Georgia, serif";
+      ctx.textAlign = "center";
+      wrapText(ctx, b.title, cx + cw / 2, cy + ch / 2 - 20, cw - 60, 38, 5);
+      ctx.textAlign = "left";
+    }
+    let y = cy + ch + 90;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#2c2722";
+    ctx.font = "600 52px Georgia, serif";
+    y = wrapText(ctx, b.title, W / 2, y, W - 220, 60, 2);
+    if (b.author) {
+      ctx.fillStyle = "#6b6258";
+      ctx.font = "italic 32px Georgia, serif";
+      ctx.fillText("by " + b.author, W / 2, y + 8); y += 56;
+    }
+    if (b.rating) {
+      ctx.textAlign = "left";
+      const sw = 5 * 52 + 4 * 6;
+      drawStars(ctx, b.rating, (W - sw) / 2, y + 40, 52);
+      y += 80;
+      ctx.textAlign = "center";
+    }
+    ctx.fillStyle = "#6b6258";
+    ctx.font = "26px Georgia, serif";
+    const bits = [];
+    if (b.status === "finished" && b.finishedAt) bits.push("Finished " + fmtDate(b.finishedAt));
+    if (b.totalPages) bits.push(num(b.totalPages) + " " + unitLabel(b));
+    if (b.readCount > 1) bits.push("read " + b.readCount + "×");
+    if (bits.length) { ctx.fillText(bits.join("  ·  "), W / 2, y + 16); y += 60; }
+    const quote = (b.quotes || [])[0];
+    if (quote && y < H - 300) {
+      ctx.fillStyle = "#9c5b3a";
+      ctx.font = "72px Georgia, serif";
+      ctx.fillText("“", W / 2, y + 60);
+      ctx.fillStyle = "#4a4238";
+      ctx.font = "italic 30px Georgia, serif";
+      y = wrapText(ctx, quote.text, W / 2, y + 100, W - 260, 42, 4) + 10;
+    }
+    ctx.fillStyle = "#9c5b3a";
+    ctx.font = "600 26px Georgia, serif";
+    ctx.fillText("📚 " + appTitle(), W / 2, H - 90);
+    try {
+      cv.toBlob((blob) => {
+        if (!blob) { toast("⚠️", "Couldn't create the card", "The cover image blocked export — try removing it."); return; }
+        downloadBlob(slugify(b.title) + "-card.png", blob);
+        toast("🖼", "Book card saved", "A shareable image of “" + b.title + "”");
+      }, "image/png");
+    } catch (e) {
+      toast("⚠️", "Couldn't create the card", "The cover image blocked export.");
+    }
+  }
+  async function shareYearCard(year) {
+    const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year);
+    const pages = pagesReadInYear(year);
+    const rated = finished.filter((b) => b.rating);
+    const avg = rated.length ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length) : 0;
+    const genres = {};
+    finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
+    const topGenre = Object.keys(genres).sort((a, b) => genres[b] - genres[a])[0];
+    const daysThisYear = Array.from(readingDaySet()).filter((t) => new Date(t).getFullYear() === year).length;
+    const W = 1080, H = 1080;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, "#9c5b3a"); g.addColorStop(1, "#c98a4b");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "rgba(255,255,255,.12)";
+    for (let i = 0; i < 14; i++) { const bw = 46 + (i * 37) % 40; ctx.fillRect(60 + i * 70, H - 210, bw * 0.55, 150 + (i * 53) % 50); }
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.font = "600 72px Georgia, serif";
+    ctx.fillText(year + " in Books", W / 2, 150);
+    ctx.font = "30px Georgia, serif";
+    ctx.fillText(appTitle(), W / 2, 205);
+    const tiles = [
+      [num(finished.length), "books finished"],
+      [num(pages), "pages read"],
+      [num(daysThisYear), "days reading"],
+      [avg ? avg.toFixed(1) + "★" : "—", "average rating"],
+      [topGenre || "—", "top genre"],
+      [num(readingStreak().longest), "longest streak"],
+    ];
+    tiles.forEach(([v, l], i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      const x = W / 4 + col * (W / 2), y = 330 + row * 170;
+      ctx.font = "600 62px Georgia, serif";
+      ctx.fillText(String(v).length > 14 ? String(v).slice(0, 13) + "…" : String(v), x, y);
+      ctx.font = "24px Georgia, serif";
+      ctx.globalAlpha = .85;
+      ctx.fillText(l.toUpperCase(), x, y + 42);
+      ctx.globalAlpha = 1;
+    });
+    cv.toBlob((blob) => {
+      if (!blob) return;
+      downloadBlob("year-in-books-" + year + ".png", blob);
+      toast("🖼", "Year card saved", year + " recap as an image");
+    }, "image/png");
+  }
+
+  // --- Monthly wrap-up ---
+  function monthLogs(y, m) {
+    const logs = [];
+    state.books.forEach((b) => b.logs.forEach((l) => {
+      const d = new Date(l.date);
+      if (!isNaN(d) && d.getFullYear() === y && d.getMonth() === m) logs.push({ d, pages: Number(l.pages) || 0, minutes: Number(l.minutes) || 0 });
+    }));
+    return logs;
+  }
+  function openMonthlyRecap(y, m) {
+    const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const logs = monthLogs(y, m);
+    const finished = booksFinished().filter((b) => { const d = new Date(b.finishedAt); return b.finishedAt && d.getFullYear() === y && d.getMonth() === m; });
+    const pages = logs.reduce((s, l) => s + l.pages, 0);
+    const minutes = logs.reduce((s, l) => s + l.minutes, 0);
+    const days = new Set(logs.map((l) => startOfDay(l.d))).size;
+    const perDay = {};
+    logs.forEach((l) => { const k = startOfDay(l.d); perDay[k] = (perDay[k] || 0) + l.pages; });
+    const best = Object.values(perDay).reduce((mx, v) => Math.max(mx, v), 0);
+    const genres = {};
+    finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
+    const topGenre = Object.keys(genres).sort((a, b) => genres[b] - genres[a])[0];
+    const now = new Date();
+    const isCurrent = y === now.getFullYear() && m === now.getMonth();
+    const prev = new Date(y, m - 1, 1), next = new Date(y, m + 1, 1);
+    const tile = (n, l) => `<div class="yr-tile"><div class="yr-num">${n}</div><div class="yr-lbl">${l}</div></div>`;
+    $("#month-title").textContent = "📅 " + MONTHS[m] + " " + y;
+    $("#month-body").innerHTML = `
+      <div class="yr-nav">
+        <button class="ghost" data-month-nav="${prev.getFullYear()}-${prev.getMonth()}">◀ ${MONTHS[prev.getMonth()]}</button>
+        <strong>${MONTHS[m]} ${y}</strong>
+        <button class="ghost" data-month-nav="${next.getFullYear()}-${next.getMonth()}"${isCurrent ? " disabled" : ""}>${MONTHS[next.getMonth()]} ▶</button>
+      </div>
+      ${(logs.length || finished.length) ? `
+      <div class="yr-tiles">
+        ${tile(num(finished.length), "books finished")}
+        ${tile(num(pages), "pages read")}
+        ${tile(minutes ? num(minutes) + "m" : "—", "time logged")}
+        ${tile(num(days), "days reading")}
+        ${tile(num(best), "best day (pages)")}
+        ${tile(topGenre ? esc(topGenre) : "—", "top genre")}
+      </div>
+      ${finished.length ? `<div class="yr-highlight"><h5>Finished this month</h5>${finished.map((b) => `<div class="yr-book">${coverHTML(b)}<div><strong>${esc(b.title)}</strong><br><span class="muted">${esc(b.author)}</span>${b.rating ? "<br>" + starsHTML(b.rating) : ""}</div></div>`).join("")}</div>` : ""}
+      ` : `<p class="empty">No reading logged in ${MONTHS[m]} ${y}.</p>`}`;
+    showModal("month-modal");
+  }
+  function maybeShowMonthlyRecap() {
+    const curMonth = new Date().toISOString().slice(0, 7);
+    let lastSeen = null;
+    try { lastSeen = localStorage.getItem("enkelas-last-recap"); } catch (e) { /* ignore */ }
+    try { localStorage.setItem("enkelas-last-recap", curMonth); } catch (e) { /* ignore */ }
+    if (!lastSeen || lastSeen === curMonth) return;
+    const prev = new Date(); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
+    if (monthLogs(prev.getFullYear(), prev.getMonth()).length) {
+      setTimeout(() => { openMonthlyRecap(prev.getFullYear(), prev.getMonth()); toast("📅", "Your month in books", "Here's your " + prev.toLocaleDateString(undefined, { month: "long" }) + " recap!"); }, 900);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Journey timeline — your whole reading life as one scrolling story
+  // ---------------------------------------------------------------------------
+  function journeyEvents() {
+    const ev = [];
+    state.books.forEach((b) => {
+      if (b.addedAt) ev.push({ t: b.addedAt, icon: "➕", title: `Added “${b.title}”`, sub: b.pickReason ? "💭 " + b.pickReason : "", id: b.id });
+      if (b.startedAt && b.status !== "want") ev.push({ t: b.startedAt, icon: "▶️", title: `Started “${b.title}”`, sub: "", id: b.id });
+      b.logs.forEach((l) => ev.push({
+        t: l.date, icon: "📖",
+        title: `Read ${num(l.pages)} ${unitLabel(b)} of “${b.title}”`,
+        sub: [l.mood, l.minutes ? l.minutes + " min" : "", l.note ? "“" + l.note + "”" : ""].filter(Boolean).join(" · "),
+        id: b.id,
+      }));
+      (b.journal || []).forEach((j) => ev.push({ t: j.date, icon: "📓", title: `Journal — “${b.title}”`, sub: (j.page ? "p." + j.page + " · " : "") + j.text, id: b.id }));
+      (b.quotes || []).forEach((q) => { if (q.at) ev.push({ t: q.at, icon: "❝", title: `Saved a quote from “${b.title}”`, sub: "“" + q.text + "”", id: b.id }); });
+      const history = (b.finishHistory || []).filter((f) => f.date);
+      history.forEach((f, i) => ev.push({ t: f.date, icon: "🏁", title: (i > 0 ? "Re-read" : "Finished") + ` “${b.title}”`, sub: f.rating ? "Rated " + fmtRating(f.rating) + "★" : "", id: b.id }));
+      if (b.status === "finished" && b.finishedAt && !history.length) ev.push({ t: b.finishedAt, icon: "🏁", title: `Finished “${b.title}”`, sub: b.rating ? "Rated " + fmtRating(b.rating) + "★" : "", id: b.id });
+      if (b.status === "dnf" && b.finishedAt) ev.push({ t: b.finishedAt, icon: "🚧", title: `Set aside “${b.title}”`, sub: b.dnfReason ? "“" + b.dnfReason + "”" : "", id: b.id });
+    });
+    return ev.filter((e) => e.t && !isNaN(new Date(e.t))).sort((a, b) => new Date(b.t) - new Date(a.t));
+  }
+  function renderJourney() {
+    const el = $("#journey-feed");
+    if (!el) return;
+    const ev = journeyEvents();
+    $("#journey-empty").hidden = ev.length > 0;
+    const MAX = 200;
+    let lastDay = "";
+    el.innerHTML = ev.slice(0, MAX).map((e) => {
+      const day = fmtDate(e.t);
+      const head = day !== lastDay ? `<div class="j-day">${day}</div>` : "";
+      lastDay = day;
+      return head + `<button class="j-event" data-action="detail" data-id="${e.id}">
+        <span class="j-icon">${e.icon}</span>
+        <span class="j-body"><span class="j-title">${esc(e.title)}</span>${e.sub ? `<span class="j-sub">${esc(e.sub)}</span>` : ""}</span>
+        <span class="j-time">${new Date(e.t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+      </button>`;
+    }).join("") + (ev.length > MAX ? `<p class="muted j-more">Showing the latest ${MAX} of ${num(ev.length)} moments.</p>` : "");
   }
 
   function renderStorageStatus() {
@@ -1113,6 +1651,9 @@
     $("#f-review").value = book ? (book.review || "") : "";
     $("#f-tags").value = book && book.tags ? book.tags.join(", ") : "";
     $("#f-collections").value = book && book.collections ? book.collections.join(", ") : "";
+    $("#f-pick-reason").value = book ? (book.pickReason || "") : "";
+    $("#f-expectation").value = book && book.expectation ? String(book.expectation) : "";
+    $("#f-loan-due").value = book && book.loanDue ? book.loanDue : "";
     renderTagHelpers();
     $("#cover-candidates").innerHTML = "";
     setCoverPreview(book ? book.coverUrl : "");
@@ -1217,6 +1758,9 @@
     book.review = $("#f-review").value.trim();
     book.tags = parseList($("#f-tags").value);
     book.collections = parseList($("#f-collections").value);
+    book.pickReason = $("#f-pick-reason").value.trim();
+    book.expectation = Number($("#f-expectation").value) || null;
+    book.loanDue = $("#f-loan-due").value || "";
     book.quotes = book.quotes || [];
     book.status = status;
 
@@ -1229,7 +1773,12 @@
       book.startedAt = book.startedAt || book.finishedAt;
       book.rating = modalRating || book.rating || null;
       if (book.logs.length === 0 && book.totalPages > 0) {
-        book.logs.push({ id: uid(), date: book.finishedAt, pages: book.totalPages, minutes: 0, note: "Added as already read" });
+        book.logs.push({ id: uid(), date: book.finishedAt, pages: book.totalPages, minutes: 0, mood: "", note: "Added as already read" });
+      }
+      if (!wasFinished) {
+        book.finishHistory = book.finishHistory || [];
+        book.finishHistory.push({ date: book.finishedAt, rating: book.rating || null });
+        book.bookmark = null;
       }
     }
 
@@ -1255,8 +1804,13 @@
     $("#log-minutes").value = log && log.minutes ? log.minutes : "";
     $("#log-note").value = log ? log.note : "";
     $("#log-when").value = log ? toLocalInput(log.date) : nowLocalInput();
+    paintMood(log ? log.mood : "");
     showModal("log-modal");
     setTimeout(() => $("#log-pages").focus(), 50);
+  }
+  function paintMood(mood) {
+    $("#log-mood").value = mood || "";
+    $$("#mood-row button").forEach((b) => b.classList.toggle("sel", b.dataset.mood === mood));
   }
   function saveLog(e) {
     e.preventDefault();
@@ -1267,12 +1821,13 @@
     const when = $("#log-when").value ? new Date($("#log-when").value).toISOString() : new Date().toISOString();
     const note = $("#log-note").value.trim();
     const minutes = Number($("#log-minutes").value) || 0;
+    const mood = $("#log-mood").value || "";
     const editId = $("#log-id").value;
     if (editId) {
       const lg = book.logs.find((x) => x.id === editId);
-      if (lg) { lg.pages = pages; lg.date = when; lg.note = note; lg.minutes = minutes; }
+      if (lg) { lg.pages = pages; lg.date = when; lg.note = note; lg.minutes = minutes; lg.mood = mood; }
     } else {
-      book.logs.push({ id: uid(), date: when, pages, minutes, note });
+      book.logs.push({ id: uid(), date: when, pages, minutes, mood, note });
     }
     resetTimer();
     closeModals();
@@ -1284,6 +1839,7 @@
 
   let finishRating = 0;
   function openFinishModal(book) {
+    $("#finish-mode").value = "finish";
     $("#finish-book-id").value = book.id;
     $("#finish-book-name").textContent = book.title;
     $("#finish-date").value = todayISODate();
@@ -1291,17 +1847,45 @@
     paintStars($("#finish-stars"), finishRating);
     showModal("finish-modal");
   }
+  function openRereadModal(book) {
+    openFinishModal(book);
+    $("#finish-mode").value = "reread";
+    $("#finish-modal-title").textContent = "Finished a re-read";
+    finishRating = 0; // rate THIS read on its own
+    paintStars($("#finish-stars"), 0);
+  }
   function saveFinish(e) {
     e.preventDefault();
     const book = state.books.find((b) => b.id === $("#finish-book-id").value);
     if (!book) return;
+    const mode = $("#finish-mode").value || "finish";
+    const when = $("#finish-date").value ? new Date($("#finish-date").value).toISOString() : new Date().toISOString();
+    if (mode === "reread") {
+      book.readCount = (book.readCount || 1) + 1;
+      book.finishedAt = when;
+      book.finishHistory = book.finishHistory || [];
+      book.finishHistory.push({ date: when, rating: finishRating || null });
+      if (finishRating) book.rating = finishRating;
+      closeModals();
+      commit();
+      checkNewBadges();
+      refreshDetail();
+      confetti();
+      toast("🔁", "Re-read finished!", book.title + " · " + book.readCount + "× read");
+      return;
+    }
     const wasFinished = book.status === "finished";
     book.status = "finished";
-    book.finishedAt = $("#finish-date").value ? new Date($("#finish-date").value).toISOString() : new Date().toISOString();
+    book.finishedAt = when;
     book.rating = finishRating || book.rating || null;
     const read = pagesRead(book);
     if (book.totalPages && read < book.totalPages) {
-      book.logs.push({ id: uid(), date: book.finishedAt, pages: book.totalPages - read, minutes: 0, note: "Finished the book" });
+      book.logs.push({ id: uid(), date: book.finishedAt, pages: book.totalPages - read, minutes: 0, mood: "", note: "Finished the book" });
+    }
+    if (!wasFinished) {
+      book.finishHistory = book.finishHistory || [];
+      book.finishHistory.push({ date: book.finishedAt, rating: book.rating || null });
+      book.bookmark = null; // journey's over — no need to keep your place
     }
     closeModals();
     commit();
@@ -1310,6 +1894,7 @@
     toast("🏁", "Finished!", book.title);
   }
   function rateBook(book) {
+    $("#finish-mode").value = "finish";
     $("#finish-modal-title").textContent = "Rate this book";
     $("#finish-book-id").value = book.id;
     $("#finish-book-name").textContent = book.title;
@@ -1317,6 +1902,58 @@
     finishRating = book.rating || 0;
     paintStars($("#finish-stars"), finishRating);
     showModal("finish-modal");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bookmark ("where I left off") + DNF-reason dialogs
+  // ---------------------------------------------------------------------------
+  function openBookmarkModal(book) {
+    $("#bm-book-id").value = book.id;
+    $("#bm-book-name").textContent = book.title;
+    $("#bm-page").value = book.bookmark && book.bookmark.page ? book.bookmark.page : "";
+    $("#bm-note").value = book.bookmark ? book.bookmark.note : "";
+    $("#bm-clear").hidden = !book.bookmark;
+    showModal("bookmark-modal");
+    setTimeout(() => $("#bm-note").focus(), 50);
+  }
+  function saveBookmark(e) {
+    e.preventDefault();
+    const book = state.books.find((b) => b.id === $("#bm-book-id").value);
+    if (!book) return;
+    const page = $("#bm-page").value ? Number($("#bm-page").value) : null;
+    const note = $("#bm-note").value.trim();
+    if (!page && !note) { closeModals(); return; }
+    book.bookmark = { page, note, date: new Date().toISOString() };
+    closeModals();
+    commit();
+    toast("🔖", "Bookmark saved", (page ? "p." + page + " · " : "") + book.title);
+  }
+  function clearBookmark() {
+    const book = state.books.find((b) => b.id === $("#bm-book-id").value);
+    if (!book) return;
+    book.bookmark = null;
+    closeModals();
+    commit();
+    toast("🔖", "Bookmark cleared", book.title);
+  }
+  function openDnfModal(book) {
+    $("#dnf-book-id").value = book.id;
+    $("#dnf-book-name").textContent = book.title;
+    $("#dnf-reason").value = book.dnfReason || "";
+    showModal("dnf-modal");
+    setTimeout(() => $("#dnf-reason").focus(), 50);
+  }
+  function saveDnf(e) {
+    e.preventDefault();
+    const book = state.books.find((b) => b.id === $("#dnf-book-id").value);
+    if (!book) return;
+    book.status = "dnf";
+    book.finishedAt = book.finishedAt || new Date().toISOString();
+    book.dnfReason = $("#dnf-reason").value.trim();
+    book.bookmark = null;
+    closeModals();
+    commit();
+    toast("🚧", "Did not finish", book.title);
   }
 
   // ---------------------------------------------------------------------------
@@ -1387,13 +2024,26 @@
   // ---------------------------------------------------------------------------
   // Star inputs
   // ---------------------------------------------------------------------------
+  function paintStarSpans(container, v) {
+    $$("span", container).forEach((x) => {
+      const n = Number(x.dataset.star);
+      x.classList.toggle("on", n <= v);
+      x.classList.toggle("half-on", n - 0.5 === v);
+    });
+  }
   function paintStars(container, rating) {
     container.dataset.rating = rating;
-    $$("span", container).forEach((s) => s.classList.toggle("on", Number(s.dataset.star) <= rating));
+    paintStarSpans(container, Number(rating));
+  }
+  // Click the left half of a star for a half-star rating (e.g. 3.5★).
+  function starValueFromEvent(e, s) {
+    const rect = s.getBoundingClientRect();
+    const half = (e.clientX - rect.left) < rect.width / 2;
+    return Number(s.dataset.star) - (half ? 0.5 : 0);
   }
   function wireStars(container, onSet) {
-    container.addEventListener("click", (e) => { const s = e.target.closest("[data-star]"); if (!s) return; const v = Number(s.dataset.star); onSet(v); paintStars(container, v); });
-    container.addEventListener("mouseover", (e) => { const s = e.target.closest("[data-star]"); if (!s) return; const v = Number(s.dataset.star); $$("span", container).forEach((x) => x.classList.toggle("on", Number(x.dataset.star) <= v)); });
+    container.addEventListener("click", (e) => { const s = e.target.closest("[data-star]"); if (!s) return; const v = starValueFromEvent(e, s); onSet(v); paintStars(container, v); });
+    container.addEventListener("mousemove", (e) => { const s = e.target.closest("[data-star]"); if (!s) return; paintStarSpans(container, starValueFromEvent(e, s)); });
     container.addEventListener("mouseleave", () => paintStars(container, Number(container.dataset.rating)));
   }
 
@@ -1552,7 +2202,8 @@
       else if (action === "cover") { openBookModal({ book }); setTimeout(() => $("#btn-fetch").focus(), 80); }
       else if (action === "rate") rateBook(book);
       else if (action === "start") { book.status = "reading"; book.startedAt = new Date().toISOString(); commit(); toast("📖", "Started reading", book.title); }
-      else if (action === "dnf") { if (confirm(`Mark “${book.title}” as did-not-finish?`)) { book.status = "dnf"; book.finishedAt = book.finishedAt || new Date().toISOString(); commit(); toast("🚧", "Did not finish", book.title); } }
+      else if (action === "bookmark") openBookmarkModal(book);
+      else if (action === "dnf") openDnfModal(book);
       else if (action === "edit-log") { const lg = book.logs.find((x) => x.id === actBtn.dataset.log); if (lg) openLogModal(book, lg); }
       else if (action === "del-log") { const lg = book.logs.find((x) => x.id === actBtn.dataset.log); if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) { book.logs = book.logs.filter((x) => x.id !== lg.id); commit(); toast("🗑", "Log removed", book.title); } }
       else if (action === "delete") { if (confirm(`Remove “${book.title}” from your bookshelf? This can't be undone.`)) { state.books = state.books.filter((b) => b.id !== book.id); commit(); toast("🗑", "Removed", book.title); } }
@@ -1606,20 +2257,49 @@
       const act = btn.dataset.detailAction;
       if (act === "log") { closeModals(); openLogModal(book); }
       else if (act === "edit") { closeModals(); openBookModal({ book }); }
-      else if (act === "reread") { book.readCount = (book.readCount || 1) + 1; book.finishHistory = book.finishHistory || []; book.finishHistory.push(new Date().toISOString()); book.finishedAt = new Date().toISOString(); persist(); render(); refreshDetail(); confetti(); toast("🔁", "Re-read logged", book.title + " · " + book.readCount + "×"); }
-      else if (act === "del-quote") { book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote); persist(); refreshDetail(); }
+      else if (act === "bookmark") { closeModals(); openBookmarkModal(book); }
+      else if (act === "reread") { closeModals(); openRereadModal(book); }
+      else if (act === "share-card") { shareBookCard(book); }
+      else if (act === "export-md") { downloadText(slugify(book.title) + "-journal.md", bookMarkdown(book)); toast("⬇️", "Journal exported", book.title + " as Markdown"); }
+      else if (act === "del-quote") { book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote); commit(); refreshDetail(); }
+      else if (act === "del-journal") { book.journal = (book.journal || []).filter((j) => j.id !== btn.dataset.journal); commit(); refreshDetail(); }
+      else if (act === "del-char") { book.characters = (book.characters || []).filter((c) => c.id !== btn.dataset.char); commit(); refreshDetail(); }
+      else if (act === "del-vocab") { book.vocab = (book.vocab || []).filter((v) => v.id !== btn.dataset.vocab); commit(); refreshDetail(); }
     });
     $("#detail-body").addEventListener("submit", (e) => {
-      if (e.target.id !== "quote-form") return;
-      e.preventDefault();
       const book = state.books.find((x) => x.id === currentDetailId);
       if (!book) return;
-      const text = $("#q-text").value.trim();
-      if (!text) return;
-      book.quotes = book.quotes || [];
-      book.quotes.push({ id: uid(), text, page: $("#q-page").value ? Number($("#q-page").value) : null });
-      persist(); refreshDetail();
-      toast("❝", "Quote saved", book.title);
+      if (e.target.id === "quote-form") {
+        e.preventDefault();
+        const text = $("#q-text").value.trim();
+        if (!text) return;
+        book.quotes = book.quotes || [];
+        book.quotes.push({ id: uid(), text, page: $("#q-page").value ? Number($("#q-page").value) : null, at: new Date().toISOString() });
+        commit(); refreshDetail();
+        toast("❝", "Quote saved", book.title);
+      } else if (e.target.id === "journal-form") {
+        e.preventDefault();
+        const text = $("#j-text").value.trim();
+        if (!text) return;
+        book.journal = book.journal || [];
+        book.journal.push({ id: uid(), date: new Date().toISOString(), page: $("#j-page").value ? Number($("#j-page").value) : null, text });
+        commit(); refreshDetail();
+        toast("📓", "Journal entry added", book.title);
+      } else if (e.target.id === "char-form") {
+        e.preventDefault();
+        const name = $("#char-name").value.trim();
+        if (!name) return;
+        book.characters = book.characters || [];
+        book.characters.push({ id: uid(), name, desc: $("#char-desc").value.trim() });
+        commit(); refreshDetail();
+      } else if (e.target.id === "vocab-form") {
+        e.preventDefault();
+        const word = $("#vocab-word").value.trim();
+        if (!word) return;
+        book.vocab = book.vocab || [];
+        book.vocab.push({ id: uid(), word, def: $("#vocab-def").value.trim(), page: $("#vocab-page").value ? Number($("#vocab-page").value) : null });
+        commit(); refreshDetail();
+      }
     });
 
     // Book modal
@@ -1650,9 +2330,45 @@
       toast("🎯", "Goals saved", state.settings.goal.target + " books in " + state.settings.goal.year);
     });
 
-    // Year in Review
+    // Year in Review + monthly recap
     $("#btn-year-review").addEventListener("click", () => openYearReview(new Date().getFullYear()));
-    $("#year-body").addEventListener("click", (e) => { const b = e.target.closest("[data-year-nav]"); if (b && !b.disabled) openYearReview(Number(b.dataset.yearNav)); });
+    $("#year-body").addEventListener("click", (e) => {
+      const act = e.target.closest("[data-yr-action]");
+      if (act) {
+        const y = Number(act.dataset.year);
+        if (act.dataset.yrAction === "image") shareYearCard(y);
+        else { downloadText("my-" + y + "-in-books.md", yearMarkdown(y)); toast("⬇️", "Year journal exported", y + " as Markdown"); }
+        return;
+      }
+      const b = e.target.closest("[data-year-nav]");
+      if (b && !b.disabled) openYearReview(Number(b.dataset.yearNav));
+    });
+    $("#btn-month-recap").addEventListener("click", () => { const n = new Date(); openMonthlyRecap(n.getFullYear(), n.getMonth()); });
+    $("#month-body").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-month-nav]");
+      if (b && !b.disabled) { const [y, m] = b.dataset.monthNav.split("-").map(Number); openMonthlyRecap(y, m); }
+    });
+
+    // Mood picker in the log dialog
+    $("#mood-row").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-mood]");
+      if (!b) return;
+      paintMood($("#log-mood").value === b.dataset.mood ? "" : b.dataset.mood);
+    });
+
+    // Bookmark + DNF dialogs
+    $("#bookmark-form").addEventListener("submit", saveBookmark);
+    $("#bm-clear").addEventListener("click", clearBookmark);
+    $("#dnf-form").addEventListener("submit", saveDnf);
+
+    // Bookshelf drag & drop
+    setupShelfDnD($("#library-list"));
+
+    // Built-in eReader
+    $("#btn-ereader").addEventListener("click", () => {
+      if (window.EReader) window.EReader.openLibrary();
+      else toast("⚠️", "eReader unavailable", "The reader script didn't load.");
+    });
 
     // Data menu
     $("#btn-export").addEventListener("click", exportJSON);
@@ -1691,7 +2407,33 @@
     renderAccount();
     if (syncEnabled() && auth) pullData();
     setupOfflineAndPersistence();
+    maybeShowMonthlyRecap();
   }
+
+  // Small bridge so the eReader (reader.js) can list books and save sessions.
+  window.BookshelfAPI = {
+    getBooks() {
+      return state.books
+        .filter((b) => b.status === "reading" || b.status === "want")
+        .concat(state.books.filter((b) => b.status === "finished" || b.status === "dnf"))
+        .map((b) => ({ id: b.id, title: b.title, author: b.author, totalPages: b.totalPages, status: b.status }));
+    },
+    addReadingLog(bookId, entry) {
+      const b = state.books.find((x) => x.id === bookId);
+      if (!b) return false;
+      if (b.status === "want") { b.status = "reading"; b.startedAt = b.startedAt || new Date().toISOString(); }
+      b.logs.push({
+        id: uid(), date: new Date().toISOString(),
+        pages: Math.max(0, Math.round(entry.pages || 0)),
+        minutes: Math.max(0, Math.round(entry.minutes || 0)),
+        mood: "", note: entry.note || "📖 eReader session",
+      });
+      commit();
+      checkNewBadges();
+      toast("📖", "Session saved", Math.round(entry.minutes || 0) + " min added to “" + b.title + "”");
+      return true;
+    },
+  };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
