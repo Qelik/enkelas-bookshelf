@@ -367,7 +367,15 @@
   }
 
   function closeAccountMenu() { const m = $("#account-menu"); if (m) m.hidden = true; }
+  function renderTitle() {
+    const first = auth && auth.user ? (auth.user.fullName || "").trim().split(/\s+/)[0] : "";
+    const title = first ? first + "'s Bookshelf" : "Enkela's Bookshelf";
+    const h1 = $("#app-title");
+    if (h1) h1.textContent = title;
+    document.title = title;
+  }
   function renderAccount() {
+    renderTitle();
     const wrap = $("#account-wrap");
     if (!wrap) return;
     if (!syncEnabled()) { wrap.style.display = "none"; return; }
