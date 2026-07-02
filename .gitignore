@@ -9,3 +9,10 @@ goodreads_library_export.*
 sync-worker/node_modules/
 sync-worker/.wrangler/
 sync-worker/.dev.vars
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
