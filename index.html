@@ -52,6 +52,7 @@
     <button class="tab active" data-view="reading">📖 Reading</button>
     <button class="tab" data-view="want">📌 Want to Read</button>
     <button class="tab" data-view="library">🗂️ Library</button>
+    <button class="tab" data-view="journey">🧭 Journey</button>
     <button class="tab" data-view="goals">🎯 Goals</button>
     <button class="tab" data-view="stats">📊 Stats</button>
     <button class="tab" data-view="achievements">🏅 Achievements</button>
@@ -64,6 +65,7 @@
         <h2>Currently Reading</h2>
         <div class="head-controls">
           <input type="search" id="reading-search" class="input search" placeholder="🔍 Search title, author, tag" />
+          <button class="ghost" id="btn-ereader" title="Read your own ePub files right here">📖 eReader</button>
           <button class="primary" data-add="reading">＋ Add a book</button>
         </div>
       </div>
@@ -103,12 +105,23 @@
             <button type="button" data-libview="grid" class="active" title="Grid">▦</button>
             <button type="button" data-libview="shelf" title="Bookshelf">📚</button>
             <button type="button" data-libview="author" title="By author">✍️</button>
+            <button type="button" data-libview="series" title="Series progress">＃</button>
           </div>
           <button class="primary" data-add="finished">＋ Add a read book</button>
         </div>
       </div>
       <div id="library-list"></div>
       <p class="empty" id="library-empty" hidden></p>
+    </section>
+
+    <!-- JOURNEY -->
+    <section class="view" id="view-journey" hidden>
+      <div class="view-head">
+        <h2>Your Reading Journey</h2>
+      </div>
+      <p class="muted journey-intro">Every step of your reading life — books added, pages read, thoughts jotted, quotes saved, books finished — in one scrolling story. Tap any moment to open the book.</p>
+      <div class="journey-feed" id="journey-feed"></div>
+      <p class="empty" id="journey-empty" hidden>Your journey starts with your first book. Add one and start logging!</p>
     </section>
 
     <!-- GOALS -->
@@ -150,7 +163,10 @@
     <section class="view" id="view-stats" hidden>
       <div class="view-head">
         <h2>Reading Stats</h2>
-        <button class="primary" id="btn-year-review">🎉 Year in Review</button>
+        <div class="head-controls">
+          <button class="ghost" id="btn-month-recap">📅 Monthly recap</button>
+          <button class="primary" id="btn-year-review">🎉 Year in Review</button>
+        </div>
       </div>
       <div class="stat-cards" id="stat-cards"></div>
       <div class="chart-card">
@@ -274,6 +290,26 @@
         <label for="f-desc">Description <span class="muted">(auto-filled — editable)</span></label>
         <textarea id="f-desc" class="input" rows="2" placeholder="A short blurb about the book…"></textarea>
 
+        <label for="f-pick-reason">Why did you pick this up? <span class="muted">(optional — future-you will love this)</span></label>
+        <textarea id="f-pick-reason" class="input" rows="2" placeholder="A friend raved about it… saw it in a bookshop window…"></textarea>
+
+        <div class="grid-2">
+          <div>
+            <label for="f-expectation">What are you hoping for? <span class="muted">(optional)</span></label>
+            <select id="f-expectation" class="select">
+              <option value="">No expectations</option>
+              <option value="2">2★ — low hopes, giving it a shot</option>
+              <option value="3">3★ — should be decent</option>
+              <option value="4">4★ — really looking forward to it</option>
+              <option value="5">5★ — expecting a new favourite</option>
+            </select>
+          </div>
+          <div>
+            <label for="f-loan-due">Borrowed? Due back <span class="muted">(optional)</span></label>
+            <input type="date" id="f-loan-due" class="input" />
+          </div>
+        </div>
+
         <label for="f-review">My notes / review <span class="muted">(optional)</span></label>
         <textarea id="f-review" class="input" rows="3" placeholder="What did you think? Favourite quotes, thoughts…"></textarea>
 
@@ -362,6 +398,17 @@
             <input type="text" id="log-note" class="input" placeholder="A thought, a quote…" />
           </div>
         </div>
+        <label>How did this session feel? <span class="muted">(optional)</span></label>
+        <input type="hidden" id="log-mood" />
+        <div class="mood-row" id="mood-row">
+          <button type="button" data-mood="😍" title="Loved it">😍</button>
+          <button type="button" data-mood="😊" title="Enjoyed it">😊</button>
+          <button type="button" data-mood="🤯" title="Mind blown">🤯</button>
+          <button type="button" data-mood="😐" title="Meh">😐</button>
+          <button type="button" data-mood="😴" title="Sleepy read">😴</button>
+          <button type="button" data-mood="😢" title="Emotional">😢</button>
+          <button type="button" data-mood="😱" title="Tense / scary">😱</button>
+        </div>
         <div class="modal-foot">
           <button type="button" class="ghost" data-close-modal>Cancel</button>
           <button type="submit" class="primary">Add log</button>
@@ -379,6 +426,7 @@
       </div>
       <form id="finish-form" class="modal-body">
         <input type="hidden" id="finish-book-id" />
+        <input type="hidden" id="finish-mode" value="finish" />
         <p class="log-book-name" id="finish-book-name"></p>
         <label for="finish-date">Finished on</label>
         <input type="date" id="finish-date" class="input" />
@@ -448,8 +496,117 @@
     </div>
   </div>
 
+  <!-- BOOKMARK: WHERE I LEFT OFF -->
+  <div class="modal-backdrop" id="bookmark-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="bm-title">
+      <div class="modal-head">
+        <h3 id="bm-title">🔖 Where did you leave off?</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <form id="bookmark-form" class="modal-body">
+        <input type="hidden" id="bm-book-id" />
+        <p class="log-book-name" id="bm-book-name"></p>
+        <div class="grid-2">
+          <div>
+            <label for="bm-page">Page</label>
+            <input type="number" id="bm-page" class="input" min="0" max="100000" />
+          </div>
+        </div>
+        <label for="bm-note">What's happening? <span class="muted">(so you can dive right back in)</span></label>
+        <input type="text" id="bm-note" class="input" placeholder="They just found the map…" maxlength="140" />
+        <div class="modal-foot">
+          <button type="button" class="ghost danger" id="bm-clear" hidden>Remove bookmark</button>
+          <button type="button" class="ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="primary">Save bookmark</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- DNF REASON -->
+  <div class="modal-backdrop" id="dnf-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="dnf-title">
+      <div class="modal-head">
+        <h3 id="dnf-title">Setting this one aside?</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <form id="dnf-form" class="modal-body">
+        <input type="hidden" id="dnf-book-id" />
+        <p class="log-book-name" id="dnf-book-name"></p>
+        <label for="dnf-reason">Why didn't it work for you? <span class="muted">(future-you deciding whether to retry will thank you)</span></label>
+        <textarea id="dnf-reason" class="input" rows="3" placeholder="Pacing too slow… couldn't connect with the characters…"></textarea>
+        <div class="modal-foot">
+          <button type="button" class="ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="primary">Mark as did-not-finish</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MONTHLY RECAP -->
+  <div class="modal-backdrop" id="month-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="month-title">
+      <div class="modal-head">
+        <h3 id="month-title">Monthly recap</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="month-body"></div>
+    </div>
+  </div>
+
+  <!-- EREADER LIBRARY -->
+  <div class="modal-backdrop" id="ereader-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ereader-title">
+      <div class="modal-head">
+        <h3 id="ereader-title">📖 Your eReader</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">Upload an ePub and read it right here — with a real page turn, your reading time tracked, and sessions saved to your bookshelf. Books are stored on this device.</p>
+        <div class="ereader-upload">
+          <button class="primary" id="ereader-upload-btn">⬆ Upload an .epub</button>
+          <input type="file" id="ereader-file" accept=".epub,application/epub+zip" hidden />
+        </div>
+        <div class="ereader-list" id="ereader-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FULL-SCREEN EPUB READER -->
+  <div id="reader-overlay" hidden>
+    <div class="reader-topbar">
+      <button class="icon-btn" id="reader-close" title="Close (your place is saved)">✕</button>
+      <div class="reader-titles">
+        <span class="reader-book-title" id="reader-book-title"></span>
+        <span class="reader-chapter-title" id="reader-chapter-title"></span>
+      </div>
+      <div class="reader-tools">
+        <button class="icon-btn" id="reader-font-minus" title="Smaller text">A−</button>
+        <button class="icon-btn" id="reader-font-plus" title="Larger text">A+</button>
+        <button class="icon-btn" id="reader-theme-btn" title="Paper / sepia / night">🎨</button>
+      </div>
+    </div>
+    <div class="reader-book" id="reader-book">
+      <div class="reader-page under" id="reader-under"><div class="reader-content" id="reader-under-content"></div></div>
+      <div class="reader-page current" id="reader-current"><div class="reader-content" id="reader-current-content"></div></div>
+      <div class="reader-leaf" id="reader-leaf" hidden>
+        <div class="leaf-face leaf-front"><div class="reader-content" id="reader-leaf-content"></div><div class="leaf-shade" id="leaf-shade"></div></div>
+        <div class="leaf-face leaf-back"></div>
+      </div>
+      <div class="reader-turnzone prev" id="reader-zone-prev" title="Previous page"></div>
+      <div class="reader-turnzone next" id="reader-zone-next" title="Next page"></div>
+    </div>
+    <div class="reader-bottombar">
+      <span class="reader-pos" id="reader-pos"></span>
+      <button class="ghost reader-eta" id="reader-eta" title="Tap to switch between time left in the chapter and in the whole book"></button>
+      <span class="reader-timer" id="reader-timer" title="Active reading time this session">⏱ 0:00</span>
+    </div>
+  </div>
+
   <div class="toast-stack" id="toast-stack"></div>
 
   <script src="app.js"></script>
+  <script src="vendor/jszip.min.js"></script>
+  <script src="reader.js"></script>
 </body>
 </html>
