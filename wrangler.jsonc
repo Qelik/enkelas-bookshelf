@@ -1,0 +1,22 @@
+// Root Wrangler config for Cloudflare Workers Builds (the Git integration).
+//
+// Why this file exists: Workers Builds runs `npx wrangler deploy` from the
+// repo ROOT on every push. Without a config here, wrangler auto-detects a
+// "static site" and deploys THAT over the real sync worker, killing the
+// login/sync API (and its AUTH_SECRET) every single push.
+//
+// This config points the root deploy at the real worker instead, so pushes
+// auto-deploy the correct thing. Keep it in sync with sync-worker/wrangler.toml
+// (which is still used for local `wrangler dev` / manual deploys from that dir).
+{
+  "name": "enkelas-bookshelf-sync",
+  "main": "sync-worker/src/worker.js",
+  "compatibility_date": "2024-11-01",
+  "kv_namespaces": [
+    {
+      "binding": "BOOKSHELF",
+      "id": "cdeead88aa7d42579a16de9aa549fc14",
+      "preview_id": "0f3b29b9ed2a4c6a9cbecf659eda13cc"
+    }
+  ]
+}

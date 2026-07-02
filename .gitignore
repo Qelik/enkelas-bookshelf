@@ -9,3 +9,6 @@ goodreads_library_export.*
 sync-worker/node_modules/
 sync-worker/.wrangler/
 sync-worker/.dev.vars
+
+# wrangler (root deploys via Workers Builds)
+.wrangler/
