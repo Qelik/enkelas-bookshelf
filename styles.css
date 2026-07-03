@@ -107,6 +107,7 @@ main { padding: 18px 28px 80px; }
   display: flex; gap: 14px; background: var(--paper-2); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow-sm);
   transition: box-shadow .2s ease, transform .1s ease;
+  cursor: pointer; /* whole card opens the book's detail page */
 }
 .book-card:hover { box-shadow: var(--shadow); }
 .cover {
@@ -556,6 +557,14 @@ html[data-theme="dark"] .shelf-slot::after { background: linear-gradient(180deg,
 .prog-dot { fill: var(--accent-2); stroke: var(--paper-2); stroke-width: 1.5; }
 .prog-target { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 4 4; opacity: .7; }
 .prog-axis { fill: var(--ink-soft); font-family: var(--sans); }
+/* Early-days progress meter (shown until there's a multi-day trajectory to chart) */
+.progress-meter { padding: 4px 2px 2px; }
+.pm-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+.pm-head span:last-child { color: var(--accent); }
+.pm-bar { position: relative; height: 16px; }
+.pm-bar > span { transition: width .4s ease; }
+.pm-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--paper-2); opacity: .7; z-index: 1; }
+.pm-note { font-size: 12px; color: var(--ink-soft); margin: 8px 0 0; font-style: italic; }
 
 /* ---------- Accounts + sync ---------- */
 .account-wrap { position: relative; }

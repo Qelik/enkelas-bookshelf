@@ -652,7 +652,6 @@
     $("#reading-list").innerHTML = list.map((b) => {
       const read = pagesRead(b);
       const pct = b.totalPages ? Math.min(100, Math.round((read / b.totalPages) * 100)) : 0;
-      const recent = b.logs.slice().sort((x, y) => new Date(y.date) - new Date(x.date)).slice(0, 5);
       const est = estimateFinish(b);
       return `<article class="book-card" data-id="${b.id}">
         ${coverHTML(b)}
@@ -672,17 +671,6 @@
             <button class="mini" data-action="edit" data-id="${b.id}">✎ Edit</button>
             <button class="mini danger" data-action="delete" data-id="${b.id}">🗑</button>
           </div>
-          ${recent.length ? `<details class="logs"><summary>${b.logs.length} session${b.logs.length === 1 ? "" : "s"}</summary>
-            ${recent.map((l) => `<div class="log-row">
-              <span class="l-pages">+${num(l.pages)}${unitShort(b)}</span>
-              <span class="l-when">${fmtDateTime(l.date)}${l.minutes ? " · " + l.minutes + "m" : ""}</span>
-              <span class="l-note">${l.mood ? l.mood + " " : ""}${l.note ? "“" + esc(l.note) + "”" : ""}</span>
-              <span class="log-actions">
-                <button data-action="edit-log" data-id="${b.id}" data-log="${l.id}" title="Edit log">✎</button>
-                <button data-action="del-log" data-id="${b.id}" data-log="${l.id}" title="Delete log">🗑</button>
-              </span>
-            </div>`).join("")}
-          </details>` : ""}
           ${b.review ? `<details class="review"><summary>My notes</summary><p class="review-text">${esc(b.review)}</p></details>` : ""}
         </div>
       </article>`;
@@ -1176,6 +1164,10 @@
             <span class="l-pages">+${num(l.pages)}${unitShort(book)}</span>
             <span class="l-when">${fmtDateTime(l.date)}${l.minutes ? " · " + l.minutes + "m" : ""}</span>
             <span class="l-note">${l.mood ? l.mood + " " : ""}${l.note ? "“" + esc(l.note) + "”" : ""}</span>
+            <span class="log-actions">
+              <button data-detail-action="edit-log" data-log="${l.id}" title="Edit log">✎</button>
+              <button data-detail-action="del-log" data-log="${l.id}" title="Delete log">🗑</button>
+            </span>
           </div>`).join("") : `<p class="muted">No sessions logged yet.</p>`}
         </div>
       </div>
@@ -1187,9 +1179,36 @@
     const b = state.books.find((x) => x.id === currentDetailId);
     if (b) openDetailModal(b);
   }
+  // A cumulative pages-over-time line only tells a story once there are a couple
+  // of days to plot; on day one it's a flat sliver pinned to the bottom of the
+  // box. Until then, show a clean progress meter toward the goal instead.
+  function progressMeter(book, logs) {
+    const read = logs.reduce((s, l) => s + (Number(l.pages) || 0), 0);
+    const total = book.totalPages || 0;
+    const unit = unitLabel(book);
+    const pct = total ? Math.max(0, Math.min(100, Math.round((read / total) * 100))) : 0;
+    const left = total ? Math.max(0, total - read) : 0;
+    const startedISO = book.startedAt || logs[0].date;
+    const started = !isNaN(new Date(startedISO)) ? "started " + fmtDate(startedISO) : "";
+    const head = total
+      ? `<span>${num(read)} / ${num(total)} ${unit}</span><span>${pct}%</span>`
+      : `<span>${num(read)} ${unit} read</span><span></span>`;
+    const ticks = total ? [25, 50, 75].map((p) => `<span class="pm-tick" style="left:${p}%"></span>`).join("") : "";
+    const sub = total
+      ? `${num(left)} ${unit} to go${started ? " · " + started : ""}`
+      : started;
+    return `<div class="progress-meter">
+      <div class="pm-head">${head}</div>
+      <div class="progress pm-bar">${ticks}<span style="width:${pct}%"></span></div>
+      ${sub ? `<p class="gm-sub">${sub}</p>` : ""}
+      <p class="pm-note">Log a session on another day to chart your pace and a finish estimate.</p>
+    </div>`;
+  }
   function svgProgress(book) {
     const logs = book.logs.slice().filter((l) => !isNaN(new Date(l.date))).sort((a, b) => new Date(a.date) - new Date(b.date));
     if (!logs.length) return `<p class="muted">No reading sessions yet — log some pages to see your progress.</p>`;
+    const distinctDays = new Set(logs.map((l) => startOfDay(new Date(l.date)))).size;
+    if (distinctDays < 2) return progressMeter(book, logs);
     const W = 520, H = 200, padL = 44, padR = 16, padT = 14, padB = 30;
     const aw = W - padL - padR, ah = H - padT - padB;
     let cum = 0;
@@ -2225,7 +2244,13 @@
       return;
     }
     const addBtn = e.target.closest("[data-add]");
-    if (addBtn) openBookModal({ status: addBtn.dataset.add });
+    if (addBtn) { openBookModal({ status: addBtn.dataset.add }); return; }
+    // Tapping anywhere else on a book card opens its detail page.
+    const card = e.target.closest(".book-card[data-id]");
+    if (card && !e.target.closest("button, a, input, select, textarea, details, summary, label")) {
+      const book = state.books.find((b) => b.id === card.dataset.id);
+      if (book) openDetailModal(book);
+    }
   }
 
   function init() {
@@ -2261,6 +2286,8 @@
       else if (act === "reread") { closeModals(); openRereadModal(book); }
       else if (act === "share-card") { shareBookCard(book); }
       else if (act === "export-md") { downloadText(slugify(book.title) + "-journal.md", bookMarkdown(book)); toast("⬇️", "Journal exported", book.title + " as Markdown"); }
+      else if (act === "edit-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg) { closeModals(); openLogModal(book, lg); } }
+      else if (act === "del-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) { book.logs = book.logs.filter((x) => x.id !== lg.id); commit(); refreshDetail(); toast("🗑", "Log removed", book.title); } }
       else if (act === "del-quote") { book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote); commit(); refreshDetail(); }
       else if (act === "del-journal") { book.journal = (book.journal || []).filter((j) => j.id !== btn.dataset.journal); commit(); refreshDetail(); }
       else if (act === "del-char") { book.characters = (book.characters || []).filter((c) => c.id !== btn.dataset.char); commit(); refreshDetail(); }
