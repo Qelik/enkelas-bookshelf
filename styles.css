@@ -558,7 +558,16 @@ html[data-theme="dark"] .shelf-slot::after { background: linear-gradient(180deg,
 .detail-info h4 { font-family: var(--serif); font-size: 20px; margin: 0 0 2px; }
 .detail-info .by { color: var(--ink-soft); margin: 0 0 8px; font-size: 14px; }
 .detail-meta { font-size: 13px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 3px; }
-.detail-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+/* Book-page actions: a tidy equal-width grid instead of ragged wrapping pills.
+   One accent "main" action per status; Remove reads as quietly destructive. */
+.detail-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 14px 0 4px; }
+.detail-actions .mini { padding: 10px 8px; border-radius: 10px; font-size: 13px; white-space: nowrap; }
+.detail-actions .act-main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; box-shadow: var(--shadow-sm); grid-column: 1 / -1; font-size: 14px; }
+.detail-actions .act-main:hover { background: #8a4e30; border-color: #8a4e30; }
+html[data-theme="dark"] .detail-actions .act-main { background: var(--accent); border-color: var(--accent); }
+html[data-theme="dark"] .detail-actions .act-main:hover { background: #b06a45; }
+.detail-actions .danger { color: #a23c30; border-color: #ddb6af; }
+html[data-theme="dark"] .detail-actions .danger { color: #e08b7d; border-color: #6a3f38; }
 .detail-section { margin-top: 18px; }
 .detail-section h5 { font-family: var(--serif); font-size: 15px; margin: 0 0 8px; }
 .detail-logs { max-height: 220px; overflow-y: auto; }
@@ -570,6 +579,27 @@ body.book-open .app-header, body.book-open .stats-strip, body.book-open .tabs { 
 #view-book .detail-top h4 { font-size: 24px; margin: 0 0 2px; }
 #view-book .detail-logs { max-height: none; overflow: visible; }
 .add-session { margin-top: 10px; }
+
+/* ---------- Owned shelf (🏠) ---------- */
+.own-hint { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 12px; }
+#owned-search { max-width: 460px; margin-bottom: 10px; }
+#owned-count { margin: 4px 0 14px; }
+.own-flag { font-size: 13px; margin-left: 5px; }
+.own-check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; margin: 2px 0 12px; cursor: pointer; }
+.own-check input { width: 17px; height: 17px; accent-color: var(--accent); }
+.own-elsewhere-h { font-family: var(--serif); font-size: 17px; margin: 22px 0 2px; }
+.own-elsewhere-sub { margin: 0 0 12px; }
+.own-verdict {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-2);
+  padding: 14px 16px; margin: 0 0 14px; box-shadow: var(--shadow-sm);
+}
+.own-verdict strong { font-family: var(--serif); font-size: 16px; }
+.own-verdict p { margin: 6px 0 10px; font-size: 14px; }
+.own-verdict-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.own-verdict.have { border-color: #9dba9a; background: #eef3e9; }
+.own-verdict.partial { border-color: #d9c08a; background: #f7efdc; }
+html[data-theme="dark"] .own-verdict.have { background: #26301f; border-color: #4a5c42; }
+html[data-theme="dark"] .own-verdict.partial { background: #322a18; border-color: #6a5a34; }
 .book-page-bar { position: sticky; top: var(--safe-top); z-index: 30; background: var(--paper); padding: 10px 0; margin-bottom: 4px; }
 .detail-review { font-style: italic; white-space: pre-wrap; font-size: 14px; color: var(--ink); }
 

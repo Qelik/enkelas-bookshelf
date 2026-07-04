@@ -26,6 +26,7 @@ On a phone, open that link and use the browser's **Share → Add to Home Screen*
 - **Yearly goal** — set how many books you want to read this year and watch the progress ring fill.
 - **Goals** — set a books-per-year goal (with a progress ring), an optional **pages-per-year** goal, and a **daily reading goal** with a today check-in; a pacing line tells you if you're ahead of or behind schedule.
 - **Reading challenges** — playful yearly challenges (read 5 genres, finish a 500+ page book, books from 3 decades, a book every month, …) that unlock as you go.
+- **Owned shelf** — mark books you physically own (🏠 on any book's page, or the checkbox in the add/edit form). The **Owned** tab is your shelf-at-home: search it in the bookshop, or **scan a barcode** to instantly see "you already have this one" before buying a duplicate.
 - **Achievement badges** — unlock milestones for pages read (100 → 50,000), books finished (1st, 5th, 10th, …), reading **streaks** (3 / 7 / 30 days), plus special badges. A toast (and 🎉 confetti) pops when you earn one.
 - **Reading streaks** — consecutive-day reading streaks (current + longest).
 - **Stats & charts** — a Stats tab with a **reading calendar heatmap**, pages-per-day and pages-per-month charts, a **by-genre** breakdown, a **ratings distribution**, and a shareable **Year in Review** recap.

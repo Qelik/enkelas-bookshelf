@@ -40,6 +40,14 @@
     { n: 100, emoji: "💎", title: "Centurion",       desc: "Finished 100 books" },
   ];
 
+  // Goodreads "Bookshelves" are folders (statuses, "why-did-i-read-this",
+  // "serie:…"), not genres. Keep them out of tags — normalize() also applies
+  // this to already-imported data, so old junk tags heal on next load.
+  // NOTE: must be declared before `state = loadState()` below (normalize uses it).
+  const JUNK_TAG = /^(to-read|currently-reading|read|did-not-finish|dnf|abandoned|why-did-i(-.*)?)$/i;
+  const SERIES_TAG = /^series?[-_: ]+(.+)$/i;
+  function isJunkTag(tag) { return JUNK_TAG.test(tag) || SERIES_TAG.test(tag); }
+
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
@@ -48,7 +56,7 @@
   let knownBadges = new Set();
   let activeView = "reading";
   let storagePersisted = false;
-  let readingQuery = "", wantQuery = "", libraryQuery = "";
+  let readingQuery = "", wantQuery = "", libraryQuery = "", ownedQuery = "";
   let libraryTag = "", libraryCollection = "", libraryView = "grid";
   let currentDetailId = null;
   let yearReviewYear = new Date().getFullYear();
@@ -175,7 +183,7 @@
       isbn: b.isbn || "",
       review: b.review || "",
       description: b.description || "",
-      tags: Array.isArray(b.tags) ? b.tags.map((t) => String(t).trim()).filter(Boolean) : [],
+      tags: Array.isArray(b.tags) ? b.tags.map((t) => String(t).trim()).filter((t) => t && !isJunkTag(t)) : [],
       collections: Array.isArray(b.collections) ? b.collections.map((t) => String(t).trim()).filter(Boolean) : [],
       format: ["physical", "ebook", "audio"].indexOf(b.format) >= 0 ? b.format : "physical",
       seriesName: b.seriesName || "",
@@ -193,6 +201,8 @@
       pickReason: b.pickReason || "",
       expectation: b.expectation ? Number(b.expectation) : null,
       loanDue: b.loanDue || "",
+      owned: !!b.owned,
+      coverTriedAt: b.coverTriedAt || null,
       status: STATUSES.indexOf(b.status) >= 0 ? b.status : "reading",
       rating: b.rating ? Number(b.rating) : null,
       startedAt: b.startedAt || null,
@@ -675,6 +685,7 @@
     renderReading();
     renderWant();
     renderLibrary();
+    renderOwned();
     renderJourney();
     renderAchievements();
     renderGoal();
@@ -727,6 +738,7 @@
     if (!(months >= 6)) return "";
     return `<span class="tbr-badge" title="On your list since ${fmtDate(b.addedAt)}">🕰 ${months} months on your list</span>`;
   }
+  function ownFlag(b) { return b.owned ? `<span class="own-flag" title="On your home shelf">🏠</span>` : ""; }
   function bookmarkHTML(b) {
     if (!b.bookmark) return "";
     return `<p class="bookmark-line" title="Bookmark saved ${fmtDate(b.bookmark.date)}">🔖 ${b.bookmark.page ? "p." + b.bookmark.page : "Where I left off"}${b.bookmark.note ? " — “" + esc(b.bookmark.note) + "”" : ""}</p>`;
@@ -745,7 +757,7 @@
       return `<article class="book-card" data-id="${b.id}">
         ${coverHTML(b)}
         <div class="book-meta">
-          <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}</h3>
+          <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
           <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${loanBadgeHTML(b)}</p>
           <div class="progress"><span style="width:${pct}%"></span></div>
           <p class="progress-label">${num(read)}${b.totalPages ? " / " + num(b.totalPages) : ""} ${unitLabel(b)}${b.totalPages ? " · " + pct + "%" : ""}${est ? ` · <span class="eta">≈ done ${fmtDate(est.date.toISOString())}</span>` : ""}</p>
@@ -776,7 +788,7 @@
       <article class="book-card" data-id="${b.id}">
         ${coverHTML(b)}
         <div class="book-meta">
-          <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}</h3>
+          <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
           <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${tbrAgeHTML(b)}${loanBadgeHTML(b)}</p>
           ${b.pickReason ? `<p class="pick-reason">💭 ${esc(b.pickReason)}</p>` : ""}
           ${b.expectation ? `<p class="pick-reason">Hoping for ${starsHTML(b.expectation)}</p>` : ""}
@@ -837,7 +849,7 @@
   function libraryCardHTML(b) {
     return `<article class="book-card lib-card ${b.status === "dnf" ? "is-dnf" : ""}" data-id="${b.id}">
       ${coverHTML(b)}
-      <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}</h3>
+      <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
       <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
       ${starsHTML(b.rating)}
       <p class="lib-date">${libDate(b)}</p>
@@ -1096,7 +1108,7 @@
   function genreItems() {
     const counts = {};
     state.books.forEach((b) => (b.tags || []).forEach((t) => { counts[t] = (counts[t] || 0) + 1; }));
-    return Object.keys(counts).map((k) => ({ full: k, value: counts[k], tick: k.length > 8 ? k.slice(0, 7) + "…" : k }))
+    return Object.keys(counts).map((k) => ({ full: k, value: counts[k], tick: k.length > 14 ? k.slice(0, 13) + "…" : k }))
       .sort((a, b) => b.value - a.value).slice(0, 8);
   }
   function ratingItems() {
@@ -1105,17 +1117,30 @@
     return counts.map((v, i) => ({ full: (i + 1) + " star", value: v, tick: (i + 1) + "★" }));
   }
   function svgBars(items, unit) {
-    const slot = 26, H = 170, padT = 16, padB = 26, padX = 8;
-    const W = Math.max(items.length * slot + padX * 2, 320);
+    const slot = 26, padT = 16;
+    // Long tick labels (genre names) overlap when drawn flat at 26px slots —
+    // angle them instead, and budget bottom/left space for the slanted text.
+    const maxTick = Math.max(0, ...items.map((i) => (i.tick || "").length));
+    const angled = maxTick > 5;
+    const padB = angled ? Math.min(72, 16 + Math.round(maxTick * 3.6)) : 26;
+    const padXL = angled ? Math.min(60, 10 + Math.round(maxTick * 3.2)) : 8;
+    const padXR = 8;
+    const H = 144 + padB; // plot area stays 128px tall in both modes
+    const W = Math.max(items.length * slot + padXL + padXR, 320);
     const areaH = H - padT - padB, maxV = Math.max(1, ...items.map((i) => i.value)), baseY = padT + areaH;
-    let out = `<line class="grid-line" x1="${padX}" y1="${padT}" x2="${W - padX}" y2="${padT}"/>`;
-    out += `<text class="val-label" x="${padX}" y="${padT - 5}" font-size="9">${num(maxV)} ${unit}</text>`;
-    out += `<line class="grid-line" x1="${padX}" y1="${baseY}" x2="${W - padX}" y2="${baseY}"/>`;
+    let out = `<line class="grid-line" x1="${padXL}" y1="${padT}" x2="${W - padXR}" y2="${padT}"/>`;
+    out += `<text class="val-label" x="${padXL}" y="${padT - 5}" font-size="9">${num(maxV)} ${unit}</text>`;
+    out += `<line class="grid-line" x1="${padXL}" y1="${baseY}" x2="${W - padXR}" y2="${baseY}"/>`;
     items.forEach((it, i) => {
       const bh = it.value > 0 ? Math.max(2, (it.value / maxV) * areaH) : 0;
-      const x = padX + i * slot + slot * 0.18, bw = slot * 0.64, y = baseY - bh;
+      const x = padXL + i * slot + slot * 0.18, bw = slot * 0.64, y = baseY - bh;
       out += `<rect class="bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2"><title>${esc(it.full)}: ${num(it.value)} ${unit}</title></rect>`;
-      if (it.tick) out += `<text class="axis-label" x="${(padX + i * slot + slot / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9">${esc(it.tick)}</text>`;
+      if (it.tick) {
+        const lx = (padXL + i * slot + slot / 2).toFixed(1);
+        out += angled
+          ? `<text class="axis-label" x="${lx}" y="${baseY + 10}" text-anchor="end" font-size="9" transform="rotate(-42 ${lx} ${baseY + 10})">${esc(it.tick)}</text>`
+          : `<text class="axis-label" x="${lx}" y="${H - 9}" text-anchor="middle" font-size="9">${esc(it.tick)}</text>`;
+      }
     });
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMinYMid meet" role="img" aria-label="bar chart">${out}</svg>`;
   }
@@ -1176,6 +1201,7 @@
     } else if (book.expectation) {
       meta.push(`🔮 Hoping for ${starsHTML(book.expectation)}`);
     }
+    if (book.owned) meta.push(`🏠 On your home shelf`);
     if (book.loanDue) meta.push(loanBadgeHTML(book));
     if (book.bookmark) meta.push(`🔖 ${book.bookmark.page ? "p." + book.bookmark.page : "Bookmark"}${book.bookmark.note ? " — “" + esc(book.bookmark.note) + "”" : ""}`);
 
@@ -1192,21 +1218,22 @@
           <p class="by">${esc(book.author) || "Unknown author"}</p>
           <div class="detail-meta">${meta.map((m) => `<span>${m}</span>`).join("")}</div>
           ${chipsHTML(book, false)}
-          <div class="detail-actions">
-            ${book.status === "reading" ? `<button class="mini" data-detail-action="log">＋ Log pages</button>
-            <button class="mini" data-detail-action="bookmark">🔖 Bookmark</button>
-            <button class="mini" data-detail-action="finish">✓ Finish</button>
-            <button class="mini" data-detail-action="dnf">✕ DNF</button>` : ""}
-            ${book.status === "want" ? `<button class="mini" data-detail-action="start">▶ Start reading</button>` : ""}
-            ${book.status === "finished" ? `<button class="mini" data-detail-action="reread">🔁 Read again</button>
-            <button class="mini" data-detail-action="rate">★ Rate</button>` : ""}
-            ${book.status === "dnf" ? `<button class="mini" data-detail-action="start">▶ Pick it up again</button>` : ""}
-            <button class="mini" data-detail-action="share-card">🖼 Share card</button>
-            <button class="mini" data-detail-action="export-md">⬇ Journal .md</button>
-            <button class="mini" data-detail-action="edit">✎ Edit</button>
-            <button class="mini danger" data-detail-action="delete">🗑 Remove</button>
-          </div>
         </div>
+      </div>
+      <div class="detail-actions">
+        ${book.status === "reading" ? `<button class="mini act-main" data-detail-action="log">＋ Log pages</button>
+        <button class="mini" data-detail-action="bookmark">🔖 Bookmark</button>
+        <button class="mini" data-detail-action="finish">✓ Finish</button>
+        <button class="mini" data-detail-action="dnf">✕ DNF</button>` : ""}
+        ${book.status === "want" ? `<button class="mini act-main" data-detail-action="start">▶ Start reading</button>` : ""}
+        ${book.status === "finished" ? `<button class="mini act-main" data-detail-action="reread">🔁 Read again</button>
+        <button class="mini" data-detail-action="rate">★ Rate</button>` : ""}
+        ${book.status === "dnf" ? `<button class="mini act-main" data-detail-action="start">▶ Pick it up again</button>` : ""}
+        <button class="mini" data-detail-action="toggle-owned">${book.owned ? "🏠 On my shelf ✓" : "🏠 I own this"}</button>
+        <button class="mini" data-detail-action="share-card">🖼 Share card</button>
+        <button class="mini" data-detail-action="export-md">⬇ Journal .md</button>
+        <button class="mini" data-detail-action="edit">✎ Edit</button>
+        <button class="mini danger" data-detail-action="delete">🗑 Remove</button>
       </div>
       ${book.description ? `<div class="detail-section"><h5>About</h5><p class="detail-desc">${esc(book.description)}</p></div>` : ""}
       ${book.pickReason ? `<div class="detail-section"><h5>💭 Why I picked it up</h5><p class="detail-desc">${esc(book.pickReason)}</p></div>` : ""}
@@ -1277,7 +1304,7 @@
             </span>
           </div>`).join("") : `<p class="muted">No sessions logged yet.</p>`}
         </div>
-        <button class="mini add-session" data-detail-action="log">＋ Log a session</button>
+        <button class="primary add-session" data-detail-action="log">＋ Log a session</button>
       </div>
       ${book.review ? `<div class="detail-section"><h5>My notes</h5><p class="detail-review">${esc(book.review)}</p></div>` : ""}`;
     if (activeView !== "book") { bookReturnView = activeView; bookReturnScroll = window.scrollY; }
@@ -1737,6 +1764,37 @@
     });
     return ev.filter((e) => e.t && !isNaN(new Date(e.t))).sort((a, b) => new Date(b.t) - new Date(a.t));
   }
+  function ownedCardHTML(b) {
+    const statusLabels = { want: "📌 Want to read", reading: "📖 Reading now", finished: "✓ Read", dnf: "✕ Set aside" };
+    return `<article class="book-card lib-card" data-id="${b.id}">
+      ${coverHTML(b)}
+      <h3 class="book-title">${esc(b.title)}</h3>
+      <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
+      <p class="lib-date">${statusLabels[b.status] || ""}</p>
+    </article>`;
+  }
+  function renderOwned() {
+    const owned = state.books.filter((b) => b.owned);
+    const q = ownedQuery;
+    const list = owned.filter((b) => bookMatches(b, q)).sort((a, b) => a.title.localeCompare(b.title));
+    // While searching, also surface books she KNOWS but doesn't own — read via
+    // library, ebooks, wishlist — so "have I read this?" is answered in the shop too.
+    const elsewhere = q ? state.books.filter((b) => !b.owned && bookMatches(b, q)).sort((a, b) => a.title.localeCompare(b.title)) : [];
+    $("#owned-count").textContent = owned.length
+      ? `${num(owned.length)} book${owned.length === 1 ? "" : "s"} on your home shelf${q ? ` · ${list.length} match${list.length === 1 ? "" : "es"}` : ""}`
+      : "";
+    $("#owned-list").innerHTML = list.map(ownedCardHTML).join("");
+    $("#owned-elsewhere-wrap").hidden = elsewhere.length === 0;
+    $("#owned-elsewhere").innerHTML = elsewhere.map(ownedCardHTML).join("");
+    const empty = $("#owned-empty");
+    if (owned.length === 0) {
+      empty.hidden = false;
+      empty.textContent = "Nothing marked as owned yet. Open any book and tap “🏠 I own this”, or tick the checkbox when adding a book — then this shelf travels with you to the bookshop.";
+    } else if (q && list.length === 0 && elsewhere.length === 0) {
+      empty.hidden = false;
+      empty.textContent = "No book like that on your shelves — looks safe to buy!";
+    } else empty.hidden = true;
+  }
   function renderJourney() {
     const el = $("#journey-feed");
     if (!el) return;
@@ -1800,6 +1858,7 @@
     $("#f-series").value = book ? book.seriesName : "";
     $("#f-series-num").value = book && book.seriesNumber != null ? book.seriesNumber : "";
     $("#f-cover").value = book ? book.coverUrl : "";
+    $("#f-owned").checked = book ? !!book.owned : false;
     $("#f-desc").value = book ? (book.description || "") : "";
     $("#f-review").value = book ? (book.review || "") : "";
     $("#f-tags").value = book && book.tags ? book.tags.join(", ") : "";
@@ -1907,6 +1966,7 @@
     book.seriesName = $("#f-series").value.trim();
     book.seriesNumber = $("#f-series-num").value !== "" ? Number($("#f-series-num").value) : null;
     book.coverUrl = $("#f-cover").value.trim();
+    book.owned = $("#f-owned").checked;
     book.description = $("#f-desc").value.trim();
     book.review = $("#f-review").value.trim();
     book.tags = parseList($("#f-tags").value);
@@ -2140,7 +2200,8 @@
   // Barcode scanner
   // ---------------------------------------------------------------------------
   let scanStream = null, scanLoop = null, scanDetector = null;
-  async function openScan() {
+  async function openScan(onDetect) {
+    const onCode = typeof onDetect === "function" ? onDetect : null; // called via addEventListener too
     if (!("BarcodeDetector" in window)) { toast("ℹ️", "Scanner not supported here", "Your browser can't scan — type the ISBN instead."); return; }
     try { scanDetector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"] }); }
     catch (e) { try { scanDetector = new window.BarcodeDetector(); } catch (e2) { toast("ℹ️", "Scanner unavailable", "Type the ISBN instead."); return; } }
@@ -2160,8 +2221,8 @@
           if (raw.length >= 10) {
             stopScan();
             $("#scan-modal").hidden = true;
-            $("#f-isbn").value = raw;
-            handleFetch();
+            if (onCode) onCode(raw);
+            else { $("#f-isbn").value = raw; handleFetch(); }
           }
         }
       } catch (e) { /* keep scanning */ }
@@ -2172,6 +2233,57 @@
     scanLoop = null;
     if (scanStream) { scanStream.getTracks().forEach((t) => t.stop()); scanStream = null; }
     const v = $("#scan-video"); if (v) v.srcObject = null;
+  }
+
+  // "Scan to check" (Owned tab): am I holding a book I already have?
+  // (exposed as window.__checkScannedBook so it can be tested without a camera)
+  // Matches by ISBN first, then by the title Open Library reports for it.
+  async function checkScannedBook(isbn) {
+    const digits = String(isbn || "").replace(/[^0-9Xx]/g, "");
+    switchView("owned");
+    const box = $("#owned-check-result");
+    box.hidden = false;
+    box.innerHTML = `<div class="own-verdict"><p class="muted">Looking up ${esc(digits)}…</p></div>`;
+    const normT = (s) => String(s || "").toLowerCase().replace(/\s*\(.*?\)\s*$/, "").replace(/\s*:.*$/, "").trim();
+    let hit = state.books.find((b) => (b.isbn || "").replace(/[^0-9Xx]/g, "") === digits);
+    let scanTitle = "", scanAuthor = "";
+    if (!hit) {
+      try {
+        const docs = await searchOpenLibrary("", "", digits);
+        if (docs[0]) { scanTitle = docs[0].title || ""; scanAuthor = (docs[0].author_name || [])[0] || ""; }
+      } catch (e) { /* offline — fall through to ISBN-only verdict */ }
+      if (scanTitle) {
+        const c = normT(scanTitle);
+        hit = state.books.find((b) => { const a = normT(b.title); return a && c && (a === c || a.includes(c) || c.includes(a)); });
+      }
+    }
+    const statusLabels = { want: "on your Want-to-Read list", reading: "being read right now", finished: "already read", dnf: "set aside" };
+    if (hit && hit.owned) {
+      box.innerHTML = `<div class="own-verdict have">
+        <strong>✓ You already have this one!</strong>
+        <p>“${esc(hit.title)}” is on your home shelf — put it back 😄</p>
+        <div class="own-verdict-actions">
+          <button class="mini" data-action="detail" data-id="${hit.id}">Open book</button>
+          <button class="mini" data-action="dismiss-check">Done</button>
+        </div></div>`;
+    } else if (hit) {
+      box.innerHTML = `<div class="own-verdict partial">
+        <strong>⚠️ You know this book</strong>
+        <p>“${esc(hit.title)}” is ${statusLabels[hit.status] || "on your shelves"}, but not marked as a copy you own.</p>
+        <div class="own-verdict-actions">
+          <button class="mini" data-action="detail" data-id="${hit.id}">Open book</button>
+          <button class="mini" data-action="toggle-owned" data-id="${hit.id}">🏠 I do own it</button>
+          <button class="mini" data-action="dismiss-check">Done</button>
+        </div></div>`;
+    } else {
+      box.innerHTML = `<div class="own-verdict new">
+        <strong>🆕 Not on your shelves</strong>
+        <p>${scanTitle ? "“" + esc(scanTitle) + "”" + (scanAuthor ? " by " + esc(scanAuthor) : "") : "ISBN " + esc(digits)} — you don't have this one. Safe to buy!</p>
+        <div class="own-verdict-actions">
+          <button class="mini" data-action="scan-add" data-isbn="${esc(digits)}">＋ Add to Want to Read</button>
+          <button class="mini" data-action="dismiss-check">Done</button>
+        </div></div>`;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2284,7 +2396,7 @@
         const cTitle = idx("Title"), cAuthor = idx("Author"), cRating = idx("My Rating"),
           cPages = idx("Number of Pages"), cShelf = idx("Exclusive Shelf"), cShelves = idx("Bookshelves"),
           cReview = idx("My Review"), cDateRead = idx("Date Read"), cISBN = idx("ISBN"),
-          cISBN13 = idx("ISBN13"), cYear = idx("Original Publication Year");
+          cISBN13 = idx("ISBN13"), cYear = idx("Original Publication Year"), cOwned = idx("Owned Copies");
         if (cTitle < 0) throw 0;
         const clean = (s) => {
           let v = String(s == null ? "" : s).trim().replace(/^=/, "");
@@ -2312,13 +2424,17 @@
           const dateRead = cDateRead >= 0 ? clean(row[cDateRead]) : "";
           const review = cReview >= 0 ? clean(row[cReview]).replace(/<br\s*\/?>/gi, "\n") : "";
           const year = cYear >= 0 ? Number(clean(row[cYear])) || null : null;
-          const tags = cShelves >= 0 ? parseList(clean(row[cShelves]).replace(/to-read|currently-reading|read/gi, "").replace(/\s+/g, " ")) : [];
+          const rawShelves = cShelves >= 0 ? parseList(clean(row[cShelves])) : [];
+          const tags = rawShelves.filter((s) => !isJunkTag(s));
+          const seriesShelf = rawShelves.map((s) => (s.match(SERIES_TAG) || [])[1]).find(Boolean);
+          const seriesName = seriesShelf ? seriesShelf.replace(/[-_]+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase()) : "";
           const finishedAt = status === "finished" ? (dateRead ? new Date(dateRead).toISOString() : new Date().toISOString()) : null;
           const book = {
             id: uid(), title, author, totalPages: pages, coverUrl: isbn ? coverFromIsbn(isbn) : "", isbn,
             review, description: "", tags, collections: [], format: "physical",
-            seriesName: "", seriesNumber: null, publishedYear: year, quotes: [], readCount: 1, finishHistory: [],
+            seriesName, seriesNumber: null, publishedYear: year, quotes: [], readCount: 1, finishHistory: [],
             status, rating: rating || null, startedAt: null, finishedAt, addedAt: new Date().toISOString(), logs: [],
+            owned: cOwned >= 0 ? (parseFloat(clean(row[cOwned]) || "0") || 0) > 0 : false,
           };
           if (status === "finished" && pages > 0) book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, note: "Imported from Goodreads" });
           state.books.push(book);
@@ -2349,9 +2465,11 @@
   function onMainClick(e) {
     const actBtn = e.target.closest("[data-action]");
     if (actBtn) {
+      const action = actBtn.dataset.action;
+      if (action === "dismiss-check") { $("#owned-check-result").hidden = true; return; }
+      if (action === "scan-add") { openBookModal({ status: "want" }); $("#f-isbn").value = actBtn.dataset.isbn || ""; if ($("#f-isbn").value) handleFetch(); return; }
       const book = state.books.find((b) => b.id === actBtn.dataset.id);
       if (!book) return;
-      const action = actBtn.dataset.action;
       if (action === "log") openLogModal(book);
       else if (action === "detail") openBookPage(book);
       else if (action === "finish") openFinishModal(book);
@@ -2360,6 +2478,7 @@
       else if (action === "rate") rateBook(book);
       else if (action === "start") { book.status = "reading"; book.startedAt = new Date().toISOString(); commit(); toast("📖", "Started reading", book.title); }
       else if (action === "bookmark") openBookmarkModal(book);
+      else if (action === "toggle-owned") { book.owned = !book.owned; commit(); toast("🏠", book.owned ? "Added to your home shelf" : "Removed from your home shelf", book.title); }
       else if (action === "dnf") openDnfModal(book);
       else if (action === "edit-log") { const lg = book.logs.find((x) => x.id === actBtn.dataset.log); if (lg) openLogModal(book, lg); }
       else if (action === "del-log") { const lg = book.logs.find((x) => x.id === actBtn.dataset.log); if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) { book.logs = book.logs.filter((x) => x.id !== lg.id); commit(); toast("🗑", "Log removed", book.title); } }
@@ -2406,6 +2525,9 @@
     $("#reading-search").addEventListener("input", (e) => { readingQuery = e.target.value.trim(); renderReading(); });
     $("#want-search").addEventListener("input", (e) => { wantQuery = e.target.value.trim(); renderWant(); });
     $("#library-search").addEventListener("input", (e) => { libraryQuery = e.target.value.trim(); renderLibrary(); });
+    $("#owned-search").addEventListener("input", (e) => { ownedQuery = e.target.value.trim(); renderOwned(); });
+    $("#btn-scan-check").addEventListener("click", () => openScan(checkScannedBook));
+    window.__checkScannedBook = checkScannedBook;
     $("#library-tag").addEventListener("change", (e) => { libraryTag = e.target.value; renderLibrary(); });
     $("#library-collection").addEventListener("change", (e) => { libraryCollection = e.target.value; renderLibrary(); });
     $("#library-sort").addEventListener("change", renderLibrary);
@@ -2432,6 +2554,7 @@
       else if (act === "finish") openFinishModal(book);
       else if (act === "dnf") openDnfModal(book);
       else if (act === "rate") rateBook(book);
+      else if (act === "toggle-owned") { book.owned = !book.owned; commit(); toast("🏠", book.owned ? "Added to your home shelf" : "Removed from your home shelf", book.title); }
       else if (act === "start") { book.status = "reading"; book.startedAt = new Date().toISOString(); commit(); toast("📖", "Started reading", book.title); }
       else if (act === "delete") { if (confirm(`Remove “${book.title}” from your bookshelf? This can't be undone.`)) { state.books = state.books.filter((x) => x.id !== book.id); currentDetailId = null; goBackFromBook(); commit(); toast("🗑", "Removed", book.title); } }
       else if (act === "share-card") { shareBookCard(book); }

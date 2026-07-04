@@ -52,6 +52,7 @@
     <button class="tab active" data-view="reading">📖 Reading</button>
     <button class="tab" data-view="want">📌 Want to Read</button>
     <button class="tab" data-view="library">🗂️ Library</button>
+    <button class="tab" data-view="owned">🏠 Owned</button>
     <button class="tab" data-view="journey">🧭 Journey</button>
     <button class="tab" data-view="goals">🎯 Goals</button>
     <button class="tab" data-view="stats">📊 Stats</button>
@@ -112,6 +113,27 @@
       </div>
       <div id="library-list"></div>
       <p class="empty" id="library-empty" hidden></p>
+    </section>
+
+    <!-- OWNED: the physical shelf at home, for checking in the bookshop -->
+    <section class="view" id="view-owned" hidden>
+      <div class="view-head">
+        <h2>Books I Own</h2>
+        <div class="head-controls">
+          <button class="ghost" id="btn-scan-check" title="Scan a barcode in the shop to see if you already have it">📷 Scan to check</button>
+        </div>
+      </div>
+      <p class="own-hint">Your physical shelf at home — search or scan in the bookshop so you never buy a book twice.</p>
+      <input type="search" id="owned-search" class="input search" placeholder="Search title, author, tag…" />
+      <div id="owned-check-result" hidden></div>
+      <p id="owned-count" class="muted"></p>
+      <div class="card-grid library" id="owned-list"></div>
+      <div id="owned-elsewhere-wrap" hidden>
+        <h3 class="own-elsewhere-h">Elsewhere on your shelves</h3>
+        <p class="muted own-elsewhere-sub">You know these books, but they're not marked as owned — read, reading, or wishlisted.</p>
+        <div class="card-grid library" id="owned-elsewhere"></div>
+      </div>
+      <p class="empty" id="owned-empty" hidden></p>
     </section>
 
     <!-- JOURNEY -->
@@ -273,6 +295,8 @@
             <input type="number" id="f-year" class="input" min="0" max="2100" />
           </div>
         </div>
+
+        <label class="own-check"><input type="checkbox" id="f-owned" /> 🏠 I own a copy — it's on my shelf at home</label>
 
         <div class="grid-2">
           <div>
