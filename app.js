@@ -565,7 +565,9 @@
   // Open Library
   // ---------------------------------------------------------------------------
   function coverFromId(id, size) { return `https://covers.openlibrary.org/b/id/${id}-${size || "L"}.jpg`; }
-  function coverFromIsbn(isbn, size) { return `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-${size || "L"}.jpg`; }
+  // default=false makes unknown ISBNs 404 (so <img onerror> shows the title tile)
+  // instead of silently serving a blank 1×1 GIF.
+  function coverFromIsbn(isbn, size) { return `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-${size || "L"}.jpg?default=false`; }
   async function searchOpenLibrary(title, author, isbn) {
     const params = new URLSearchParams();
     if (isbn) params.set("isbn", isbn.replace(/[^0-9Xx]/g, ""));
@@ -577,6 +579,92 @@
     if (!res.ok) throw new Error("Search failed");
     const data = await res.json();
     return (data.docs || []).filter((d) => d.cover_i || (d.isbn && d.isbn.length));
+  }
+
+  // Cover backfill — Goodreads exports often lack ISBNs, and Open Library's
+  // ISBN endpoint doesn't know every edition, so imported libraries end up
+  // with a chunk of coverless books. Quietly re-find those in the background:
+  // OL title/author search first (best coverage), then the ISBN image
+  // (validated), then Google Books (unauthenticated → rate-limited → last).
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function imgOk(url) {
+    return new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve(im.naturalWidth > 10); // OL's "missing" image is 1×1
+      im.onerror = () => resolve(false);
+      im.src = url;
+    });
+  }
+  // Goodreads titles carry "(Series, #1)" / "[Series]" suffixes and long
+  // ": subtitle" tails that break OL search — search progressively barer forms.
+  function bareTitle(b) { return (b.title || "").replace(/\s*\[.*?\]\s*$/, "").replace(/\s*\(.*?\)\s*$/, "").trim(); }
+  function coreTitle(b) { const t = bareTitle(b), i = t.indexOf(":"); return i > 0 ? t.slice(0, i).trim() : ""; }
+  async function findCoverFor(book) {
+    for (const t of new Set([bareTitle(book), coreTitle(book)].filter(Boolean))) {
+      try {
+        const docs = await searchOpenLibrary(t, book.author, "");
+        const hit = docs.find((d) => d.cover_i);
+        if (hit) return coverFromId(hit.cover_i);
+      } catch (e) { /* offline or OL hiccup — try the next form/source */ }
+    }
+    if (book.isbn && (await imgOk(coverFromIsbn(book.isbn)))) return coverFromIsbn(book.isbn);
+    // Fuzzy OL search: translated books are indexed under their original-
+    // language title (e.g. "Emerald Green" lives as "Smaragdgrün"), which
+    // strict title= search misses. Guard with an author match so a fuzzy hit
+    // can't attach a random wrong cover.
+    try {
+      const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const params = new URLSearchParams({ q: (coreTitle(book) || bareTitle(book)) + " " + (book.author || ""), limit: "5", fields: "cover_i,author_name" });
+      const res = await fetch("https://openlibrary.org/search.json?" + params.toString());
+      if (res.ok) {
+        const data = await res.json();
+        const a = norm(book.author);
+        const hit = (data.docs || []).find((d) => d.cover_i && (!a || (d.author_name || []).some((x) => norm(x).includes(a) || a.includes(norm(x)))));
+        if (hit) return coverFromId(hit.cover_i);
+      }
+    } catch (e) { /* fall through */ }
+    try {
+      const q = book.isbn ? "isbn:" + book.isbn.replace(/[^0-9Xx]/g, "")
+        : "intitle:" + bareTitle(book) + (book.author ? " inauthor:" + book.author : "");
+      const res = await fetch("https://www.googleapis.com/books/v1/volumes?q=" + encodeURIComponent(q) + "&maxResults=3&fields=items(volumeInfo(imageLinks))");
+      if (res.ok) {
+        const data = await res.json();
+        const link = (data.items || []).map((it) => (it.volumeInfo || {}).imageLinks || {}).map((l) => l.thumbnail || l.smallThumbnail).find(Boolean);
+        if (link) return link.replace(/^http:/, "https:").replace("&edge=curl", "");
+      }
+    } catch (e) { /* rate-limited or offline */ }
+    return "";
+  }
+  let coverBackfillBusy = false, coverBackfillRan = false;
+  async function backfillCovers(force) {
+    if (coverBackfillBusy || (coverBackfillRan && !force) || navigator.onLine === false) return;
+    coverBackfillBusy = true;
+    coverBackfillRan = true;
+    try {
+      const WEEK = 7 * 24 * 3600 * 1000;
+      const isbnCover = /covers\.openlibrary\.org\/b\/isbn\//;
+      const todo = [];
+      for (const b of state.books) {
+        if (!force && b.coverTriedAt && Date.now() - new Date(b.coverTriedAt).getTime() < WEEK) continue;
+        if (!b.coverUrl) todo.push(b);
+        else if (isbnCover.test(b.coverUrl) && !(await imgOk(b.coverUrl))) todo.push(b);
+      }
+      let found = 0;
+      for (const b of todo) {
+        if (!state.books.includes(b)) continue; // a sync pull may have replaced the list
+        const url = await findCoverFor(b);
+        if (url) { b.coverUrl = url; found++; }
+        else {
+          // A confirmed-blank ISBN cover would keep rendering as an empty
+          // image; drop it so the title tile shows instead.
+          if (isbnCover.test(b.coverUrl || "")) b.coverUrl = "";
+          b.coverTriedAt = new Date().toISOString();
+        }
+        await sleep(350);
+      }
+      if (todo.length) commit();
+      if (found) toast("🖼", "Covers found", found + " missing cover" + (found === 1 ? "" : "s") + " filled in");
+    } finally { coverBackfillBusy = false; }
   }
 
   // ---------------------------------------------------------------------------
@@ -592,6 +680,7 @@
     renderGoal();
     renderStatsView();
     renderStorageStatus();
+    refreshDetail(); // keep the open book page in sync with data changes
   }
 
   function renderStats() {
@@ -1053,9 +1142,21 @@
   // ---------------------------------------------------------------------------
   // Book detail + per-book progress chart
   // ---------------------------------------------------------------------------
-  function openDetailModal(book) {
+  // Full-page book view. Opened by tapping a book card; the phone's back
+  // button/gesture returns to the list via the #book/<id> history entry.
+  // History calls are wrapped: they can throw in sandboxed/file:// contexts,
+  // and the page must still work without them (back button falls back).
+  let bookReturnView = "reading", bookReturnScroll = 0;
+  function histPushBook(id) {
+    try { history.pushState({ bookId: id, fromApp: true }, "", "#book/" + id); return true; } catch (e) { return false; }
+  }
+  function histState() { try { return history.state; } catch (e) { return null; } }
+  function histCleanHash() {
+    try { if (location.hash) history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* sandboxed */ }
+  }
+  function openBookPage(book, opts) {
+    opts = opts || {};
     currentDetailId = book.id;
-    $("#detail-title").textContent = book.title;
     const read = pagesRead(book);
     const pct = book.totalPages ? Math.min(100, Math.round((read / book.totalPages) * 100)) : 0;
     const logs = book.logs.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -1092,12 +1193,18 @@
           <div class="detail-meta">${meta.map((m) => `<span>${m}</span>`).join("")}</div>
           ${chipsHTML(book, false)}
           <div class="detail-actions">
-            ${book.status === "reading" ? `<button class="mini" data-detail-action="log" data-id="${book.id}">＋ Log pages</button>` : ""}
-            ${book.status === "reading" ? `<button class="mini" data-detail-action="bookmark" data-id="${book.id}">🔖 Bookmark</button>` : ""}
-            ${book.status === "finished" ? `<button class="mini" data-detail-action="reread" data-id="${book.id}">🔁 Read again</button>` : ""}
-            <button class="mini" data-detail-action="share-card" data-id="${book.id}">🖼 Share card</button>
-            <button class="mini" data-detail-action="export-md" data-id="${book.id}">⬇ Journal .md</button>
-            <button class="mini" data-detail-action="edit" data-id="${book.id}">✎ Edit</button>
+            ${book.status === "reading" ? `<button class="mini" data-detail-action="log">＋ Log pages</button>
+            <button class="mini" data-detail-action="bookmark">🔖 Bookmark</button>
+            <button class="mini" data-detail-action="finish">✓ Finish</button>
+            <button class="mini" data-detail-action="dnf">✕ DNF</button>` : ""}
+            ${book.status === "want" ? `<button class="mini" data-detail-action="start">▶ Start reading</button>` : ""}
+            ${book.status === "finished" ? `<button class="mini" data-detail-action="reread">🔁 Read again</button>
+            <button class="mini" data-detail-action="rate">★ Rate</button>` : ""}
+            ${book.status === "dnf" ? `<button class="mini" data-detail-action="start">▶ Pick it up again</button>` : ""}
+            <button class="mini" data-detail-action="share-card">🖼 Share card</button>
+            <button class="mini" data-detail-action="export-md">⬇ Journal .md</button>
+            <button class="mini" data-detail-action="edit">✎ Edit</button>
+            <button class="mini danger" data-detail-action="delete">🗑 Remove</button>
           </div>
         </div>
       </div>
@@ -1170,14 +1277,41 @@
             </span>
           </div>`).join("") : `<p class="muted">No sessions logged yet.</p>`}
         </div>
+        <button class="mini add-session" data-detail-action="log">＋ Log a session</button>
       </div>
       ${book.review ? `<div class="detail-section"><h5>My notes</h5><p class="detail-review">${esc(book.review)}</p></div>` : ""}`;
-    showModal("detail-modal");
+    if (activeView !== "book") { bookReturnView = activeView; bookReturnScroll = window.scrollY; }
+    switchView("book");
+    if (!opts.keepScroll) window.scrollTo(0, 0);
+    if (opts.push !== false) {
+      const st = histState();
+      if (!(st && st.bookId === book.id)) histPushBook(book.id);
+    }
+  }
+  function closeBookPage() {
+    if (activeView !== "book") return;
+    switchView(bookReturnView);
+    window.scrollTo(0, bookReturnScroll);
+  }
+  function goBackFromBook() {
+    // If we pushed the #book/<id> entry ourselves, real history.back() keeps
+    // the phone's back gesture consistent; otherwise (opened from a direct
+    // link) just close and clean the hash.
+    const st = histState();
+    if (st && st.fromApp) history.back();
+    else { closeBookPage(); histCleanHash(); }
+  }
+  // Synchronous exit for flows that immediately navigate elsewhere (tag chips
+  // etc.) — closes the page now and cleans the URL without waiting on popstate.
+  function leaveBookPage() {
+    if (activeView !== "book") return;
+    closeBookPage();
+    histCleanHash();
   }
   function refreshDetail() {
-    if (!currentDetailId || $("#detail-modal").hidden) return;
+    if (!currentDetailId || activeView !== "book") return;
     const b = state.books.find((x) => x.id === currentDetailId);
-    if (b) openDetailModal(b);
+    if (b) openBookPage(b, { push: false, keepScroll: true });
   }
   // A cumulative pages-over-time line only tells a story once there are a couple
   // of days to plot; on day one it's a flat sliver pinned to the bottom of the
@@ -2194,6 +2328,7 @@
         commit();
         knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
         toast("📥", "Goodreads import", added + " book" + (added === 1 ? "" : "s") + " added");
+        if (added) backfillCovers(true);
       } catch (e) { console.warn(e); toast("⚠️", "Import failed", "That doesn't look like a Goodreads CSV export."); }
     };
     reader.readAsText(file);
@@ -2206,6 +2341,9 @@
     activeView = view;
     $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
     $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + view));
+    // The book page is a real page: hide the app chrome (header/stats/tabs)
+    // so it starts at the top with just the Back bar.
+    document.body.classList.toggle("book-open", view === "book");
   }
 
   function onMainClick(e) {
@@ -2215,7 +2353,7 @@
       if (!book) return;
       const action = actBtn.dataset.action;
       if (action === "log") openLogModal(book);
-      else if (action === "detail") openDetailModal(book);
+      else if (action === "detail") openBookPage(book);
       else if (action === "finish") openFinishModal(book);
       else if (action === "edit") openBookModal({ book });
       else if (action === "cover") { openBookModal({ book }); setTimeout(() => $("#btn-fetch").focus(), 80); }
@@ -2231,6 +2369,7 @@
     const tagChip = e.target.closest("[data-tag]");
     if (tagChip) {
       const tag = tagChip.dataset.tag;
+      leaveBookPage();
       if (activeView === "library") { libraryTag = tag; $("#library-tag").value = tag; renderLibrary(); }
       else if (activeView === "want") { wantQuery = tag; $("#want-search").value = tag; renderWant(); }
       else { readingQuery = tag; $("#reading-search").value = tag; renderReading(); }
@@ -2239,6 +2378,7 @@
     const colChip = e.target.closest("[data-collection]");
     if (colChip) {
       const col = colChip.dataset.collection;
+      leaveBookPage();
       if (activeView === "library") { libraryCollection = col; $("#library-collection").value = col; renderLibrary(); }
       else { switchView("library"); libraryCollection = col; $("#library-collection").value = col; renderLibrary(); }
       return;
@@ -2249,12 +2389,17 @@
     const card = e.target.closest(".book-card[data-id]");
     if (card && !e.target.closest("button, a, input, select, textarea, details, summary, label")) {
       const book = state.books.find((b) => b.id === card.dataset.id);
-      if (book) openDetailModal(book);
+      if (book) openBookPage(book);
     }
   }
 
   function init() {
-    $("#tabs").addEventListener("click", (e) => { const tab = e.target.closest(".tab"); if (tab) switchView(tab.dataset.view); });
+    $("#tabs").addEventListener("click", (e) => {
+      const tab = e.target.closest(".tab");
+      if (!tab) return;
+      if (activeView === "book") histCleanHash();
+      switchView(tab.dataset.view);
+    });
     $("#main").addEventListener("click", onMainClick);
 
     // Search + filters
@@ -2280,13 +2425,18 @@
       const book = state.books.find((x) => x.id === currentDetailId);
       if (!book) return;
       const act = btn.dataset.detailAction;
-      if (act === "log") { closeModals(); openLogModal(book); }
-      else if (act === "edit") { closeModals(); openBookModal({ book }); }
-      else if (act === "bookmark") { closeModals(); openBookmarkModal(book); }
-      else if (act === "reread") { closeModals(); openRereadModal(book); }
+      if (act === "log") openLogModal(book);
+      else if (act === "edit") openBookModal({ book });
+      else if (act === "bookmark") openBookmarkModal(book);
+      else if (act === "reread") openRereadModal(book);
+      else if (act === "finish") openFinishModal(book);
+      else if (act === "dnf") openDnfModal(book);
+      else if (act === "rate") rateBook(book);
+      else if (act === "start") { book.status = "reading"; book.startedAt = new Date().toISOString(); commit(); toast("📖", "Started reading", book.title); }
+      else if (act === "delete") { if (confirm(`Remove “${book.title}” from your bookshelf? This can't be undone.`)) { state.books = state.books.filter((x) => x.id !== book.id); currentDetailId = null; goBackFromBook(); commit(); toast("🗑", "Removed", book.title); } }
       else if (act === "share-card") { shareBookCard(book); }
       else if (act === "export-md") { downloadText(slugify(book.title) + "-journal.md", bookMarkdown(book)); toast("⬇️", "Journal exported", book.title + " as Markdown"); }
-      else if (act === "edit-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg) { closeModals(); openLogModal(book, lg); } }
+      else if (act === "edit-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg) openLogModal(book, lg); }
       else if (act === "del-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) { book.logs = book.logs.filter((x) => x.id !== lg.id); commit(); refreshDetail(); toast("🗑", "Log removed", book.title); } }
       else if (act === "del-quote") { book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote); commit(); refreshDetail(); }
       else if (act === "del-journal") { book.journal = (book.journal || []).filter((j) => j.id !== btn.dataset.journal); commit(); refreshDetail(); }
@@ -2423,7 +2573,21 @@
     // Modal close
     $$(".modal-backdrop").forEach((m) => m.addEventListener("click", (e) => { if (e.target === m) closeModals(); }));
     document.addEventListener("click", (e) => { if (e.target.closest("[data-close-modal]")) closeModals(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModals(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const hadOpenModal = $$(".modal-backdrop").some((m) => !m.hidden);
+      closeModals();
+      if (!hadOpenModal && activeView === "book") goBackFromBook();
+    });
+
+    // Book page navigation
+    $("#btn-book-back").addEventListener("click", goBackFromBook);
+    window.addEventListener("popstate", () => {
+      const m = (location.hash || "").match(/^#book\/(.+)$/);
+      const b = m && state.books.find((x) => x.id === decodeURIComponent(m[1]));
+      if (b) openBookPage(b, { push: false });
+      else closeBookPage();
+    });
 
     if (!supportsFS) $("#btn-connect-file").style.display = "none";
 
@@ -2431,10 +2595,18 @@
     render();
     knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
     switchView("reading");
+    // Deep link: reopening the app on a #book/<id> URL lands on that book's page.
+    const deepLink = (location.hash || "").match(/^#book\/(.+)$/);
+    const deepBook = deepLink && state.books.find((x) => x.id === decodeURIComponent(deepLink[1]));
+    if (deepBook) openBookPage(deepBook, { push: false });
+    else if (deepLink) histCleanHash();
     renderAccount();
     if (syncEnabled() && auth) pullData();
     setupOfflineAndPersistence();
     maybeShowMonthlyRecap();
+    // After the app settles (and any sync pull has a head start), quietly
+    // fill in covers that the Goodreads import / ISBN lookup couldn't find.
+    setTimeout(() => backfillCovers(), 3000);
   }
 
   // Small bridge so the eReader (reader.js) can list books and save sessions.
@@ -2459,6 +2631,23 @@
       checkNewBadges();
       toast("📖", "Session saved", Math.round(entry.minutes || 0) + " min added to “" + b.title + "”");
       return true;
+    },
+    // Live session logging: the reader calls this every minute while reading,
+    // updating ONE log in place (no toast — the reader announces the session
+    // itself when it ends). Returns the log id to pass back on the next call.
+    upsertReadingLog(bookId, logId, entry) {
+      const b = state.books.find((x) => x.id === bookId);
+      if (!b) return null;
+      if (b.status === "want") { b.status = "reading"; b.startedAt = b.startedAt || new Date().toISOString(); }
+      let lg = logId ? b.logs.find((x) => x.id === logId) : null;
+      if (!lg) { lg = { id: uid(), mood: "", note: "" }; b.logs.push(lg); }
+      lg.date = new Date().toISOString();
+      lg.pages = Math.max(0, Math.round(entry.pages || 0));
+      lg.minutes = Math.max(0, Math.round(entry.minutes || 0));
+      lg.note = entry.note || lg.note || "📖 eReader session";
+      commit();
+      checkNewBadges();
+      return lg.id;
     },
   };
 

@@ -204,6 +204,14 @@
         <div class="badge-grid" id="badges-special"></div>
       </div>
     </section>
+
+    <!-- FULL BOOK PAGE (opened by tapping a book card) -->
+    <section class="view" id="view-book" hidden>
+      <div class="book-page-bar">
+        <button id="btn-book-back" class="mini">← Back</button>
+      </div>
+      <div id="detail-body"></div>
+    </section>
   </main>
 
   <!-- ADD / EDIT BOOK MODAL -->
@@ -439,17 +447,6 @@
           <button type="submit" class="primary">Mark as finished</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <!-- BOOK DETAIL + PROGRESS CHART -->
-  <div class="modal-backdrop" id="detail-modal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
-      <div class="modal-head">
-        <h3 id="detail-title">Book</h3>
-        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
-      </div>
-      <div class="modal-body" id="detail-body"></div>
     </div>
   </div>
 

@@ -9,6 +9,10 @@
 (function () {
   "use strict";
 
+  // Bumped alongside meaningful reader changes; lets us tell at a glance which
+  // build a device is actually running when the SW/HTTP caches misbehave.
+  window.__readerBuild = "2026-07-05";
+
   const GAP = 48;            // must match .reader-content column-gap
   const IDLE_MS = 120000;    // stop the clock after 2 min without a page turn/touch
   const DEFAULT_CPM = 1000;  // chars/minute (~200 wpm) until we've learned your pace
@@ -467,7 +471,7 @@
     els.etaEl.textContent = etaText();
   }
   function startClock() {
-    session = { seconds: 0, chars: 0, lastActivity: Date.now(), lastTick: Date.now() };
+    session = { seconds: 0, chars: 0, lastActivity: Date.now(), lastTick: Date.now(), logId: null };
     clearInterval(tickTimer);
     // Wall-clock deltas rather than tick counting: browsers throttle timers in
     // background tabs, and we don't want reading time to silently undercount.
@@ -483,8 +487,23 @@
       const m = Math.floor(session.seconds / 60), s = session.seconds % 60;
       els.timerEl.textContent = "⏱ " + m + ":" + String(s).padStart(2, "0");
       if (session.seconds % 15 < dt) els.etaEl.textContent = etaText();
-      if (session.seconds % 60 < dt) { updateSpeed(); idbPut(rec); }
+      if (session.seconds % 60 < dt) { updateSpeed(); idbPut(rec); syncSessionLog(); }
     }, 1000);
+  }
+  // Keep the bookshelf's session log up to date WHILE reading: one log entry
+  // per reader session, updated in place every minute (and whenever the app
+  // is backgrounded), so progress is never lost if the PWA gets killed.
+  function syncSessionLog() {
+    if (!session || session.seconds < 60) return;
+    if (!rec || !rec.linkedBookId || !window.BookshelfAPI || !window.BookshelfAPI.upsertReadingLog) return;
+    const linked = window.BookshelfAPI.getBooks().find((b) => b.id === rec.linkedBookId);
+    let pages = 0;
+    if (linked && linked.totalPages && book && book.totalChars) {
+      pages = Math.round((session.chars / book.totalChars) * linked.totalPages);
+    }
+    session.logId = window.BookshelfAPI.upsertReadingLog(rec.linkedBookId, session.logId, {
+      minutes: Math.round(session.seconds / 60), pages, note: "📖 eReader session",
+    }) || session.logId;
   }
   function updateSpeed() {
     if (!session || session.seconds < 120 || session.chars < 500) return;
@@ -534,15 +553,10 @@
     updateSpeed();
     saveProgress();
     const secs = session ? session.seconds : 0;
-    const charsRead = session ? session.chars : 0;
-    // Hand the session to the bookshelf as a reading log.
+    // Final sync of the live session log (it's been updating each minute).
     if (secs >= 60 && rec.linkedBookId && window.BookshelfAPI) {
-      const linked = window.BookshelfAPI.getBooks().find((b) => b.id === rec.linkedBookId);
-      let pages = 0;
-      if (linked && linked.totalPages && book && book.totalChars) {
-        pages = Math.round((charsRead / book.totalChars) * linked.totalPages);
-      }
-      window.BookshelfAPI.addReadingLog(rec.linkedBookId, { minutes: Math.round(secs / 60), pages, note: "📖 eReader session" });
+      syncSessionLog();
+      toast("📖", "Session saved", Math.round(secs / 60) + " min logged to your bookshelf");
     } else if (secs >= 60) {
       toast("⏱", "Nice session!", Math.round(secs / 60) + " min — link this ePub to a book to log it automatically.");
     }
@@ -666,7 +680,12 @@
       updateBars();
     });
     document.addEventListener("pointerdown", () => markActivity(), true);
-    window.addEventListener("beforeunload", () => { if (rec) { updateSpeed(); saveProgress(); } });
+    window.addEventListener("beforeunload", () => { if (rec) { updateSpeed(); saveProgress(); syncSessionLog(); } });
+    // iOS can kill a backgrounded PWA without beforeunload — visibilitychange
+    // is the reliable moment to flush progress + the session log.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && rec && book) { updateSpeed(); saveProgress(); syncSessionLog(); idbPut(rec); }
+    });
   }
   function bumpFont(dir) {
     const cur = Number(localStorage.getItem(FS_KEY)) || 19;

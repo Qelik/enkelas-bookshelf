@@ -30,7 +30,7 @@ On a phone, open that link and use the browser's **Share → Add to Home Screen*
 - **Reading streaks** — consecutive-day reading streaks (current + longest).
 - **Stats & charts** — a Stats tab with a **reading calendar heatmap**, pages-per-day and pages-per-month charts, a **by-genre** breakdown, a **ratings distribution**, and a shareable **Year in Review** recap.
 - **Dark mode** — a 🌙 / ☀️ toggle in the header; your choice is remembered.
-- **Auto cover art** — covers are fetched automatically from the free [Open Library](https://openlibrary.org) API by title/author/ISBN. Wrong cover? Pick another candidate or paste your own image URL.
+- **Auto cover art** — covers are fetched automatically from the free [Open Library](https://openlibrary.org) API by title/author/ISBN, with a Google Books fallback. Books that come in without a cover (e.g. from a Goodreads import) are quietly backfilled in the background. Wrong cover? Pick another candidate or paste your own image URL.
 
 ## Running it
 

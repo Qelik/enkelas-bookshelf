@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell so Enkela's Bookshelf works offline
  * and installs to the home screen. Bump CACHE when files change. */
-const CACHE = "enkelas-bookshelf-v11";
+const CACHE = "enkelas-bookshelf-v12";
 const SHELL = [
   "./",
   "./index.html",
@@ -15,7 +15,14 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache:"reload" bypasses the browser HTTP cache — otherwise a version bump
+  // can precache STALE files the browser had lying around, and users keep
+  // running old code until the next bump.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (e) => {
