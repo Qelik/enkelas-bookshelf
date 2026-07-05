@@ -203,6 +203,8 @@
       loanDue: b.loanDue || "",
       owned: !!b.owned,
       coverTriedAt: b.coverTriedAt || null,
+      lentTo: b.lentTo || "",
+      lentAt: b.lentAt || null,
       status: STATUSES.indexOf(b.status) >= 0 ? b.status : "reading",
       rating: b.rating ? Number(b.rating) : null,
       startedAt: b.startedAt || null,
@@ -724,6 +726,12 @@
   function fmtRating(r) { return r == null ? "" : (r % 1 === 0 ? String(r) : r.toFixed(1)); }
 
   // Small per-book badges used across cards
+  function lentBadgeHTML(b) {
+    if (!b.lentTo) return "";
+    const days = b.lentAt ? Math.floor((Date.now() - new Date(b.lentAt).getTime()) / DAY) : 0;
+    const long = days >= 45; // gentle nudge once it's been out ~6 weeks
+    return `<span class="lent-badge${long ? " overdue" : ""}" title="Lent out${b.lentAt ? " " + fmtDate(b.lentAt) : ""}${long ? " — maybe ask for it back?" : ""}">📤 ${esc(b.lentTo)}${days > 0 ? " · " + days + "d" : ""}</span>`;
+  }
   function loanBadgeHTML(b) {
     if (!b.loanDue) return "";
     const due = startOfDay(new Date(b.loanDue + "T12:00:00"));
@@ -758,7 +766,7 @@
         ${coverHTML(b)}
         <div class="book-meta">
           <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
-          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${loanBadgeHTML(b)}</p>
+          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${lentBadgeHTML(b)}${loanBadgeHTML(b)}</p>
           <div class="progress"><span style="width:${pct}%"></span></div>
           <p class="progress-label">${num(read)}${b.totalPages ? " / " + num(b.totalPages) : ""} ${unitLabel(b)}${b.totalPages ? " · " + pct + "%" : ""}${est ? ` · <span class="eta">≈ done ${fmtDate(est.date.toISOString())}</span>` : ""}</p>
           ${bookmarkHTML(b)}
@@ -789,7 +797,7 @@
         ${coverHTML(b)}
         <div class="book-meta">
           <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
-          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${tbrAgeHTML(b)}${loanBadgeHTML(b)}</p>
+          <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${tbrAgeHTML(b)}${lentBadgeHTML(b)}${loanBadgeHTML(b)}</p>
           ${b.pickReason ? `<p class="pick-reason">💭 ${esc(b.pickReason)}</p>` : ""}
           ${b.expectation ? `<p class="pick-reason">Hoping for ${starsHTML(b.expectation)}</p>` : ""}
           ${chipsHTML(b, true)}
@@ -850,7 +858,7 @@
     return `<article class="book-card lib-card ${b.status === "dnf" ? "is-dnf" : ""}" data-id="${b.id}">
       ${coverHTML(b)}
       <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
-      <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
+      <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)} ${lentBadgeHTML(b)}</p>
       ${starsHTML(b.rating)}
       <p class="lib-date">${libDate(b)}</p>
       ${chipsHTML(b, true)}
@@ -1202,6 +1210,7 @@
       meta.push(`🔮 Hoping for ${starsHTML(book.expectation)}`);
     }
     if (book.owned) meta.push(`🏠 On your home shelf`);
+    if (book.lentTo) meta.push(`📤 With ${esc(book.lentTo)}${book.lentAt ? " since " + fmtDate(book.lentAt) : ""}`);
     if (book.loanDue) meta.push(loanBadgeHTML(book));
     if (book.bookmark) meta.push(`🔖 ${book.bookmark.page ? "p." + book.bookmark.page : "Bookmark"}${book.bookmark.note ? " — “" + esc(book.bookmark.note) + "”" : ""}`);
 
@@ -1230,6 +1239,7 @@
         <button class="mini" data-detail-action="rate">★ Rate</button>` : ""}
         ${book.status === "dnf" ? `<button class="mini act-main" data-detail-action="start">▶ Pick it up again</button>` : ""}
         <button class="mini" data-detail-action="toggle-owned">${book.owned ? "🏠 On my shelf ✓" : "🏠 I own this"}</button>
+        <button class="mini" data-detail-action="${book.lentTo ? "lend-return" : "lend"}">${book.lentTo ? "↩ Got it back" : "📤 Lend out"}</button>
         <button class="mini" data-detail-action="share-card">🖼 Share card</button>
         <button class="mini" data-detail-action="export-md">⬇ Journal .md</button>
         <button class="mini" data-detail-action="edit">✎ Edit</button>
@@ -1770,7 +1780,7 @@
       ${coverHTML(b)}
       <h3 class="book-title">${esc(b.title)}</h3>
       <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
-      <p class="lib-date">${statusLabels[b.status] || ""}</p>
+      <p class="lib-date">${statusLabels[b.status] || ""} ${lentBadgeHTML(b)}</p>
     </article>`;
   }
   function renderOwned() {
@@ -1783,6 +1793,9 @@
     $("#owned-count").textContent = owned.length
       ? `${num(owned.length)} book${owned.length === 1 ? "" : "s"} on your home shelf${q ? ` · ${list.length} match${list.length === 1 ? "" : "es"}` : ""}`
       : "";
+    const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0) - new Date(b.lentAt || 0));
+    $("#owned-lent-wrap").hidden = !(lent.length && !q);
+    $("#owned-lent").innerHTML = lent.map(ownedCardHTML).join("");
     $("#owned-list").innerHTML = list.map(ownedCardHTML).join("");
     $("#owned-elsewhere-wrap").hidden = elsewhere.length === 0;
     $("#owned-elsewhere").innerHTML = elsewhere.map(ownedCardHTML).join("");
@@ -2128,6 +2141,26 @@
     $("#bm-clear").hidden = !book.bookmark;
     showModal("bookmark-modal");
     setTimeout(() => $("#bm-note").focus(), 50);
+  }
+  function openLendModal(book) {
+    $("#lend-book-id").value = book.id;
+    $("#lend-book-name").textContent = book.title;
+    $("#lend-name").value = book.lentTo || "";
+    $("#lend-date").value = new Date().toISOString().slice(0, 10);
+    showModal("lend-modal");
+    setTimeout(() => $("#lend-name").focus(), 50);
+  }
+  function saveLend(e) {
+    e.preventDefault();
+    const book = state.books.find((b) => b.id === $("#lend-book-id").value);
+    if (!book) return;
+    const name = $("#lend-name").value.trim();
+    if (!name) return;
+    book.lentTo = name;
+    book.lentAt = $("#lend-date").value ? new Date($("#lend-date").value + "T12:00:00").toISOString() : new Date().toISOString();
+    closeModals();
+    commit();
+    toast("📤", "Lent out", `“${book.title}” is with ${name} now`);
   }
   function saveBookmark(e) {
     e.preventDefault();
@@ -2555,6 +2588,8 @@
       else if (act === "dnf") openDnfModal(book);
       else if (act === "rate") rateBook(book);
       else if (act === "toggle-owned") { book.owned = !book.owned; commit(); toast("🏠", book.owned ? "Added to your home shelf" : "Removed from your home shelf", book.title); }
+      else if (act === "lend") openLendModal(book);
+      else if (act === "lend-return") { const who = book.lentTo; book.lentTo = ""; book.lentAt = null; commit(); toast("↩", "Welcome back!", `“${book.title}” returned from ${who}`); }
       else if (act === "start") { book.status = "reading"; book.startedAt = new Date().toISOString(); commit(); toast("📖", "Started reading", book.title); }
       else if (act === "delete") { if (confirm(`Remove “${book.title}” from your bookshelf? This can't be undone.`)) { state.books = state.books.filter((x) => x.id !== book.id); currentDetailId = null; goBackFromBook(); commit(); toast("🗑", "Removed", book.title); } }
       else if (act === "share-card") { shareBookCard(book); }
@@ -2658,6 +2693,7 @@
 
     // Bookmark + DNF dialogs
     $("#bookmark-form").addEventListener("submit", saveBookmark);
+    $("#lend-form").addEventListener("submit", saveLend);
     $("#bm-clear").addEventListener("click", clearBookmark);
     $("#dnf-form").addEventListener("submit", saveDnf);
 

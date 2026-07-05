@@ -641,6 +641,10 @@ html[data-theme="dark"] .account-menu .am-item:hover { background: rgba(255,255,
 .star-hint { font-size: 11px; color: var(--ink-soft); margin: 2px 0 0; }
 
 /* ---------- Journey badges & lines on cards ---------- */
+.lent-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: #e9dcc5; color: #7a5b22; white-space: nowrap; }
+.lent-badge.overdue { background: #f0d3bb; color: #8a4a1f; }
+html[data-theme="dark"] .lent-badge { background: #3a3222; color: #d9bd7f; }
+html[data-theme="dark"] .lent-badge.overdue { background: #40291a; color: #e0a071; }
 .loan-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .loan-badge.soon { background: #e8c86e55; color: #8a6d1a; }
 .loan-badge.overdue { background: #e3b3b3aa; color: #a23; }
