@@ -324,20 +324,23 @@
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => pushData(false), 1200);
   }
+  // Resolves true when the account now holds this device's latest data
+  // (or a consciously chosen version) — logout uses this before wiping.
   async function pushData(force) {
-    if (!syncEnabled() || !auth) return;
+    if (!syncEnabled() || !auth) return false;
     const body = { blob: state, updatedAt: state.updatedAt };
     if (force) body.force = true; else body.baseUpdatedAt = loadSyncBase();
     try {
       const { res, data } = await apiFetch("/api/data", { method: "PUT", body: JSON.stringify(body) });
-      if (res.status === 401) { handleAuthExpired(); return; }
+      if (res.status === 401) { handleAuthExpired(); return false; }
       if (res.status === 409 && data && data.blob) {
         const useServer = confirm("Your bookshelf was changed on another device.\n\nOK = use that newer version here.\nCancel = overwrite it with this device's version.");
-        if (useServer) adoptServer(data.blob, data.updatedAt); else await pushData(true);
-        return;
+        if (useServer) { adoptServer(data.blob, data.updatedAt); return true; }
+        return pushData(true);
       }
-      if (res.ok && data) { saveSyncBase(data.updatedAt); renderStorageStatus(); }
-    } catch (e) { renderStorageStatus(); /* offline; retries on next change */ }
+      if (res.ok && data) { saveSyncBase(data.updatedAt); renderStorageStatus(); return true; }
+      return false;
+    } catch (e) { renderStorageStatus(); return false; /* offline; retries on next change */ }
   }
   async function pullData() {
     if (!syncEnabled() || !auth) return;
@@ -357,8 +360,44 @@
     } catch (e) { renderStorageStatus(); }
   }
 
+  // Autosync. Every commit already pushes (debounced 1.2s). On top of that:
+  // flush the pending push the moment the app is backgrounded (iOS may kill a
+  // PWA before a debounce fires), pull fresh data when it returns to the
+  // foreground or comes back online, and refresh every few minutes while open.
+  function setupAutoSync() {
+    document.addEventListener("visibilitychange", () => {
+      if (!syncEnabled() || !auth) return;
+      if (document.hidden) { clearTimeout(pushTimer); pushData(false); }
+      else pullData();
+    });
+    window.addEventListener("online", () => { if (syncEnabled() && auth) pullData(); });
+    setInterval(() => { if (syncEnabled() && auth && !document.hidden) pullData(); }, 5 * 60 * 1000);
+  }
+
   function handleAuthExpired() { saveAuth(null); saveSyncBase(null); renderAccount(); renderStorageStatus(); toast("🔑", "Please sign in again", "Your session expired."); }
-  function logout() { saveAuth(null); saveSyncBase(null); closeAccountMenu(); renderAccount(); renderStorageStatus(); toast("👋", "Signed out", "Your books stay on this device and on your account."); }
+  // Signing out is a privacy boundary: back the data up to the account,
+  // then leave this device as a blank shelf (nothing of the previous user).
+  async function logout() {
+    closeAccountMenu();
+    if (!confirm("Sign out on this device?\n\nYour books stay safely in your account, but they'll be removed from this device until you sign in again.")) return;
+    clearTimeout(pushTimer);
+    const backedUp = await pushData(false);
+    if (!backedUp && !confirm("Couldn't back up your latest changes — are you offline?\n\nSign out anyway? Changes made since the last sync will be lost.")) return;
+    saveAuth(null);
+    saveSyncBase(null);
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    state = loadState(); // fresh, empty shelf
+    fileHandle = null;
+    knownBadges = new Set();
+    currentDetailId = null;
+    coverBackfillRan = false;
+    leaveBookPage();
+    switchView("reading");
+    render();
+    renderAccount();
+    renderStorageStatus();
+    toast("👋", "Signed out", "This device is a blank shelf now — sign in to bring your books back.");
+  }
 
   function openAuthModal(mode) {
     setAuthMode(mode || "login");
@@ -703,6 +742,7 @@
       <div class="stat"><div class="num">${num(totalPagesRead())}</div><div class="lbl">Pages read</div></div>
       <div class="stat"><div class="num">${num(state.books.filter((b) => b.status === "reading").length)}</div><div class="lbl">Reading now</div></div>
       <div class="stat"><div class="num">${num(streak.current)}</div><div class="lbl">Day streak 🔥</div></div>
+      <div class="stat"><div class="num">${num(state.books.filter((b) => b.owned).length)}</div><div class="lbl">Books owned 🏠</div></div>
       <div class="stat"><div class="num">${num(computeBadges().filter((b) => b.unlocked).length)}</div><div class="lbl">Badges earned</div></div>`;
   }
 
@@ -1328,7 +1368,10 @@
   function closeBookPage() {
     if (activeView !== "book") return;
     switchView(bookReturnView);
-    window.scrollTo(0, bookReturnScroll);
+    // Restore where you were in the list. Double-rAF: iOS applies its own
+    // (now-disabled) scroll handling on popstate a frame late, and the list
+    // needs a layout pass before the offset exists.
+    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, bookReturnScroll)));
   }
   function goBackFromBook() {
     // If we pushed the #book/<id> entry ourselves, real history.back() keeps
@@ -1790,17 +1833,25 @@
     // While searching, also surface books she KNOWS but doesn't own — read via
     // library, ebooks, wishlist — so "have I read this?" is answered in the shop too.
     const elsewhere = q ? state.books.filter((b) => !b.owned && bookMatches(b, q)).sort((a, b) => a.title.localeCompare(b.title)) : [];
+    const fmtCounts = { physical: 0, ebook: 0, audio: 0 };
+    owned.forEach((b) => { fmtCounts[b.format] = (fmtCounts[b.format] || 0) + 1; });
+    const parts = [];
+    if (fmtCounts.physical) parts.push(`${num(fmtCounts.physical)} physical`);
+    if (fmtCounts.ebook) parts.push(`${num(fmtCounts.ebook)} e-book${fmtCounts.ebook === 1 ? "" : "s"}`);
+    if (fmtCounts.audio) parts.push(`${num(fmtCounts.audio)} audiobook${fmtCounts.audio === 1 ? "" : "s"}`);
     $("#owned-count").textContent = owned.length
-      ? `${num(owned.length)} book${owned.length === 1 ? "" : "s"} on your home shelf${q ? ` · ${list.length} match${list.length === 1 ? "" : "es"}` : ""}`
+      ? `You own ${num(owned.length)} book${owned.length === 1 ? "" : "s"}${parts.length ? " · " + parts.join(" · ") : ""}${q ? ` · ${list.length} match${list.length === 1 ? "" : "es"}` : ""}`
       : "";
     const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0) - new Date(b.lentAt || 0));
     $("#owned-lent-wrap").hidden = !(lent.length && !q);
     $("#owned-lent").innerHTML = lent.map(ownedCardHTML).join("");
+    $("#owned-results-h").hidden = !q;
+    $("#owned-results-h").textContent = q ? `On your shelf (${list.length})` : "";
     $("#owned-list").innerHTML = list.map(ownedCardHTML).join("");
     $("#owned-elsewhere-wrap").hidden = elsewhere.length === 0;
     $("#owned-elsewhere").innerHTML = elsewhere.map(ownedCardHTML).join("");
     const empty = $("#owned-empty");
-    if (owned.length === 0) {
+    if (owned.length === 0 && !q) {
       empty.hidden = false;
       empty.textContent = "Nothing marked as owned yet. Open any book and tap “🏠 I own this”, or tick the checkbox when adding a book — then this shelf travels with you to the bookshop.";
     } else if (q && list.length === 0 && elsewhere.length === 0) {
@@ -2232,34 +2283,166 @@
   // ---------------------------------------------------------------------------
   // Barcode scanner
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // EAN-13 fallback decoder — iOS Safari has no BarcodeDetector, so on Apple
+  // devices we decode ISBN barcodes ourselves from camera frames. EAN-13 is a
+  // 1D code: 95 modules = guard(3) + 6 digits(7 each, L/G parity encodes the
+  // 13th digit) + guard(5) + 6 digits(7 each) + guard(3). We scan several
+  // horizontal lines, run-length encode them, and pattern-match run widths.
+  // Checksum + 978/979 prefix keep false positives out.
+  // ---------------------------------------------------------------------------
+  const EAN_SIG = [ // run-width signature (4 runs, 7 modules) per digit, L-encoding
+    [3, 2, 1, 1], [2, 2, 2, 1], [2, 1, 2, 2], [1, 4, 1, 1], [1, 1, 3, 2],
+    [1, 2, 3, 1], [1, 1, 1, 4], [1, 3, 1, 2], [1, 2, 1, 3], [3, 1, 1, 2],
+  ]; // G-encoding signature = the same reversed; R-encoding = same as L
+  const EAN_PARITY = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
+  function eanMatchDigit(runs, i, rightSide) {
+    const total = runs[i] + runs[i + 1] + runs[i + 2] + runs[i + 3];
+    if (!total) return null;
+    let best = null, bestD = Infinity, secondD = Infinity;
+    for (let d = 0; d < 10; d++) {
+      const sig = EAN_SIG[d];
+      let dl = 0, dg = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = (runs[i + k] * 7) / total;
+        dl += Math.abs(w - sig[k]);
+        dg += Math.abs(w - sig[3 - k]);
+      }
+      const cand = rightSide ? [[dl, "L"]] : [[dl, "L"], [dg, "G"]];
+      for (const [dist, par] of cand) {
+        if (dist < bestD) { secondD = bestD; bestD = dist; best = { d, par }; }
+        else if (dist < secondD) secondD = dist;
+      }
+    }
+    if (!best || bestD > 1.5 || secondD - bestD < 0.25) return null; // too blurry/ambiguous
+    return best;
+  }
+  function eanGuardOk(runs, i, count, m) {
+    let total = 0;
+    for (let k = 0; k < count; k++) { if (runs[i + k] == null) return false; total += runs[i + k]; }
+    if (Math.abs(total / count - m) > m * 0.55) return false;
+    for (let k = 0; k < count; k++) if (Math.abs(runs[i + k] - m) > m * 0.7) return false;
+    return true;
+  }
+  function eanDecodeRuns(runs, startsDark) {
+    // runs = widths of alternating dark/light stretches; runs[0] darkness = startsDark
+    for (let i = startsDark ? 0 : 1; i + 58 < runs.length; i += 2) {
+      const m = (runs[i] + runs[i + 1] + runs[i + 2]) / 3; // start guard 1-1-1
+      if (m < 1 || !eanGuardOk(runs, i, 3, m)) continue;
+      let ok = true, parity = "", digits = "";
+      for (let d = 0; d < 6 && ok; d++) {
+        const g = i + 3 + d * 4;
+        const tot = runs[g] + runs[g + 1] + runs[g + 2] + runs[g + 3];
+        if (Math.abs(tot - 7 * m) > 3 * m) { ok = false; break; }
+        const hit = eanMatchDigit(runs, g, false);
+        if (!hit) { ok = false; break; }
+        digits += hit.d; parity += hit.par;
+      }
+      if (!ok || !eanGuardOk(runs, i + 27, 5, m)) continue;
+      for (let d = 0; d < 6 && ok; d++) {
+        const g = i + 32 + d * 4;
+        const tot = runs[g] + runs[g + 1] + runs[g + 2] + runs[g + 3];
+        if (Math.abs(tot - 7 * m) > 3 * m) { ok = false; break; }
+        const hit = eanMatchDigit(runs, g, true);
+        if (!hit) { ok = false; break; }
+        digits += hit.d;
+      }
+      if (!ok || !eanGuardOk(runs, i + 56, 3, m)) continue;
+      const first = EAN_PARITY.indexOf(parity);
+      if (first < 0) continue;
+      const code = first + digits;
+      let sum = 0;
+      for (let k = 0; k < 12; k++) sum += Number(code[k]) * (k % 2 ? 3 : 1);
+      if ((10 - (sum % 10)) % 10 !== Number(code[12])) continue;
+      if (!/^97[89]/.test(code)) continue; // books only — ignores price add-on codes
+      return code;
+    }
+    return null;
+  }
+  function eanRowRuns(data, w, y) {
+    const off = y * w * 4;
+    let min = 255, max = 0;
+    const lum = new Array(w);
+    for (let x = 0; x < w; x++) {
+      const j = off + x * 4;
+      const v = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
+      lum[x] = v;
+      if (v < min) min = v; else if (v > max) max = v;
+    }
+    if (max - min < 48) return null; // no barcode contrast on this line
+    const thr = (min + max) / 2;
+    const runs = []; let dark = lum[0] < thr, len = 1;
+    for (let x = 1; x < w; x++) {
+      const d = lum[x] < thr;
+      if (d === dark) len++;
+      else { runs.push(len); dark = d; len = 1; }
+    }
+    runs.push(len);
+    return { runs, startsDark: lum[0] < thr };
+  }
+  function decodeEAN13FromCanvas(canvas) {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const w = canvas.width, h = canvas.height;
+    const data = ctx.getImageData(0, 0, w, h).data;
+    for (let f = 0.30; f <= 0.70; f += 0.05) {
+      const row = eanRowRuns(data, w, Math.round(h * f));
+      if (!row) continue;
+      const fwd = eanDecodeRuns(row.runs, row.startsDark);
+      if (fwd) return fwd;
+      const rev = row.runs.slice().reverse();
+      const revStartsDark = row.startsDark === (row.runs.length % 2 === 1);
+      const back = eanDecodeRuns(rev, revStartsDark);
+      if (back) return back;
+    }
+    return null;
+  }
+  window.__decodeEAN13Canvas = decodeEAN13FromCanvas; // debug/test hook (no camera needed)
+  function decodeEAN13FromVideo(video, canvas) {
+    if (!video.videoWidth) return null;
+    const w = Math.min(900, video.videoWidth);
+    const h = Math.round(video.videoHeight * (w / video.videoWidth));
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d", { willReadFrequently: true }).drawImage(video, 0, 0, w, h);
+    return decodeEAN13FromCanvas(canvas);
+  }
+
   let scanStream = null, scanLoop = null, scanDetector = null;
   async function openScan(onDetect) {
     const onCode = typeof onDetect === "function" ? onDetect : null; // called via addEventListener too
-    if (!("BarcodeDetector" in window)) { toast("ℹ️", "Scanner not supported here", "Your browser can't scan — type the ISBN instead."); return; }
-    try { scanDetector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"] }); }
-    catch (e) { try { scanDetector = new window.BarcodeDetector(); } catch (e2) { toast("ℹ️", "Scanner unavailable", "Type the ISBN instead."); return; } }
+    // Native BarcodeDetector where available (Android/Chrome); otherwise the
+    // built-in EAN-13 decoder above (iOS Safari has no BarcodeDetector).
+    scanDetector = null;
+    if ("BarcodeDetector" in window) {
+      try { scanDetector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"] }); }
+      catch (e) { try { scanDetector = new window.BarcodeDetector(); } catch (e2) { scanDetector = null; } }
+    }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast("⚠️", "No camera access", "Type the ISBN instead."); return; }
-    try { scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
+    try { scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } } }); }
     catch (e) { toast("⚠️", "Camera blocked", "Allow camera access, or type the ISBN."); return; }
     const v = $("#scan-video");
     v.srcObject = scanStream;
     try { await v.play(); } catch (e) { /* ignore */ }
     showModal("scan-modal");
+    const grabCanvas = document.createElement("canvas");
     scanLoop = setInterval(async () => {
-      if (!scanDetector || !scanStream) return;
+      if (!scanStream) return;
       try {
-        const codes = await scanDetector.detect(v);
-        if (codes && codes.length) {
-          const raw = String(codes[0].rawValue || "").replace(/[^0-9Xx]/g, "");
-          if (raw.length >= 10) {
-            stopScan();
-            $("#scan-modal").hidden = true;
-            if (onCode) onCode(raw);
-            else { $("#f-isbn").value = raw; handleFetch(); }
-          }
+        let raw = "";
+        if (scanDetector) {
+          const codes = await scanDetector.detect(v);
+          if (codes && codes.length) raw = String(codes[0].rawValue || "").replace(/[^0-9Xx]/g, "");
+        } else {
+          raw = decodeEAN13FromVideo(v, grabCanvas) || "";
+        }
+        if (raw.length >= 10) {
+          stopScan();
+          $("#scan-modal").hidden = true;
+          if (onCode) onCode(raw);
+          else { $("#f-isbn").value = raw; handleFetch(); }
         }
       } catch (e) { /* keep scanning */ }
-    }, 500);
+    }, scanDetector ? 500 : 350);
   }
   function stopScan() {
     if (scanLoop) clearInterval(scanLoop);
@@ -2722,7 +2905,7 @@
         else openAuthModal("login");
       });
       $("#am-sync").addEventListener("click", () => { closeAccountMenu(); toast("🔄", "Syncing…", ""); pullData(); });
-      $("#am-signout").addEventListener("click", () => { if (confirm("Sign out on this device?")) logout(); });
+      $("#am-signout").addEventListener("click", logout);
       $("#tab-login").addEventListener("click", () => setAuthMode("login"));
       $("#tab-register").addEventListener("click", () => setAuthMode("register"));
       $("#auth-form").addEventListener("submit", onAuthSubmit);
@@ -2750,6 +2933,9 @@
 
     if (!supportsFS) $("#btn-connect-file").style.display = "none";
 
+    // We restore list scroll positions ourselves when leaving a book page —
+    // stop the browser fighting us on popstate.
+    try { history.scrollRestoration = "manual"; } catch (e) { /* ignore */ }
     applyTheme(loadTheme());
     render();
     knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
@@ -2761,6 +2947,7 @@
     else if (deepLink) histCleanHash();
     renderAccount();
     if (syncEnabled() && auth) pullData();
+    setupAutoSync();
     setupOfflineAndPersistence();
     maybeShowMonthlyRecap();
     // After the app settles (and any sync pull has a head start), quietly

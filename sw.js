@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell so Enkela's Bookshelf works offline
  * and installs to the home screen. Bump CACHE when files change. */
-const CACHE = "enkelas-bookshelf-v14";
+const CACHE = "enkelas-bookshelf-v16";
 const SHELL = [
   "./",
   "./index.html",
