@@ -15,6 +15,7 @@
 
   const GAP = 48;            // must match .reader-content column-gap
   const IDLE_MS = 120000;    // stop the clock after 2 min without a page turn/touch
+  const SESSION_GAP = 900000; // a 15-min+ lull (reader left open) starts a NEW session
   const DEFAULT_CPM = 1000;  // chars/minute (~200 wpm) until we've learned your pace
   const ETA_KEY = "enkelas-reader-etamode";
   const FS_KEY = "enkelas-reader-fontsize";
@@ -433,7 +434,19 @@
   // ---------------------------------------------------------------------------
   // Time tracking + ETA
   // ---------------------------------------------------------------------------
-  function markActivity() { if (session) session.lastActivity = Date.now(); }
+  function markActivity() {
+    if (!session) return;
+    const now = Date.now();
+    // A long lull with the reader still open ends the current reading session:
+    // flush its log, then reset the counters so the next stretch is logged as a
+    // separate session — even minutes apart on the same day.
+    if (session.seconds >= 60 && now - session.lastActivity > SESSION_GAP) {
+      syncSessionLog();
+      session.seconds = 0; session.chars = 0; session.logId = null;
+      if (els && els.timerEl) els.timerEl.textContent = "⏱ 0:00";
+    }
+    session.lastActivity = now;
+  }
   function countPageRead(prior) {
     if (!session || !book.chars || !book.chars.length) return;
     const perPage = (book.chars[prior.ch] || 0) / Math.max(1, prior.pag.pages);
@@ -491,8 +504,9 @@
     }, 1000);
   }
   // Keep the bookshelf's session log up to date WHILE reading: one log entry
-  // per reader session, updated in place every minute (and whenever the app
-  // is backgrounded), so progress is never lost if the PWA gets killed.
+  // per reading session (a stretch of reading; long lulls split into new ones —
+  // see markActivity), updated in place every minute and whenever the app is
+  // backgrounded, so progress is never lost if the PWA gets killed.
   function syncSessionLog() {
     if (!session || session.seconds < 60) return;
     if (!rec || !rec.linkedBookId || !window.BookshelfAPI || !window.BookshelfAPI.upsertReadingLog) return;
