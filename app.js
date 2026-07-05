@@ -219,6 +219,18 @@
         note: l.note || "",
       })) : [],
     })) : [];
+    // Heal an old import quirk: "read" books without a Goodreads Date Read were
+    // stamped finished-on-import-day plus a same-moment log, inflating that
+    // year's goals. Signature: finishedAt within a minute of addedAt, plus
+    // exactly one "Imported from Goodreads" log at that same moment.
+    base.books.forEach((b) => {
+      if (b.status !== "finished" || !b.finishedAt || !b.addedAt) return;
+      if (Math.abs(new Date(b.finishedAt) - new Date(b.addedAt)) > 60000) return;
+      const l = b.logs.length === 1 ? b.logs[0] : null;
+      if (!l || l.note !== "Imported from Goodreads" || Math.abs(new Date(l.date) - new Date(b.finishedAt)) > 60000) return;
+      b.finishedAt = null;
+      b.logs = [];
+    });
     return base;
   }
 
@@ -574,9 +586,9 @@
     const genresYr = new Set(); finishedYr.forEach((b) => (b.tags || []).forEach((t) => genresYr.add(t.toLowerCase())));
     const chunky = state.books.some((b) => b.status === "finished" && b.totalPages >= 500);
     const decades = new Set(); state.books.filter((b) => b.status === "finished" && b.publishedYear).forEach((b) => decades.add(Math.floor(b.publishedYear / 10)));
-    const reviews = state.books.filter((b) => b.review && b.review.trim()).length;
+    const reviews = state.books.filter((b) => b.status === "finished" && b.review && b.review.trim()).length;
     const monthsRead = new Set(); finishedYr.forEach((b) => monthsRead.add(new Date(b.finishedAt).getMonth()));
-    const fiveStar = state.books.some((b) => b.rating === 5);
+    const fiveStar = state.books.some((b) => b.status === "finished" && b.rating === 5);
     const speed = state.books.some((b) => b.status === "finished" && b.startedAt && b.finishedAt && (() => { const d = (new Date(b.finishedAt) - new Date(b.startedAt)) / DAY; return d >= 0 && d <= 7; })());
     const monthTarget = new Date().getFullYear() === year ? new Date().getMonth() + 1 : 12;
     const list = [
@@ -619,17 +631,42 @@
   // default=false makes unknown ISBNs 404 (so <img onerror> shows the title tile)
   // instead of silently serving a blank 1×1 GIF.
   function coverFromIsbn(isbn, size) { return `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-${size || "L"}.jpg?default=false`; }
+  // Does an Open Library doc's author agree with what the user typed? Used to
+  // stop a same-title book by a DIFFERENT author winning the lookup. Matches on
+  // whole-string containment or a shared surname (last name token, ≥3 chars).
+  function normName(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+  function lastNameTok(s) { const p = normName(s).split(" ").filter(Boolean); return p.length ? p[p.length - 1] : ""; }
+  function authorMatches(query, names) {
+    const q = normName(query);
+    if (!q) return true; // no author given → nothing to disagree with
+    const qTok = new Set(q.split(" ").filter((w) => w.length >= 3));
+    const qLast = lastNameTok(query);
+    return (names || []).some((n) => {
+      const a = normName(n);
+      if (!a) return false;
+      if (a === q || a.includes(q) || q.includes(a)) return true;
+      // Surname agreement, handling "First Last" vs "Last, First" ordering.
+      const aTok = a.split(" ").filter((w) => w.length >= 3);
+      if (qLast.length >= 3 && aTok.indexOf(qLast) >= 0) return true;
+      const aLast = lastNameTok(n);
+      return aLast.length >= 3 && qTok.has(aLast);
+    });
+  }
+  window.__authorMatches = authorMatches; // test hook (no network needed)
   async function searchOpenLibrary(title, author, isbn) {
     const params = new URLSearchParams();
     if (isbn) params.set("isbn", isbn.replace(/[^0-9Xx]/g, ""));
     if (title) params.set("title", title);
     if (author) params.set("author", author);
-    params.set("limit", "6");
+    params.set("limit", "10");
     params.set("fields", "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,isbn,subject");
     const res = await fetch("https://openlibrary.org/search.json?" + params.toString());
     if (!res.ok) throw new Error("Search failed");
     const data = await res.json();
-    return (data.docs || []).filter((d) => d.cover_i || (d.isbn && d.isbn.length));
+    let docs = (data.docs || []).filter((d) => d.cover_i || (d.isbn && d.isbn.length));
+    // Float author matches to the top so downstream callers pick the right one.
+    if (author) docs = docs.slice().sort((a, b) => (authorMatches(author, b.author_name) ? 1 : 0) - (authorMatches(author, a.author_name) ? 1 : 0));
+    return docs;
   }
 
   // Cover backfill — Goodreads exports often lack ISBNs, and Open Library's
@@ -853,7 +890,7 @@
 
   function libDate(b) {
     if (b.status === "dnf") return `<span class="dnf-badge" title="${b.dnfReason ? esc(b.dnfReason) : "Did not finish"}">Did not finish${b.dnfReason ? " · " + esc(b.dnfReason.length > 40 ? b.dnfReason.slice(0, 38) + "…" : b.dnfReason) : ""}</span>`;
-    return `Finished ${fmtDate(b.finishedAt)}${b.readCount > 1 ? " · " + b.readCount + "× read" : ""} · ${num(pagesRead(b) || b.totalPages)}${unitShort(b)}${b.loanDue ? " " + loanBadgeHTML(b) : ""}`;
+    return `Finished${b.finishedAt ? " " + fmtDate(b.finishedAt) : ""}${b.readCount > 1 ? " · " + b.readCount + "× read" : ""} · ${num(pagesRead(b) || b.totalPages)}${unitShort(b)}${b.loanDue ? " " + loanBadgeHTML(b) : ""}`;
   }
 
   function renderLibrary() {
@@ -1944,6 +1981,8 @@
 
     showModal("book-modal");
     setTimeout(() => $("#f-title").focus(), 50);
+    // Editing a book with no genres yet → quietly look them up and fill in.
+    if (book && (!book.tags || !book.tags.length)) fetchGenresForForm({ quiet: true, onlyIfEmpty: true, forId: book.id });
   }
   function toggleStatusFields(status) {
     $("#reading-fields").hidden = status !== "reading";
@@ -1968,14 +2007,87 @@
     $("#collection-suggest").innerHTML = cols.filter((t) => curC.indexOf(t.toLowerCase()) < 0).slice(0, 12).map((t) => `<span class="tag" data-add-collection="${esc(t)}">+ 📁 ${esc(t)}</span>`).join("");
   }
 
+  // Open Library "subjects" are noisy (bestseller lists, "large type", library
+  // housekeeping). Keep the ones that read like genres, title-cased and deduped.
+  function cleanSubjects(subjects) {
+    if (!Array.isArray(subjects)) return [];
+    const BAD = /\d|fiction in|accessible|reading level|nyt|new york times|bestsell|large type|protected daisy|in library|overdrive|lending|open library|internet archive|braille|audiobook|ebook|collection|general/i;
+    // Words that signal a genre rather than a plot element (OL mixes both, and
+    // doesn't rank them, so "Arkenstone" and "Fantasy" sit side by side).
+    const GENRE = /fiction|fantasy|romance|myster|thriller|horror|histor|biograph|memoir|science|sci-?fi|young adult|nonfiction|non-fiction|poetry|classic|adventure|literary|literature|contemporary|dystopia|paranormal|crime|detective|self-help|philosoph|humou?r|comic|graphic novel|children|juvenile|coming of age|mytholog|retelling|saga|epic|western|suspense|drama|essays|short stories|feminis|queer|lgbt|thriller|horror|western|magical realism/i;
+    const seen = new Set(), hits = [], rest = [];
+    for (let s of subjects) {
+      s = String(s || "").trim();
+      if (s.length < 3 || s.length > 26 || BAD.test(s)) continue;
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const titled = s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+      (GENRE.test(s) ? hits : rest).push(titled);
+    }
+    // Genre-looking terms first; only fall back to other subjects if we found
+    // barely any real genres, so obscure books still get something.
+    return (hits.length >= 3 ? hits : hits.concat(rest)).slice(0, 5);
+  }
+  // Look up genres for whatever's in the add/edit form and merge them into the
+  // tags field. Used by the "✨ Fetch genres" button and auto-run when editing a
+  // book that has none yet.
+  async function fetchGenresForForm(opts) {
+    opts = opts || {};
+    const title = $("#f-title").value.trim(), author = $("#f-author").value.trim(), isbn = $("#f-isbn").value.trim();
+    if (!title && !isbn) { if (!opts.quiet) toast("ℹ️", "Add a title first", "Then I can look up its genres."); return; }
+    const btn = $("#btn-fetch-genres");
+    if (btn && !opts.quiet) { btn.disabled = true; btn.textContent = "Fetching…"; }
+    try {
+      let docs = await searchOpenLibrary(title, author, isbn);
+      if (author && !isbn) { const m = docs.filter((d) => authorMatches(author, d.author_name)); if (m.length) docs = m; }
+      const doc = docs.find((d) => Array.isArray(d.subject) && d.subject.length) || docs[0];
+      let picks = cleanSubjects(doc && doc.subject);
+      // The work record usually carries a richer subject list than search docs.
+      if (picks.length < 3 && doc && doc.key) {
+        try { const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json(); picks = cleanSubjects((w.subjects || []).concat(doc.subject || [])); } catch (e) { /* keep what we have */ }
+      }
+      if (opts.forId && $("#f-id").value !== opts.forId) return; // modal moved on to another book
+      if (!picks.length) { if (!opts.quiet) toast("🔍", "No genres found", "Add a couple by hand below."); return; }
+      const existing = parseList($("#f-tags").value);
+      if (opts.onlyIfEmpty && existing.length) return;
+      const have = new Set(existing.map((x) => x.toLowerCase()));
+      const merged = existing.slice();
+      picks.forEach((pk) => { if (!have.has(pk.toLowerCase())) { have.add(pk.toLowerCase()); merged.push(pk); } });
+      $("#f-tags").value = merged.join(", ");
+      renderTagHelpers();
+      if (!opts.quiet) toast("🏷️", "Genres added", picks.join(", "));
+    } catch (e) {
+      if (!opts.quiet) toast("⚠️", "Couldn't fetch genres", "Check your connection, or add them by hand.");
+    } finally {
+      if (btn && !opts.quiet) { btn.disabled = false; btn.textContent = "✨ Fetch genres"; }
+    }
+  }
+
   async function handleFetch() {
     const title = $("#f-title").value.trim(), author = $("#f-author").value.trim(), isbn = $("#f-isbn").value.trim();
     if (!title && !isbn) { toast("ℹ️", "Type a title first", "Then I can look up the cover."); return; }
     const btn = $("#btn-fetch");
     btn.disabled = true; btn.textContent = "Searching…";
     try {
-      const docs = await searchOpenLibrary(title, author, isbn);
-      if (!docs.length) { toast("🔍", "No matches found", "Try adding the author, or paste a cover URL."); return; }
+      let docs = await searchOpenLibrary(title, author, isbn);
+      if (!docs.length && author && !isbn) {
+        // Strict title+author search can miss a real book; retry on title alone.
+        docs = await searchOpenLibrary(title, "", "");
+      }
+      if (!docs.length) { toast("🔍", "No matches found", author ? "Double-check the author's spelling, or paste a cover URL." : "Try adding the author, or paste a cover URL."); return; }
+      // With an author given, only trust same-author results — a book with the
+      // same title by someone else must not fill in the cover/pages/ISBN.
+      if (author && !isbn) {
+        const matched = docs.filter((d) => authorMatches(author, d.author_name));
+        if (matched.length) {
+          docs = matched;
+        } else {
+          renderCandidates(docs);
+          toast("🔍", "Couldn't confirm that author", `No “${title}” by ${author} in the catalogue — pick a cover below or paste one, and the rest stays as you typed it.`);
+          return; // leave the user's fields untouched rather than fill wrong data
+        }
+      }
       const top = docs[0];
       if (!$("#f-author").value && top.author_name) $("#f-author").value = top.author_name[0];
       if (!$("#f-pages").value && top.number_of_pages_median) $("#f-pages").value = top.number_of_pages_median;
@@ -1984,8 +2096,8 @@
       if (!$("#f-title").value) $("#f-title").value = top.title || "";
       const firstCover = top.cover_i ? coverFromId(top.cover_i) : (top.isbn ? coverFromIsbn(top.isbn[0]) : "");
       if (firstCover) { $("#f-cover").value = firstCover; setCoverPreview(firstCover); }
-      if (!$("#f-tags").value.trim() && Array.isArray(top.subject)) {
-        const picks = top.subject.filter((s) => s.length < 24 && !/\d|fiction in|accessible|reading level|nyt:/i.test(s)).slice(0, 3);
+      if (!$("#f-tags").value.trim()) {
+        const picks = cleanSubjects(top.subject);
         if (picks.length) { $("#f-tags").value = picks.join(", "); renderTagHelpers(); }
       }
       renderCandidates(docs);
@@ -2644,7 +2756,10 @@
           const tags = rawShelves.filter((s) => !isJunkTag(s));
           const seriesShelf = rawShelves.map((s) => (s.match(SERIES_TAG) || [])[1]).find(Boolean);
           const seriesName = seriesShelf ? seriesShelf.replace(/[-_]+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase()) : "";
-          const finishedAt = status === "finished" ? (dateRead ? new Date(dateRead).toISOString() : new Date().toISOString()) : null;
+          // No "Date Read" in Goodreads means we genuinely don't know WHEN it
+          // was read: leave finishedAt empty rather than stamping today, which
+          // would count an old book toward this year's goals.
+          const finishedAt = status === "finished" && dateRead ? new Date(dateRead).toISOString() : null;
           const book = {
             id: uid(), title, author, totalPages: pages, coverUrl: isbn ? coverFromIsbn(isbn) : "", isbn,
             review, description: "", tags, collections: [], format: "physical",
@@ -2652,7 +2767,7 @@
             status, rating: rating || null, startedAt: null, finishedAt, addedAt: new Date().toISOString(), logs: [],
             owned: cOwned >= 0 ? (parseFloat(clean(row[cOwned]) || "0") || 0) > 0 : false,
           };
-          if (status === "finished" && pages > 0) book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, note: "Imported from Goodreads" });
+          if (status === "finished" && pages > 0 && finishedAt) book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, note: "Imported from Goodreads" });
           state.books.push(book);
           added++;
         }
@@ -2753,6 +2868,7 @@
     $("#tag-suggest").addEventListener("click", (e) => { const chip = e.target.closest("[data-add-tag]"); if (!chip) return; const t = parseList($("#f-tags").value); t.push(chip.dataset.addTag); $("#f-tags").value = parseList(t.join(",")).join(", "); renderTagHelpers(); });
     $("#collection-suggest").addEventListener("click", (e) => { const chip = e.target.closest("[data-add-collection]"); if (!chip) return; const t = parseList($("#f-collections").value); t.push(chip.dataset.addCollection); $("#f-collections").value = parseList(t.join(",")).join(", "); renderTagHelpers(); });
     $("#f-tags").addEventListener("input", renderTagHelpers);
+    $("#btn-fetch-genres").addEventListener("click", () => fetchGenresForForm());
     $("#f-collections").addEventListener("input", renderTagHelpers);
     $("#f-format").addEventListener("change", updatePagesLabel);
 

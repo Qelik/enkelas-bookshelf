@@ -579,6 +579,9 @@ body.book-open .app-header, body.book-open .stats-strip, body.book-open .tabs { 
 #view-book .detail-top h4 { font-size: 24px; margin: 0 0 2px; }
 #view-book .detail-logs { max-height: none; overflow: visible; }
 .add-session { margin-top: 10px; }
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.field-head label { margin-bottom: 0; }
+#btn-fetch-genres { flex: none; }
 
 /* ---------- Owned shelf (🏠) ---------- */
 .own-hint { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 12px; }

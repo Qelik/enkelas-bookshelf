@@ -314,7 +314,10 @@
           </div>
         </div>
 
-        <label for="f-tags">Genres / tags <span class="muted">(comma-separated)</span></label>
+        <div class="field-head">
+          <label for="f-tags">Genres / tags <span class="muted">(comma-separated)</span></label>
+          <button type="button" class="mini" id="btn-fetch-genres">✨ Fetch genres</button>
+        </div>
         <input type="text" id="f-tags" class="input" placeholder="Fantasy, Adventure" list="tags-datalist" />
         <datalist id="tags-datalist"></datalist>
         <div class="tag-suggest" id="tag-suggest"></div>
