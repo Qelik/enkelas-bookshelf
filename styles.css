@@ -266,6 +266,27 @@ html[data-theme="dark"] .onboard-step:hover { background: rgba(255,255,255,.05);
 .reader-diag .rd-row span:last-child { text-align: right; word-break: break-word; }
 .reader-diag button { margin-top: 12px; width: 100%; background: rgba(255,255,255,.1); color: #f3ece0; border: 1px solid rgba(255,255,255,.22); }
 
+/* Bookstore Companion (Series Brain, Library Map, Should-I-Buy) */
+.own-verdict-series { margin: 8px 0 0; font-size: 13.5px; color: var(--ink-soft); }
+.own-loc { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-soft); }
+.owned-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
+.ghost.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.series-flag { margin: 4px 0 0; font-size: 13px; color: #a23c30; }
+html[data-theme="dark"] .series-flag { color: #e08b7d; }
+
+/* Insights (reading rhythm / book DNA / gentle coach) */
+.insights-h { margin: 0 0 12px; }
+.insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.insight-card { display: flex; gap: 14px; background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+.insight-card .insight-emoji { font-size: 28px; flex-shrink: 0; }
+.insight-card h4 { margin: 0 0 6px; font-size: 15.5px; }
+.insight-card p { margin: 3px 0; font-size: 13.5px; color: var(--ink-soft); }
+.insight-card.coach { background: linear-gradient(135deg, rgba(201,138,75,.12), rgba(156,91,58,.06)); }
+
+/* Memory timeline — month dividers in the Journey feed */
+.j-month { font-family: var(--serif); font-size: 21px; color: var(--accent); margin: 26px 0 6px; padding-bottom: 5px; border-bottom: 2px solid var(--accent-soft); }
+.j-month:first-child { margin-top: 4px; }
+
 .status-fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin: 4px 0 14px; }
 .status-fieldset legend { font-size: 12px; color: var(--ink-soft); padding: 0 6px; }
 .radio { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; margin-right: 18px; }

@@ -133,6 +133,10 @@
       </div>
       <p class="own-hint">Your physical shelf at home — search or scan in the bookshop so you never buy a book twice.</p>
       <input type="search" id="owned-search" class="input search" placeholder="Search title, author, tag…" />
+      <div class="owned-filters">
+        <select id="owned-location" class="select" hidden><option value="">📍 Anywhere</option></select>
+        <button id="owned-unread-btn" class="ghost" aria-pressed="false" hidden>📖 Unread</button>
+      </div>
       <div id="owned-check-result" hidden></div>
       <div id="owned-lent-wrap" hidden>
         <h3 class="own-elsewhere-h">📤 Currently lent out</h3>
@@ -199,10 +203,12 @@
       <div class="view-head">
         <h2>Reading Stats</h2>
         <div class="head-controls">
+          <button class="ghost" id="btn-snapshot">📸 Share snapshot</button>
           <button class="ghost" id="btn-month-recap">📅 Monthly recap</button>
           <button class="primary" id="btn-year-review">🎉 Year in Review</button>
         </div>
       </div>
+      <div class="insights" id="insights"></div>
       <div class="stat-cards" id="stat-cards"></div>
       <div class="chart-card">
         <h3>Reading calendar <span class="muted" id="cal-sub"></span></h3>
@@ -310,6 +316,10 @@
         </div>
 
         <label class="own-check"><input type="checkbox" id="f-owned" /> 🏠 I own a copy — it's on my shelf at home</label>
+
+        <label for="f-location">Where is it? <span class="muted">(optional — bedroom, office, bag, lent out…)</span></label>
+        <input type="text" id="f-location" class="input" placeholder="e.g. Living room shelf" list="locations-datalist" maxlength="60" />
+        <datalist id="locations-datalist"></datalist>
 
         <div class="grid-2">
           <div>

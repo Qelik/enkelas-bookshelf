@@ -59,6 +59,7 @@
   let activeView = "reading";
   let storagePersisted = false;
   let readingQuery = "", wantQuery = "", libraryQuery = "", ownedQuery = "";
+  let ownedLocation = "", ownedUnreadOnly = false;
   let libraryTag = "", libraryCollection = "", libraryView = "grid";
   let libraryFormat = "", libraryRating = 0;
   let currentDetailId = null;
@@ -129,6 +130,11 @@
   }
   function allTags() { return uniqueValues((b) => b.tags); }
   function allCollections() { return uniqueValues((b) => b.collections); }
+  function allLocations() {
+    const seen = new Map();
+    state.books.forEach((b) => { const l = (b.location || "").trim(); if (l) { const k = l.toLowerCase(); if (!seen.has(k)) seen.set(k, l); } });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }
 
   function bookMatches(book, q) {
     if (!q) return true;
@@ -210,6 +216,7 @@
       expectation: b.expectation ? Number(b.expectation) : null,
       loanDue: b.loanDue || "",
       owned: !!b.owned,
+      location: b.location || "",
       coverTriedAt: b.coverTriedAt || null,
       lentTo: b.lentTo || "",
       lentAt: b.lentAt || null,
@@ -813,6 +820,7 @@
     renderAchievements();
     renderGoal();
     renderStatsView();
+    renderInsights();
     renderStorageStatus();
     const sm = $("#settings-modal");
     if (sm && !sm.hidden) renderSettings(); // keep Settings live if it's open
@@ -829,6 +837,85 @@
       <div class="stat"><div class="num">${num(streak.current)}</div><div class="lbl">Day streak 🔥</div></div>
       <div class="stat"><div class="num">${num(state.books.filter((b) => b.owned).length)}</div><div class="lbl">Books owned 🏠</div></div>
       <div class="stat"><div class="num">${num(computeBadges().filter((b) => b.unlocked).length)}</div><div class="lbl">Badges earned</div></div>`;
+  }
+
+  // --- Insights: reading rhythm (#9), taste profile (#6), gentle coach (#3) ---
+  function sessionInsights() {
+    const logs = [];
+    state.books.forEach((b) => (b.logs || []).forEach((l) => { if (l.date) logs.push({ date: l.date, pages: l.pages || 0, minutes: l.minutes || 0, format: b.format }); }));
+    if (!logs.length) return null;
+    const buckets = { Morning: 0, Afternoon: 0, Evening: 0, Night: 0 };
+    const bucketOf = (h) => (h < 5 ? "Night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : h < 22 ? "Evening" : "Night");
+    const dow = [0, 0, 0, 0, 0, 0, 0];
+    let totalMin = 0, sessWithMin = 0, audioPages = 0, totalPages = 0;
+    logs.forEach((l) => {
+      const d = new Date(l.date);
+      const weight = l.pages || 1;
+      if (!isNaN(d)) { buckets[bucketOf(d.getHours())] += weight; dow[d.getDay()] += weight; }
+      if (l.minutes > 0) { totalMin += l.minutes; sessWithMin++; }
+      totalPages += l.pages || 0;
+      if (l.format === "audio") audioPages += l.pages || 0;
+    });
+    const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const bucketSum = Object.keys(buckets).reduce((a, k) => a + buckets[k], 0);
+    const dowSum = dow.reduce((a, b) => a + b, 0);
+    return {
+      bestTime: bucketSum ? Object.keys(buckets).sort((a, b) => buckets[b] - buckets[a])[0] : "",
+      bestDay: dowSum ? DOW[dow.indexOf(Math.max.apply(null, dow))] : "",
+      avgMin: sessWithMin ? Math.round(totalMin / sessWithMin) : 0,
+      audioPct: totalPages ? Math.round((audioPages / totalPages) * 100) : 0,
+      totalMin: totalMin,
+    };
+  }
+  function tasteProfile() {
+    const finished = state.books.filter((b) => b.status === "finished");
+    if (finished.length < 2) return null;
+    const genre = {};
+    finished.forEach((b) => (b.tags || []).forEach((t) => { genre[t] = (genre[t] || 0) + 1; }));
+    const topGenres = Object.keys(genre).sort((a, b) => genre[b] - genre[a]).slice(0, 3);
+    const byAuthor = {};
+    finished.forEach((b) => { if (b.rating && b.author) (byAuthor[b.author] = byAuthor[b.author] || []).push(b.rating); });
+    let bestAuthor = null, bestAvg = 0;
+    Object.keys(byAuthor).forEach((a) => { if (byAuthor[a].length >= 2) { const avg = byAuthor[a].reduce((s, r) => s + r, 0) / byAuthor[a].length; if (avg > bestAvg) { bestAvg = avg; bestAuthor = a; } } });
+    const withPages = finished.filter((b) => b.totalPages);
+    const longest = withPages.slice().sort((a, b) => b.totalPages - a.totalPages)[0];
+    const avgLen = withPages.length ? Math.round(withPages.reduce((s, b) => s + b.totalPages, 0) / withPages.length) : 0;
+    return { topGenres, bestAuthor, bestAvg, longest, avgLen };
+  }
+  function coachNudges() {
+    const nudges = [];
+    const unreadOwned = state.books.filter((b) => b.owned && b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0);
+    if (unreadOwned.length >= 3) nudges.push(`You already own <strong>${unreadOwned.length}</strong> unread books — a ready-made shelf, no shopping needed. 📚`);
+    const tbr = state.books.filter((b) => b.status === "want").slice().sort((a, b) => new Date(a.addedAt || 0) - new Date(b.addedAt || 0))[0];
+    if (tbr) { const days = Math.floor((Date.now() - new Date(tbr.addedAt)) / DAY); if (days >= 120) nudges.push(`“${esc(tbr.title)}” has waited <strong>${days} days</strong> on your list. Read it soon, or let it go — both are fine. 🕊️`); }
+    const dnf = state.books.filter((b) => b.status === "dnf");
+    if (dnf.length >= 2) nudges.push(`You set aside <strong>${dnf.length}</strong> books this year — that's time saved for books you'll love, not something to feel bad about. ✨`);
+    return nudges;
+  }
+  function insightCard(emoji, title, lines) {
+    const items = lines.filter(Boolean).map((l) => `<p>${l}</p>`).join("");
+    if (!items) return "";
+    return `<div class="insight-card"><div class="insight-emoji">${emoji}</div><div><h4>${esc(title)}</h4>${items}</div></div>`;
+  }
+  function renderInsights() {
+    const el = $("#insights");
+    if (!el) return;
+    const s = sessionInsights(), t = tasteProfile(), nudges = coachNudges();
+    const cards = [];
+    if (s) cards.push(insightCard("⏰", "Your reading rhythm", [
+      s.bestTime ? `You read most in the <strong>${s.bestTime.toLowerCase()}</strong>` : "",
+      s.bestDay ? `Your biggest reading day is <strong>${s.bestDay}</strong>` : "",
+      s.avgMin ? `A typical session runs <strong>${s.avgMin} min</strong>` : "",
+      s.audioPct ? `<strong>${s.audioPct}%</strong> of your pages come from audiobooks` : "",
+    ]));
+    if (t) cards.push(insightCard("🧬", "Your book DNA", [
+      t.topGenres.length ? `You gravitate toward <strong>${t.topGenres.map(esc).join(", ")}</strong>` : "",
+      t.bestAuthor ? `Your highest-rated author is <strong>${esc(t.bestAuthor)}</strong> (${t.bestAvg.toFixed(1)}★ avg)` : "",
+      t.avgLen ? `You usually finish <strong>~${num(t.avgLen)}-page</strong> books` : "",
+      t.longest ? `Your longest finish: <strong>${esc(t.longest.title)}</strong> · ${num(t.longest.totalPages)}p` : "",
+    ]));
+    if (nudges.length) cards.push(`<div class="insight-card coach"><div class="insight-emoji">🌱</div><div><h4>A gentle nudge</h4>${nudges.map((n) => `<p>${n}</p>`).join("")}</div></div>`);
+    el.innerHTML = cards.length ? `<h3 class="insights-h">Your reading, understood</h3><div class="insights-grid">${cards.join("")}</div>` : "";
   }
 
   function coverHTML(book, cls) {
@@ -1091,14 +1178,23 @@
     return `<div class="series-view">` + names.map((name) => {
       const books = groups[name].slice().sort((a, b) => (a.seriesNumber || 999) - (b.seriesNumber || 999) || a.title.localeCompare(b.title));
       const read = books.filter((b) => b.status === "finished").length;
+      const owned = books.filter((b) => b.owned).length;
       const next = books.find((b) => b.status !== "finished" && b.status !== "dnf");
       const pct = Math.round((read / books.length) * 100);
+      // Gaps in the numbering you hold, e.g. you have #1, #2, #4 → #3 is missing.
+      const nums = books.map((b) => b.seriesNumber).filter((n) => n != null && Number.isInteger(n)).sort((a, b) => a - b);
+      const missing = [];
+      if (nums.length) for (let n = nums[0]; n < nums[nums.length - 1]; n++) if (nums.indexOf(n) === -1) missing.push(n);
+      // Own a later book but haven't read the one right before it.
+      const gapWarn = books.find((b) => b.owned && b.status !== "finished" && b.seriesNumber != null && books.some((p) => p.seriesNumber === b.seriesNumber - 1 && p.status !== "finished"));
       return `<div class="series-group">
-        <h3 class="series-head">${esc(name)} <span class="muted">· ${read} of ${books.length} read</span></h3>
+        <h3 class="series-head">${esc(name)} <span class="muted">· ${read} of ${books.length} read${owned ? " · " + owned + " owned" : ""}</span></h3>
         <div class="progress series-progress"><span style="width:${pct}%"></span></div>
-        ${next ? `<p class="series-next">👉 Next up: ${next.seriesNumber ? "#" + next.seriesNumber + " · " : ""}${esc(next.title)}</p>` : `<p class="series-next done">🎉 Series complete!</p>`}
+        ${next ? `<p class="series-next">👉 Next up: ${next.seriesNumber ? "#" + next.seriesNumber + " · " : ""}${esc(next.title)}${next.owned ? " 🏠" : ` <span class="series-flag">· you don't own this yet</span>`}</p>` : `<p class="series-next done">🎉 Series complete!</p>`}
+        ${missing.length ? `<p class="series-flag">🧩 Missing from your shelf: ${missing.map((n) => "#" + n).join(", ")}</p>` : ""}
+        ${gapWarn ? `<p class="series-flag">⚠️ You own #${gapWarn.seriesNumber} but haven't read #${gapWarn.seriesNumber - 1} yet.</p>` : ""}
         <div class="author-books">${books.map((b) => `
-          <button class="author-book" data-action="detail" data-id="${b.id}">${coverHTML(b)}<span class="ab-title">${STATUS_ICON[b.status] || ""} ${b.seriesNumber ? "#" + b.seriesNumber + " · " : ""}${esc(b.title)}</span></button>`).join("")}</div>
+          <button class="author-book" data-action="detail" data-id="${b.id}">${coverHTML(b)}<span class="ab-title">${STATUS_ICON[b.status] || ""} ${b.seriesNumber ? "#" + b.seriesNumber + " · " : ""}${esc(b.title)}${b.owned ? " 🏠" : ""}</span></button>`).join("")}</div>
       </div>`;
     }).join("") + `</div>`;
   }
@@ -1777,6 +1873,46 @@
       toast("⚠️", "Couldn't create the card", "The cover image blocked export.");
     }
   }
+  // "My reading right now" keepsake — a shareable snapshot of the whole shelf.
+  async function shareSnapshotCard() {
+    const W = 1000, H = 1000;
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#fbf7ef"); g.addColorStop(1, "#efe2ca");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "#c98a4b"; ctx.lineWidth = 5; ctx.strokeRect(42, 42, W - 84, H - 84);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#9c5b3a"; ctx.font = "600 46px Georgia, serif"; ctx.fillText("📚 " + appTitle(), W / 2, 135);
+    ctx.fillStyle = "#6b6258"; ctx.font = "italic 30px Georgia, serif"; ctx.fillText("My reading, right now", W / 2, 185);
+    const streak = readingStreak();
+    const stats = [
+      [num(booksFinished().length), "books read"],
+      [num(totalPagesRead()), "pages"],
+      [num(state.books.filter((b) => b.status === "reading").length), "reading now"],
+      [num(streak.current), "day streak"],
+      [num(state.books.filter((b) => b.owned).length), "owned"],
+      [num(state.books.filter((b) => b.status === "want").length), "on the list"],
+    ];
+    const cols = 2, cellW = (W - 160) / cols, startX = 80, startY = 320, rowH = 200;
+    stats.forEach((s, i) => {
+      const cxp = startX + (i % cols) * cellW + cellW / 2;
+      const cyp = startY + Math.floor(i / cols) * rowH;
+      ctx.fillStyle = "#9c5b3a"; ctx.font = "700 76px Georgia, serif"; ctx.fillText(s[0], cxp, cyp);
+      ctx.fillStyle = "#6b6258"; ctx.font = "26px Georgia, serif"; ctx.fillText(s[1], cxp, cyp + 42);
+    });
+    const genre = {}; booksFinished().forEach((b) => (b.tags || []).forEach((t) => { genre[t] = (genre[t] || 0) + 1; }));
+    const top = Object.keys(genre).sort((a, b) => genre[b] - genre[a])[0];
+    if (top) { ctx.fillStyle = "#4a4238"; ctx.font = "italic 30px Georgia, serif"; ctx.fillText("Favourite genre: " + top, W / 2, H - 135); }
+    ctx.fillStyle = "#9c5b3a"; ctx.font = "600 24px Georgia, serif"; ctx.fillText(new Date().toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }), W / 2, H - 85);
+    ctx.textAlign = "left";
+    try {
+      cv.toBlob((blob) => {
+        if (!blob) { toast("⚠️", "Couldn't create the card", ""); return; }
+        downloadBlob("my-reading-snapshot.png", blob);
+        toast("📸", "Snapshot saved", "A shareable picture of your reading right now");
+      }, "image/png");
+    } catch (e) { toast("⚠️", "Couldn't create the card", ""); }
+  }
   async function shareYearCard(year) {
     const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year);
     const pages = pagesReadInYear(year);
@@ -1911,15 +2047,39 @@
     const statusLabels = { want: "📌 Want to read", reading: "📖 Reading now", finished: "✓ Read", dnf: "✕ Set aside" };
     return `<article class="book-card lib-card" data-id="${b.id}">
       ${coverHTML(b)}
-      <h3 class="book-title">${esc(b.title)}</h3>
+      <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}</h3>
       <p class="book-author">${esc(b.author) || "Unknown author"}${seriesLabel(b)}</p>
       <p class="lib-date">${statusLabels[b.status] || ""} ${lentBadgeHTML(b)}</p>
+      ${b.location ? `<p class="own-loc">📍 ${esc(b.location)}</p>` : ""}
     </article>`;
   }
   function renderOwned() {
     const owned = state.books.filter((b) => b.owned);
     const q = ownedQuery;
-    const list = owned.filter((b) => bookMatches(b, q)).sort((a, b) => a.title.localeCompare(b.title));
+    // Personal library map: filter by where the book physically lives.
+    const locs = allLocations();
+    const locSel = $("#owned-location");
+    if (locSel) {
+      locSel.hidden = locs.length === 0;
+      if (ownedLocation && !locs.some((l) => l.toLowerCase() === ownedLocation.toLowerCase())) ownedLocation = "";
+      locSel.innerHTML = `<option value="">📍 Anywhere</option>` + locs.map((l) => `<option value="${esc(l)}">📍 ${esc(l)}</option>`).join("");
+      locSel.value = ownedLocation;
+    }
+    // "Bought but haven't touched" — owned, not started, nothing logged.
+    const isUnread = (b) => b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0;
+    const unreadCount = owned.filter(isUnread).length;
+    const ub = $("#owned-unread-btn");
+    if (ub) {
+      ub.hidden = owned.length === 0;
+      ub.setAttribute("aria-pressed", ownedUnreadOnly ? "true" : "false");
+      ub.classList.toggle("active", ownedUnreadOnly);
+      ub.textContent = ownedUnreadOnly ? "📖 Unread only ✓" : `📖 Unread (${unreadCount})`;
+    }
+    const list = owned
+      .filter((b) => bookMatches(b, q))
+      .filter((b) => !ownedLocation || (b.location || "").toLowerCase() === ownedLocation.toLowerCase())
+      .filter((b) => !ownedUnreadOnly || isUnread(b))
+      .sort((a, b) => a.title.localeCompare(b.title));
     // While searching, also surface books she KNOWS but doesn't own — read via
     // library, ebooks, wishlist — so "have I read this?" is answered in the shop too.
     const elsewhere = q ? state.books.filter((b) => !b.owned && bookMatches(b, q)).sort((a, b) => a.title.localeCompare(b.title)) : [];
@@ -1929,14 +2089,16 @@
     if (fmtCounts.physical) parts.push(`${num(fmtCounts.physical)} physical`);
     if (fmtCounts.ebook) parts.push(`${num(fmtCounts.ebook)} e-book${fmtCounts.ebook === 1 ? "" : "s"}`);
     if (fmtCounts.audio) parts.push(`${num(fmtCounts.audio)} audiobook${fmtCounts.audio === 1 ? "" : "s"}`);
+    if (unreadCount) parts.push(`${num(unreadCount)} unread`);
     $("#owned-count").textContent = owned.length
-      ? `You own ${num(owned.length)} book${owned.length === 1 ? "" : "s"}${parts.length ? " · " + parts.join(" · ") : ""}${q ? ` · ${list.length} match${list.length === 1 ? "" : "es"}` : ""}`
+      ? `You own ${num(owned.length)} book${owned.length === 1 ? "" : "s"}${parts.length ? " · " + parts.join(" · ") : ""}`
       : "";
     const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0) - new Date(b.lentAt || 0));
     $("#owned-lent-wrap").hidden = !(lent.length && !q);
     $("#owned-lent").innerHTML = lent.map(ownedCardHTML).join("");
-    $("#owned-results-h").hidden = !q;
-    $("#owned-results-h").textContent = q ? `On your shelf (${list.length})` : "";
+    const filtering = q || ownedLocation || ownedUnreadOnly;
+    $("#owned-results-h").hidden = !filtering;
+    $("#owned-results-h").textContent = filtering ? `On your shelf (${list.length})` : "";
     $("#owned-list").innerHTML = list.map(ownedCardHTML).join("");
     $("#owned-elsewhere-wrap").hidden = elsewhere.length === 0;
     $("#owned-elsewhere").innerHTML = elsewhere.map(ownedCardHTML).join("");
@@ -1944,9 +2106,9 @@
     if (owned.length === 0 && !q) {
       empty.hidden = false;
       empty.textContent = "Nothing marked as owned yet. Open any book and tap “🏠 I own this”, or tick the checkbox when adding a book — then this shelf travels with you to the bookshop.";
-    } else if (q && list.length === 0 && elsewhere.length === 0) {
+    } else if (list.length === 0 && elsewhere.length === 0) {
       empty.hidden = false;
-      empty.textContent = "No book like that on your shelves — looks safe to buy!";
+      empty.textContent = q ? "No book like that on your shelves — looks safe to buy!" : "Nothing on your shelf matches those filters.";
     } else empty.hidden = true;
   }
   function renderJourney() {
@@ -1955,12 +2117,17 @@
     const ev = journeyEvents();
     $("#journey-empty").hidden = ev.length > 0;
     const MAX = 200;
-    let lastDay = "";
+    let lastDay = "", lastMonth = "";
     el.innerHTML = ev.slice(0, MAX).map((e) => {
+      const d = new Date(e.t);
+      const month = isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+      const monthHead = month && month !== lastMonth ? `<div class="j-month">${month}</div>` : "";
+      lastMonth = month;
       const day = fmtDate(e.t);
       const head = day !== lastDay ? `<div class="j-day">${day}</div>` : "";
       lastDay = day;
-      return head + `<button class="j-event" data-action="detail" data-id="${e.id}">
+      return monthHead + head + `<button class="j-event" data-action="detail" data-id="${e.id}">
+
         <span class="j-icon">${e.icon}</span>
         <span class="j-body"><span class="j-title">${esc(e.title)}</span>${e.sub ? `<span class="j-sub">${esc(e.sub)}</span>` : ""}</span>
         <span class="j-time">${new Date(e.t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
@@ -2195,6 +2362,9 @@
     $("#f-series-num").value = book && book.seriesNumber != null ? book.seriesNumber : "";
     $("#f-cover").value = book ? book.coverUrl : "";
     $("#f-owned").checked = book ? !!book.owned : false;
+    $("#f-location").value = book ? (book.location || "") : "";
+    const locs = allLocations();
+    $("#locations-datalist").innerHTML = locs.map((l) => `<option value="${esc(l)}"></option>`).join("");
     $("#f-desc").value = book ? (book.description || "") : "";
     $("#f-review").value = book ? (book.review || "") : "";
     $("#f-tags").value = book && book.tags ? book.tags.join(", ") : "";
@@ -2378,6 +2548,7 @@
     book.seriesNumber = $("#f-series-num").value !== "" ? Number($("#f-series-num").value) : null;
     book.coverUrl = $("#f-cover").value.trim();
     book.owned = $("#f-owned").checked;
+    book.location = $("#f-location").value.trim();
     book.description = $("#f-desc").value.trim();
     book.review = $("#f-review").value.trim();
     book.tags = parseList($("#f-tags").value);
@@ -2806,6 +2977,27 @@
   // "Scan to check" (Owned tab): am I holding a book I already have?
   // (exposed as window.__checkScannedBook so it can be tested without a camera)
   // Matches by ISBN first, then by the title Open Library reports for it.
+  // Pull "(Series Name, #3)" out of a Goodreads/OL-style title.
+  function parseSeriesFromTitle(title) {
+    const m = String(title || "").match(/\(([^,(#]+?)[,]?\s*#\s*(\d+(?:\.\d+)?)\)\s*$/);
+    return m ? { name: m[1].trim(), number: Number(m[2]) } : null;
+  }
+  // A one-line "how this book sits in a series you're collecting" note for the
+  // Should-I-Buy verdict — the thing Goodreads/Fable don't do in-hand.
+  function seriesInsight(seriesName, thisNumber) {
+    if (!seriesName) return "";
+    const inSeries = state.books.filter((b) => (b.seriesName || "").toLowerCase() === seriesName.toLowerCase());
+    if (!inSeries.length) return "";
+    const owned = inSeries.filter((b) => b.owned && b.seriesNumber != null).map((b) => b.seriesNumber).sort((a, b) => a - b);
+    const parts = [];
+    parts.push(`You have ${inSeries.length} from <strong>${esc(seriesName)}</strong>` + (owned.length ? ` (own #${owned.join(", #")})` : "") + ".");
+    if (thisNumber != null) {
+      if (inSeries.some((b) => b.seriesNumber === thisNumber && b.owned)) parts.push(`You already own #${thisNumber}.`);
+      else parts.push(`This is #${thisNumber}.`);
+      if (inSeries.some((b) => b.seriesNumber === thisNumber - 1 && b.status !== "finished")) parts.push(`Heads up — you haven't read #${thisNumber - 1} yet.`);
+    }
+    return parts.join(" ");
+  }
   async function checkScannedBook(isbn) {
     const digits = String(isbn || "").replace(/[^0-9Xx]/g, "");
     switchView("owned");
@@ -2825,28 +3017,40 @@
         hit = state.books.find((b) => { const a = normT(b.title); return a && c && (a === c || a.includes(c) || c.includes(a)); });
       }
     }
-    const statusLabels = { want: "on your Want-to-Read list", reading: "being read right now", finished: "already read", dnf: "set aside" };
+    const fmtName = { physical: "a physical copy", ebook: "an e-book", audio: "an audiobook" };
+    const parsed = parseSeriesFromTitle(scanTitle) || {};
+    const seriesName = (hit && hit.seriesName) || parsed.name || "";
+    const seriesNum = hit && hit.seriesNumber != null ? hit.seriesNumber : (parsed.number != null ? parsed.number : null);
+    const insight = seriesInsight(seriesName, seriesNum);
+    const insightHTML = insight ? `<p class="own-verdict-series">📚 ${insight}</p>` : "";
     if (hit && hit.owned) {
+      const extra = [];
+      if (hit.format && hit.format !== "physical") extra.push(`You have this as ${fmtName[hit.format]}.`);
+      if (hit.lentTo) extra.push(`📤 But it's lent to ${esc(hit.lentTo)} right now.`);
       box.innerHTML = `<div class="own-verdict have">
-        <strong>✓ You already have this one!</strong>
-        <p>“${esc(hit.title)}” is on your home shelf — put it back 😄</p>
+        <strong>✓ You own this — no need to buy</strong>
+        <p>${fmtIcon(hit)}“${esc(hit.title)}” is on your home shelf${hit.location ? ` · 📍 ${esc(hit.location)}` : ""}.${extra.length ? " " + extra.join(" ") : ""}</p>
+        ${insightHTML}
         <div class="own-verdict-actions">
           <button class="mini" data-action="detail" data-id="${hit.id}">Open book</button>
           <button class="mini" data-action="dismiss-check">Done</button>
         </div></div>`;
     } else if (hit) {
+      const verb = { want: "📌 It's on your Want-to-Read list", reading: "📖 You're reading it right now", finished: "✅ You've already read it", dnf: "🚫 You set this one aside" }[hit.status] || "It's on your shelves";
       box.innerHTML = `<div class="own-verdict partial">
-        <strong>⚠️ You know this book</strong>
-        <p>“${esc(hit.title)}” is ${statusLabels[hit.status] || "on your shelves"}, but not marked as a copy you own.</p>
+        <strong>${verb} — but you don't own a copy</strong>
+        <p>“${esc(hit.title)}”${hit.status === "dnf" && hit.dnfReason ? ` — you noted: “${esc(hit.dnfReason)}”` : ""}.${hit.lentTo ? ` 📤 (Lent to ${esc(hit.lentTo)}.)` : ""}</p>
+        ${insightHTML}
         <div class="own-verdict-actions">
           <button class="mini" data-action="detail" data-id="${hit.id}">Open book</button>
-          <button class="mini" data-action="toggle-owned" data-id="${hit.id}">🏠 I do own it</button>
+          <button class="mini" data-action="toggle-owned" data-id="${hit.id}">🏠 I own it now</button>
           <button class="mini" data-action="dismiss-check">Done</button>
         </div></div>`;
     } else {
       box.innerHTML = `<div class="own-verdict new">
-        <strong>🆕 Not on your shelves</strong>
-        <p>${scanTitle ? "“" + esc(scanTitle) + "”" + (scanAuthor ? " by " + esc(scanAuthor) : "") : "ISBN " + esc(digits)} — you don't have this one. Safe to buy!</p>
+        <strong>🆕 Not on your shelves — safe to buy</strong>
+        <p>${scanTitle ? "“" + esc(scanTitle) + "”" + (scanAuthor ? " by " + esc(scanAuthor) : "") : "ISBN " + esc(digits)} isn't in your library.</p>
+        ${insightHTML}
         <div class="own-verdict-actions">
           <button class="mini" data-action="scan-add" data-isbn="${esc(digits)}">＋ Add to Want to Read</button>
           <button class="mini" data-action="dismiss-check">Done</button>
@@ -3099,6 +3303,8 @@
     $("#want-search").addEventListener("input", (e) => { wantQuery = e.target.value.trim(); renderWant(); });
     $("#library-search").addEventListener("input", (e) => { libraryQuery = e.target.value.trim(); renderLibrary(); });
     $("#owned-search").addEventListener("input", (e) => { ownedQuery = e.target.value.trim(); renderOwned(); });
+    $("#owned-location").addEventListener("change", (e) => { ownedLocation = e.target.value; renderOwned(); });
+    $("#owned-unread-btn").addEventListener("click", () => { ownedUnreadOnly = !ownedUnreadOnly; renderOwned(); });
     $("#btn-scan-check").addEventListener("click", () => openScan(checkScannedBook));
     window.__checkScannedBook = checkScannedBook;
     $("#library-tag").addEventListener("change", (e) => { libraryTag = e.target.value; renderLibrary(); });
@@ -3222,6 +3428,7 @@
       if (b && !b.disabled) openYearReview(Number(b.dataset.yearNav));
     });
     $("#btn-month-recap").addEventListener("click", () => { const n = new Date(); openMonthlyRecap(n.getFullYear(), n.getMonth()); });
+    $("#btn-snapshot").addEventListener("click", shareSnapshotCard);
     $("#month-body").addEventListener("click", (e) => {
       const b = e.target.closest("[data-month-nav]");
       if (b && !b.disabled) { const [y, m] = b.dataset.monthNav.split("-").map(Number); openMonthlyRecap(y, m); }
