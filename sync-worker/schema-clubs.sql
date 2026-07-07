@@ -47,12 +47,12 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 CREATE INDEX IF NOT EXISTS idx_comments_gate ON comments(club_id, pos_pct);
 
+-- Reactions attach to a comment; they inherit that comment's spoiler gate.
 CREATE TABLE IF NOT EXISTS reactions (
-  club_id    TEXT NOT NULL,
+  comment_id TEXT NOT NULL,
   uid        TEXT NOT NULL,
-  pos_pct    INTEGER NOT NULL,               -- gated like comments
   emoji      TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (club_id, uid, pos_pct, emoji)
+  PRIMARY KEY (comment_id, uid, emoji)
 );
-CREATE INDEX IF NOT EXISTS idx_reactions_gate ON reactions(club_id, pos_pct);
+CREATE INDEX IF NOT EXISTS idx_reactions_comment ON reactions(comment_id);

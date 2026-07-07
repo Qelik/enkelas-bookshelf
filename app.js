@@ -2398,8 +2398,24 @@
         <button class="mini danger" data-club-leave="${esc(d.club.id)}">Leave</button>
       </div>`;
   }
+  const CLUB_REACTS = ["❤️", "🤯", "😂", "😢", "👀"];
   function clubCommentHTML(c) {
-    return `<div class="club-comment"><div class="cc-head"><strong>${esc(firstName(c.display_name))}</strong> <span class="muted">· ${c.pos_pct}%${c.label ? " · " + esc(c.label) : ""}</span></div><p class="cc-body">${esc(c.body)}</p></div>`;
+    const rx = c.reactions || { counts: {}, mine: [] };
+    const bar = CLUB_REACTS.map((e) => {
+      const n = rx.counts[e] || 0;
+      const mine = (rx.mine || []).indexOf(e) >= 0;
+      return `<button type="button" class="cc-react${mine ? " on" : ""}" data-react="${e}" data-comment="${esc(c.id)}" title="React">${e}${n ? ` <span class="cc-n">${n}</span>` : ""}</button>`;
+    }).join("");
+    return `<div class="club-comment">
+      <div class="cc-head"><strong>${esc(firstName(c.display_name))}</strong> <span class="muted">· ${c.pos_pct}%${c.label ? " · " + esc(c.label) : ""}</span></div>
+      <p class="cc-body">${esc(c.body)}</p>
+      <div class="cc-reacts">${bar}</div>
+    </div>`;
+  }
+  async function toggleReaction(commentId, emoji) {
+    if (!currentClubId || !commentId || !emoji) return;
+    const { res } = await clubApi("/" + currentClubId + "/reactions", { method: "POST", body: JSON.stringify({ commentId, emoji }) });
+    if (res.ok) await refreshClub(false);
   }
   async function setClubProgress(pct) {
     if (!currentClubId) return;
@@ -3590,6 +3606,7 @@
     $("#btn-clubs").addEventListener("click", () => { closeModals(); openClubs(); });
     const clubName = () => (auth && auth.user && auth.user.fullName) || "You";
     $("#clubs-body").addEventListener("click", (e) => {
+      const react = e.target.closest("[data-react]"); if (react) { toggleReaction(react.dataset.comment, react.dataset.react); return; }
       const open = e.target.closest("[data-club-open]"); if (open) { openClub(open.dataset.clubOpen); return; }
       if (e.target.closest("[data-club-back]")) { renderClubsListScreen(); return; }
       const leave = e.target.closest("[data-club-leave]");

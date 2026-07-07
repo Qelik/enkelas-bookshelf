@@ -230,6 +230,18 @@ async function clubComments(clubId, auth, env) {
     "FROM comments c JOIN members m ON m.club_id=c.club_id AND m.uid=c.uid " +
     "WHERE c.club_id=?1 AND c.deleted=0 AND c.pos_pct<=?2 ORDER BY c.pos_pct ASC, c.created_at ASC"
   ).bind(clubId, me.progress_pct).all()).results || [];
+  // Reactions for the comments this member is allowed to see (same gate).
+  const reacts = (await env.CLUBS_DB.prepare(
+    "SELECT r.comment_id, r.emoji, r.uid FROM reactions r JOIN comments c ON c.id=r.comment_id " +
+    "WHERE c.club_id=?1 AND c.deleted=0 AND c.pos_pct<=?2"
+  ).bind(clubId, me.progress_pct).all()).results || [];
+  const byComment = {};
+  for (const r of reacts) {
+    const e = (byComment[r.comment_id] = byComment[r.comment_id] || { counts: {}, mine: [] });
+    e.counts[r.emoji] = (e.counts[r.emoji] || 0) + 1;
+    if (r.uid === auth.uid) e.mine.push(r.emoji);
+  }
+  for (const c of comments) c.reactions = byComment[c.id] || { counts: {}, mine: [] };
   const lockedAhead = (await env.CLUBS_DB.prepare("SELECT COUNT(*) AS n FROM comments WHERE club_id=?1 AND deleted=0 AND pos_pct>?2").bind(clubId, me.progress_pct).first()).n;
   return json({ comments, lockedAhead, myProgress: me.progress_pct });
 }
@@ -256,10 +268,18 @@ async function clubReact(request, clubId, auth, env) {
   if (!me) return json({ error: "Not a member of this club." }, 403);
   const b = await request.json().catch(() => ({}));
   const emoji = String(b.emoji || "").slice(0, 8);
-  if (!emoji) return json({ error: "No emoji." }, 400);
-  await env.CLUBS_DB.prepare("INSERT OR REPLACE INTO reactions (club_id,uid,pos_pct,emoji,created_at) VALUES (?1,?2,?3,?4,?5)")
-    .bind(clubId, auth.uid, clampPct(b.posPct), emoji, new Date().toISOString()).run();
-  return json({ ok: true });
+  const commentId = String(b.commentId || "");
+  if (!emoji || !commentId) return json({ error: "Missing reaction." }, 400);
+  // Can only react to a comment you're allowed to see (at/below your progress).
+  const c = await env.CLUBS_DB.prepare("SELECT pos_pct FROM comments WHERE id=?1 AND club_id=?2 AND deleted=0").bind(commentId, clubId).first();
+  if (!c || c.pos_pct > me.progress_pct) return json({ error: "Comment not available." }, 403);
+  const existing = await env.CLUBS_DB.prepare("SELECT 1 FROM reactions WHERE comment_id=?1 AND uid=?2 AND emoji=?3").bind(commentId, auth.uid, emoji).first();
+  if (existing) {
+    await env.CLUBS_DB.prepare("DELETE FROM reactions WHERE comment_id=?1 AND uid=?2 AND emoji=?3").bind(commentId, auth.uid, emoji).run();
+    return json({ ok: true, reacted: false });
+  }
+  await env.CLUBS_DB.prepare("INSERT INTO reactions (comment_id,uid,emoji,created_at) VALUES (?1,?2,?3,?4)").bind(commentId, auth.uid, emoji, new Date().toISOString()).run();
+  return json({ ok: true, reacted: true });
 }
 async function clubLeave(clubId, auth, env) {
   const me = await clubMember(env, clubId, auth.uid);

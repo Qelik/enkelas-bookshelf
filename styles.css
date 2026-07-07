@@ -307,6 +307,12 @@ html[data-theme="dark"] .series-flag { color: #e08b7d; }
 .club-comment { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .cc-head { font-size: 13px; margin-bottom: 3px; }
 .cc-body { margin: 0; white-space: pre-wrap; }
+.cc-reacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cc-react { font-size: 13px; line-height: 1; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper-2); cursor: pointer; }
+.cc-react:hover { border-color: var(--accent-soft); }
+.cc-react.on { background: var(--accent-soft); border-color: var(--accent-2); }
+.cc-react .cc-n { font-weight: 600; color: var(--ink-soft); }
+html[data-theme="dark"] .cc-react.on { background: rgba(201,138,75,.22); }
 .club-locked { color: var(--ink-soft); font-style: italic; text-align: center; padding: 8px; background: var(--paper); border: 1px dashed var(--line); border-radius: 10px; }
 .club-comment-form { display: flex; gap: 8px; }
 .club-comment-form .input { flex: 1; }
