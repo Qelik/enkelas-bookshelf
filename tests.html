@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enkela's Bookshelf — tests</title>
+  <style>
+    body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 780px; margin: 30px auto; padding: 0 16px; color: #2c2722; background: #f6f1e7; }
+    h1 { font-size: 22px; }
+    #summary { font-weight: 700; padding: 10px 14px; border-radius: 10px; margin: 14px 0; }
+    #summary.ok { background: #d8ecd8; color: #1c5b1c; }
+    #summary.bad { background: #f3d3ce; color: #8a2a1e; }
+    .t { padding: 7px 12px; border-radius: 8px; margin: 5px 0; display: flex; gap: 10px; align-items: baseline; }
+    .t.pass { background: #eaf5ea; }
+    .t.fail { background: #f8e2de; }
+    .t .mark { font-weight: 700; }
+    .t.pass .mark { color: #1c7a1c; }
+    .t.fail .mark { color: #b3261e; }
+    .t .msg { color: #8a2a1e; font-size: 13px; }
+    code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>📚 Bookshelf data-logic tests</h1>
+  <p>Loads <code>app.js</code> and exercises the pure data functions via <code>window.__test</code> — no build, no framework. Open this file over the same server as the app.</p>
+  <div id="summary">Running…</div>
+  <div id="results"></div>
+
+  <!-- app.js exposes window.__test and its init() no-ops without the app shell -->
+  <script src="app.js"></script>
+  <script>
+    (function () {
+      var T = window.__test;
+      var results = [], passed = 0, failed = 0;
+
+      function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
+      function eq(a, b, msg) { assert(JSON.stringify(a) === JSON.stringify(b), (msg || "") + " — expected " + JSON.stringify(b) + ", got " + JSON.stringify(a)); }
+      function test(name, fn) {
+        try { fn(); passed++; results.push({ name: name, ok: true }); }
+        catch (e) { failed++; results.push({ name: name, ok: false, msg: e.message }); }
+      }
+      var norm1 = function (b) { return T.normalize({ books: [b] }).books[0]; };
+
+      if (!T) {
+        document.getElementById("summary").className = "bad";
+        document.getElementById("summary").textContent = "window.__test not found — is app.js loading?";
+        return;
+      }
+
+      // --- normalize: field preservation -------------------------------------
+      test("normalize keeps core book fields", function () {
+        var b = norm1({ title: "Dune", author: "Frank Herbert", owned: true, lentTo: "Sara", format: "ebook", tags: ["Sci-Fi"], seriesName: "Dune", seriesNumber: 1, status: "reading", rating: 4, isbn: "9780441013593" });
+        eq(b.title, "Dune", "title");
+        eq(b.author, "Frank Herbert", "author");
+        eq(b.owned, true, "owned");
+        eq(b.lentTo, "Sara", "lentTo");
+        eq(b.format, "ebook", "format");
+        eq(b.tags, ["Sci-Fi"], "tags");
+        eq(b.seriesName, "Dune", "seriesName");
+        eq(b.seriesNumber, 1, "seriesNumber");
+        eq(b.status, "reading", "status");
+        eq(b.rating, 4, "rating");
+        eq(b.isbn, "9780441013593", "isbn");
+      });
+
+      test("normalize strips Goodreads shelf tags but keeps real genres", function () {
+        var b = norm1({ title: "X", tags: ["to-read", "currently-reading", "read", "series: Dune", "Fantasy", "Adventure"] });
+        eq(b.tags, ["Fantasy", "Adventure"], "only genres survive");
+      });
+
+      test("owned + lentTo survive a save/reload round-trip", function () {
+        var once = norm1({ title: "Lent Book", owned: true, lentTo: "Mira", format: "physical" });
+        var reloaded = norm1(JSON.parse(JSON.stringify(once)));
+        eq(reloaded.owned, true, "owned survives");
+        eq(reloaded.lentTo, "Mira", "lentTo survives");
+      });
+
+      // --- normalize: Goodreads phantom-finish healing -----------------------
+      test("normalize heals a phantom Goodreads finish (no fake year goal)", function () {
+        var t = "2026-01-02T10:00:00.000Z";
+        var b = norm1({ title: "Imported", status: "finished", addedAt: t, finishedAt: t, totalPages: 100, logs: [{ note: "Imported from Goodreads", date: t, pages: 100 }] });
+        eq(b.finishedAt, null, "finishedAt cleared");
+        eq(b.logs.length, 0, "phantom log removed");
+      });
+
+      test("normalize keeps a genuine finish with a real date", function () {
+        var b = norm1({ title: "Real Finish", status: "finished", addedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-03-01T00:00:00.000Z", totalPages: 100, logs: [{ note: "Done", date: "2026-03-01T00:00:00.000Z", pages: 100 }] });
+        assert(!!b.finishedAt, "finishedAt preserved");
+        eq(b.logs.length, 1, "log preserved");
+      });
+
+      // --- bookMatches -------------------------------------------------------
+      test("bookMatches searches title, author, isbn, series, tags", function () {
+        var b = norm1({ title: "The Hobbit", author: "Tolkien", isbn: "12345", seriesName: "Middle Earth", tags: ["Fantasy"], description: "a quest" });
+        assert(T.bookMatches(b, "hobbit"), "title");
+        assert(T.bookMatches(b, "tolkien"), "author");
+        assert(T.bookMatches(b, "12345"), "isbn");
+        assert(T.bookMatches(b, "middle"), "series");
+        assert(T.bookMatches(b, "fantasy"), "tag");
+        assert(T.bookMatches(b, "quest"), "description");
+        assert(!T.bookMatches(b, "zzzznope"), "no false positive");
+      });
+
+      test("bookMatches returns true for an empty query", function () {
+        var b = norm1({ title: "Anything" });
+        assert(T.bookMatches(b, ""), "empty query matches everything");
+      });
+
+      // --- isJunkTag ---------------------------------------------------------
+      test("isJunkTag flags shelves, not genres", function () {
+        assert(T.isJunkTag("to-read"), "to-read");
+        assert(T.isJunkTag("currently-reading"), "currently-reading");
+        assert(T.isJunkTag("did-not-finish"), "dnf shelf");
+        assert(T.isJunkTag("series: Wheel of Time"), "series shelf");
+        assert(!T.isJunkTag("Fantasy"), "Fantasy is a genre");
+        assert(!T.isJunkTag("Historical Fiction"), "genre kept");
+      });
+
+      // --- authorMatches -----------------------------------------------------
+      test("authorMatches agrees on the same author, rejects a different one", function () {
+        assert(T.authorMatches("Brandon Sanderson", ["Brandon Sanderson"]), "exact");
+        assert(!T.authorMatches("Brandon Sanderson", ["Agatha Christie"]), "different author");
+      });
+
+      // --- parseCSV ----------------------------------------------------------
+      test("parseCSV handles quoted commas and escaped quotes", function () {
+        eq(T.parseCSV('a,b\n"x,y",z'), [["a", "b"], ["x,y", "z"]], "quoted comma");
+        eq(T.parseCSV('"she said ""hi""",ok'), [['she said "hi"', "ok"]], "escaped quotes");
+      });
+
+      // --- cleanSubjects -----------------------------------------------------
+      test("cleanSubjects keeps genres, drops junk, caps at 5", function () {
+        var out = T.cleanSubjects(["Fantasy", "Fiction", "nyt bestseller", "Accessible book", "Romance", "Adventure", "Mystery", "Horror"]);
+        assert(out.indexOf("Nyt Bestseller") === -1, "junk removed");
+        assert(out.length <= 5, "capped at 5");
+        assert(out.indexOf("Fantasy") !== -1, "genre kept");
+      });
+
+      // --- parseList ---------------------------------------------------------
+      test("parseList trims and de-duplicates", function () {
+        eq(T.parseList("a, b ,a , B"), ["a", "b"], "case-insensitive dedupe, trimmed");
+      });
+
+      // --- render results ----------------------------------------------------
+      var box = document.getElementById("results");
+      box.innerHTML = results.map(function (r) {
+        return '<div class="t ' + (r.ok ? "pass" : "fail") + '"><span class="mark">' + (r.ok ? "PASS" : "FAIL") + '</span><span>' + r.name + '</span>' + (r.ok ? "" : '<span class="msg">' + r.msg + "</span>") + "</div>";
+      }).join("");
+      var s = document.getElementById("summary");
+      s.className = failed ? "bad" : "ok";
+      s.textContent = passed + " passed, " + failed + " failed";
+      console.log("[tests]", passed + " passed,", failed + " failed");
+    })();
+  </script>
+</body>
+</html>

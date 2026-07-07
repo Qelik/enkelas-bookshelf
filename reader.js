@@ -202,7 +202,40 @@
       posEl: $("#reader-pos"),
       etaEl: $("#reader-eta"),
       timerEl: $("#reader-timer"),
+      diagEl: $("#reader-diag"),
     };
+  }
+
+  // Hidden diagnostics panel — long-press the position readout to toggle it.
+  // Answers "is this ePub loaded / linked / where am I / did the session log?"
+  function renderDiag() {
+    if (!els.diagEl) return;
+    let linked = "— not linked —";
+    try {
+      if (rec && rec.linkedBookId && window.BookshelfAPI) {
+        const b = window.BookshelfAPI.getBooks().find((x) => x.id === rec.linkedBookId);
+        linked = b ? b.title : rec.linkedBookId;
+      }
+    } catch (e) { /* ignore */ }
+    const kb = rec && rec.data && rec.data.byteLength ? Math.round(rec.data.byteLength / 1024) + " KB" : "—";
+    const rows = [
+      ["Reader build", window.__readerBuild],
+      ["ePub", (book && book.title) || (rec && rec.name) || "—"],
+      ["File size", kb],
+      ["Chapters (spine)", book ? String(book.spine.length) : "—"],
+      ["Position", book ? "ch " + (pos.ch + 1) + "/" + book.spine.length + " · page " + (pos.page + 1) + "/" + pag.pages : "—"],
+      ["Total characters", book ? book.totalChars.toLocaleString() : "—"],
+      ["Linked book", linked],
+      ["This session", session ? Math.round(session.seconds / 60) + " min · " + (session.logId ? "log " + String(session.logId).slice(0, 8) + "…" : "not logged yet") : "—"],
+    ];
+    els.diagEl.innerHTML = "<strong>🩺 Reader diagnostics</strong>"
+      + rows.map((r) => `<div class="rd-row"><span>${esc(r[0])}</span><span>${esc(String(r[1]))}</span></div>`).join("")
+      + `<button class="ghost" id="reader-diag-close">Close</button>`;
+  }
+  function toggleDiag() {
+    if (!els.diagEl) return;
+    if (els.diagEl.hidden) { renderDiag(); els.diagEl.hidden = false; }
+    else els.diagEl.hidden = true;
   }
 
   // ---------------------------------------------------------------------------
@@ -235,7 +268,7 @@
       const url = URL.createObjectURL(blob);
       blobUrls.push(url);
       if (isSvgImage) { img.setAttribute("href", url); img.removeAttribute("xlink:href"); }
-      else img.setAttribute("src", url);
+      else { img.setAttribute("src", url); img.setAttribute("loading", "lazy"); img.setAttribute("decoding", "async"); }
     }
     const html = doc.body ? doc.body.innerHTML : src;
     chapterCache.set(i, html);
@@ -670,6 +703,17 @@
     });
 
     $("#reader-close").addEventListener("click", closeReader);
+    // Long-press the position readout to open the hidden diagnostics panel.
+    (function () {
+      const pe = els.posEl; if (!pe) return;
+      let t = null;
+      pe.addEventListener("pointerdown", () => { t = setTimeout(toggleDiag, 600); });
+      pe.addEventListener("pointerup", () => clearTimeout(t));
+      pe.addEventListener("pointerleave", () => clearTimeout(t));
+      pe.style.cursor = "pointer";
+      pe.title = "Long-press for reader diagnostics";
+    })();
+    if (els.diagEl) els.diagEl.addEventListener("click", (e) => { if (e.target.id === "reader-diag-close") els.diagEl.hidden = true; });
     $("#reader-font-minus").addEventListener("click", () => bumpFont(-1));
     $("#reader-font-plus").addEventListener("click", () => bumpFont(1));
     $("#reader-theme-btn").addEventListener("click", cycleTheme);

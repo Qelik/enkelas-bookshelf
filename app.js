@@ -12,7 +12,9 @@
   const THEME_KEY = "enkelas-bookshelf-theme";
   const AUTH_KEY = "enkelas-bookshelf-auth";
   const SYNCBASE_KEY = "enkelas-bookshelf-syncbase";
+  const LASTSYNC_KEY = "enkelas-bookshelf-lastsync";
   const SCHEMA_VERSION = 1;
+  const APP_VERSION = "2026.07.06"; // bump alongside the sw.js CACHE version on each release
   const DAY = 86400000;
   // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
   // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -58,10 +60,13 @@
   let storagePersisted = false;
   let readingQuery = "", wantQuery = "", libraryQuery = "", ownedQuery = "";
   let libraryTag = "", libraryCollection = "", libraryView = "grid";
+  let libraryFormat = "", libraryRating = 0;
   let currentDetailId = null;
   let yearReviewYear = new Date().getFullYear();
 
   const supportsFS = "showSaveFilePicker" in window && "showOpenFilePicker" in window;
+  // Dev-mode perf logging: run `localStorage.setItem("enkelas-perf","1")` then reload.
+  const PERF = (() => { try { return localStorage.getItem("enkelas-perf") === "1"; } catch (e) { return false; } })();
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -131,6 +136,9 @@
     return book.title.toLowerCase().includes(q)
       || (book.author || "").toLowerCase().includes(q)
       || (book.seriesName || "").toLowerCase().includes(q)
+      || (book.isbn || "").toLowerCase().includes(q)
+      || (book.description || "").toLowerCase().includes(q)
+      || (book.review || "").toLowerCase().includes(q)
       || (book.tags || []).some((t) => t.toLowerCase().includes(q))
       || (book.collections || []).some((t) => t.toLowerCase().includes(q));
   }
@@ -279,6 +287,37 @@
   function loadSyncBase() { try { return localStorage.getItem(SYNCBASE_KEY) || null; } catch (e) { return null; } }
   function saveSyncBase(v) { try { v ? localStorage.setItem(SYNCBASE_KEY, v) : localStorage.removeItem(SYNCBASE_KEY); } catch (e) { /* ignore */ } }
 
+  // Sync status surfaced in the header + Settings: idle | syncing | offline | error | needslogin
+  let syncStatus = (typeof navigator !== "undefined" && navigator.onLine === false) ? "offline" : "idle";
+  function setSyncStatus(s) {
+    syncStatus = s;
+    renderStorageStatus();
+    const sm = $("#settings-modal");
+    if (sm && !sm.hidden) renderSettings();
+  }
+  function loadLastSync() { try { return localStorage.getItem(LASTSYNC_KEY) || null; } catch (e) { return null; } }
+  function markSynced() { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch (e) { /* ignore */ } }
+  function relTimeShort(iso) {
+    if (!iso) return "";
+    const diff = Date.now() - new Date(iso).getTime();
+    if (isNaN(diff) || diff < 0) return "";
+    if (diff < 45000) return "just now";
+    const m = Math.round(diff / 60000); if (m < 60) return m + "m ago";
+    const h = Math.round(diff / 3600000); if (h < 24) return h + "h ago";
+    const d = Math.round(diff / 86400000); if (d < 7) return d + "d ago";
+    return fmtDate(iso);
+  }
+  function relTimeLong(iso) {
+    if (!iso) return "";
+    const diff = Date.now() - new Date(iso).getTime();
+    if (isNaN(diff) || diff < 0) return "";
+    if (diff < 45000) return "just now";
+    const m = Math.round(diff / 60000); if (m < 60) return m + " minute" + (m === 1 ? "" : "s") + " ago";
+    const h = Math.round(diff / 3600000); if (h < 24) return h + " hour" + (h === 1 ? "" : "s") + " ago";
+    const d = Math.round(diff / 86400000); if (d < 7) return d + " day" + (d === 1 ? "" : "s") + " ago";
+    return "on " + fmtDate(iso);
+  }
+
   async function apiFetch(path, opts) {
     opts = opts || {};
     const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
@@ -340,6 +379,7 @@
   // (or a consciously chosen version) — logout uses this before wiping.
   async function pushData(force) {
     if (!syncEnabled() || !auth) return false;
+    setSyncStatus("syncing");
     const body = { blob: state, updatedAt: state.updatedAt };
     if (force) body.force = true; else body.baseUpdatedAt = loadSyncBase();
     try {
@@ -347,29 +387,32 @@
       if (res.status === 401) { handleAuthExpired(); return false; }
       if (res.status === 409 && data && data.blob) {
         const useServer = confirm("Your bookshelf was changed on another device.\n\nOK = use that newer version here.\nCancel = overwrite it with this device's version.");
-        if (useServer) { adoptServer(data.blob, data.updatedAt); return true; }
+        if (useServer) { adoptServer(data.blob, data.updatedAt); markSynced(); setSyncStatus("idle"); return true; }
         return pushData(true);
       }
-      if (res.ok && data) { saveSyncBase(data.updatedAt); renderStorageStatus(); return true; }
+      if (res.ok && data) { saveSyncBase(data.updatedAt); markSynced(); setSyncStatus("idle"); return true; }
+      setSyncStatus("error");
       return false;
-    } catch (e) { renderStorageStatus(); return false; /* offline; retries on next change */ }
+    } catch (e) { setSyncStatus(navigator.onLine === false ? "offline" : "error"); return false; /* saved locally; retries on next change */ }
   }
   async function pullData() {
     if (!syncEnabled() || !auth) return;
+    setSyncStatus("syncing");
     try {
       const { res, data } = await apiFetch("/api/data", { method: "GET" });
       if (res.status === 401) { handleAuthExpired(); return; }
-      if (!res.ok || !data) return;
+      if (!res.ok || !data) { setSyncStatus("error"); return; }
       if (data.blob) {
         const serverU = data.updatedAt || "";
         if (serverU > (state.updatedAt || "")) adoptServer(data.blob, serverU);
-        else if ((state.updatedAt || "") > serverU) await pushData(false);
+        else if ((state.updatedAt || "") > serverU) { await pushData(false); return; } // pushData sets status + markSynced
         else saveSyncBase(serverU);
       } else if (state.books.length) {
-        await pushData(true);
+        await pushData(true); return;
       }
-      renderStorageStatus();
-    } catch (e) { renderStorageStatus(); }
+      markSynced();
+      setSyncStatus("idle");
+    } catch (e) { setSyncStatus(navigator.onLine === false ? "offline" : "error"); }
   }
 
   // Autosync. Every commit already pushes (debounced 1.2s). On top of that:
@@ -383,10 +426,11 @@
       else pullData();
     });
     window.addEventListener("online", () => { if (syncEnabled() && auth) pullData(); });
+    window.addEventListener("offline", () => { if (syncEnabled() && auth) setSyncStatus("offline"); });
     setInterval(() => { if (syncEnabled() && auth && !document.hidden) pullData(); }, 5 * 60 * 1000);
   }
 
-  function handleAuthExpired() { saveAuth(null); saveSyncBase(null); renderAccount(); renderStorageStatus(); toast("🔑", "Please sign in again", "Your session expired."); }
+  function handleAuthExpired() { saveAuth(null); saveSyncBase(null); renderAccount(); setSyncStatus("needslogin"); toast("🔑", "Please sign in again", "Your session expired."); }
   // Signing out is a privacy boundary: back the data up to the account,
   // then leave this device as a blank shelf (nothing of the previous user).
   async function logout() {
@@ -759,6 +803,7 @@
   // Rendering
   // ---------------------------------------------------------------------------
   function render() {
+    const perfT0 = PERF ? performance.now() : 0;
     renderStats();
     renderReading();
     renderWant();
@@ -769,7 +814,10 @@
     renderGoal();
     renderStatsView();
     renderStorageStatus();
+    const sm = $("#settings-modal");
+    if (sm && !sm.hidden) renderSettings(); // keep Settings live if it's open
     refreshDetail(); // keep the open book page in sync with data changes
+    if (PERF) console.log("[perf] render " + Math.round(performance.now() - perfT0) + "ms · " + state.books.length + " books");
   }
 
   function renderStats() {
@@ -785,7 +833,7 @@
 
   function coverHTML(book, cls) {
     if (book.coverUrl) {
-      return `<img class="cover ${cls || ""}" src="${esc(book.coverUrl)}" alt="Cover of ${esc(book.title)}"
+      return `<img class="cover ${cls || ""}" src="${esc(book.coverUrl)}" alt="Cover of ${esc(book.title)}" loading="lazy" decoding="async"
               onerror="this.outerHTML='<div class=\\'cover ${cls || ""}\\'>${esc(book.title)}</div>'" />`;
     }
     return `<div class="cover ${cls || ""}">${esc(book.title)}</div>`;
@@ -906,11 +954,16 @@
 
     $$("#library-view-toggle button").forEach((btn) => btn.classList.toggle("active", btn.dataset.libview === libraryView));
 
+    $("#library-format").value = libraryFormat;
+    $("#library-rating").value = libraryRating ? String(libraryRating) : "";
+
     const done = libraryBooks();
     let list = done
       .filter((b) => bookMatches(b, libraryQuery))
       .filter((b) => !libraryTag || (b.tags || []).some((t) => t.toLowerCase() === libraryTag.toLowerCase()))
-      .filter((b) => !libraryCollection || (b.collections || []).some((t) => t.toLowerCase() === libraryCollection.toLowerCase()));
+      .filter((b) => !libraryCollection || (b.collections || []).some((t) => t.toLowerCase() === libraryCollection.toLowerCase()))
+      .filter((b) => !libraryFormat || (b.format || "physical") === libraryFormat)
+      .filter((b) => !libraryRating || (b.rating || 0) >= libraryRating);
     const sort = $("#library-sort").value;
     list.sort((a, b) => {
       if (sort === "finished-asc") return new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0);
@@ -1917,16 +1970,198 @@
 
   function renderStorageStatus() {
     const el = $("#storage-status");
+    if (!el) return;
     if (syncEnabled() && auth && auth.user) {
-      el.textContent = "☁️ Synced as " + ((auth.user.fullName || "").split(" ")[0] || "you");
-      el.title = "Your books sync privately to your account (" + auth.user.email + ").";
+      const last = relTimeShort(loadLastSync());
+      let txt, note;
+      if (syncStatus === "syncing") { txt = "☁️ Syncing…"; note = "Saving your latest changes to your account."; }
+      else if (syncStatus === "offline") { txt = "📴 Offline"; note = "You're offline — changes are saved on this device and will sync when you're back."; }
+      else if (syncStatus === "error") { txt = "⚠️ Sync paused"; note = "Couldn't reach your account — changes are safe on this device and will retry."; }
+      else { txt = "☁️ Synced" + (last ? " · " + last : ""); note = "Your books sync privately to your account (" + auth.user.email + ")."; }
+      el.textContent = txt;
+      el.title = note + " Tap for settings.";
       return;
     }
-    if (fileHandle) { el.textContent = "💾 synced to file"; el.title = "Changes are written to your connected JSON file."; return; }
+    if (syncEnabled() && syncStatus === "needslogin") {
+      el.textContent = "🔑 Sign in to sync";
+      el.title = "Your session expired — sign in again to resume syncing. Tap for settings.";
+      return;
+    }
+    if (fileHandle) { el.textContent = "💾 synced to file"; el.title = "Changes are written to your connected JSON file. Tap for settings."; return; }
     const lock = storagePersisted ? " 🔒" : "";
     el.textContent = (supportsFS ? "💾 saved in this browser" : "💾 saved on this device") + lock;
-    el.title = storagePersisted ? "Your data is stored persistently and won't be auto-cleared by the browser."
-      : "Saved locally in this browser. Tip: add to your home screen, and Export now and then as a backup.";
+    el.title = (storagePersisted ? "Your data is stored persistently and won't be auto-cleared by the browser."
+      : "Saved locally in this browser. Tip: add to your home screen, and export a backup now and then.") + " Tap for settings.";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings / Data Safety
+  // ---------------------------------------------------------------------------
+  function syncBadgeText() {
+    if (!syncEnabled()) return "💾 Saved on this device";
+    if (!auth || !auth.user) return "💾 Saved on this device (not signed in)";
+    if (syncStatus === "syncing") return "☁️ Syncing…";
+    if (syncStatus === "offline") return "📴 Offline — saved on this device";
+    if (syncStatus === "error") return "⚠️ Sync paused — saved on this device";
+    if (syncStatus === "needslogin") return "🔑 Session expired";
+    return "☁️ Synced to your account";
+  }
+  function renderSettings() {
+    const acct = $("#settings-account");
+    if (!acct) return;
+    const actions = $("#settings-account-actions");
+    if (syncEnabled() && auth && auth.user) {
+      acct.textContent = "Signed in as " + auth.user.fullName + " (" + auth.user.email + ")";
+      actions.innerHTML = '<button class="ghost" data-settings-action="syncnow">🔄 Sync now</button>'
+        + '<button class="ghost danger" data-settings-action="signout">Sign out</button>';
+    } else if (syncEnabled()) {
+      acct.textContent = "Not signed in — your books are saved only on this device.";
+      actions.innerHTML = '<button class="primary" data-settings-action="signin">👤 Sign in to sync</button>';
+    } else {
+      acct.textContent = "Your books are saved locally on this device.";
+      actions.innerHTML = "";
+    }
+    $("#settings-sync-badge").textContent = syncBadgeText();
+    const last = loadLastSync();
+    $("#settings-last-sync").textContent = (syncEnabled() && auth && auth.user)
+      ? (last ? "Last synced " + relTimeLong(last) : "Not synced yet")
+      : "";
+    $("#settings-version").textContent = "Enkela's Bookshelf · version " + APP_VERSION;
+  }
+  function openSettings() { closeAccountMenu(); renderSettings(); showModal("settings-modal"); }
+  function clearLocalData() {
+    const msg = (syncEnabled() && auth)
+      ? "Clear this device's copy of your bookshelf?\n\nYour books stay safe in your account and download again on the next sign-in/sync. To erase everything, sign out or delete your account."
+      : "Erase all bookshelf data on this device?\n\nThis cannot be undone. Export a backup first if you're not sure.";
+    if (!confirm(msg)) return;
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    state = defaultState();
+    knownBadges = new Set();
+    currentDetailId = null;
+    coverBackfillRan = false;
+    if (activeView === "book") switchView("reading");
+    render();
+    renderSettings();
+    toast("🧹", "Device data cleared", (syncEnabled() && auth) ? "Your account copy is untouched." : "Your bookshelf on this device is empty now.");
+  }
+  async function refreshAppFiles() {
+    if (!confirm("Refresh the app's files?\n\nThis clears the cached app and reloads the latest version. Your books are safe.")) return;
+    try {
+      if (window.caches) { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); }
+      if (navigator.serviceWorker) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map((r) => r.unregister())); }
+    } catch (e) { /* ignore */ }
+    location.reload();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shelf Doctor — data-quality dashboard (find & fix messy library entries)
+  // ---------------------------------------------------------------------------
+  function duplicateGroups() {
+    const by = {};
+    state.books.forEach((b) => { const k = (b.title + "|" + (b.author || "")).toLowerCase(); (by[k] = by[k] || []).push(b); });
+    return Object.keys(by).map((k) => ({ key: k, books: by[k] })).filter((g) => g.books.length > 1);
+  }
+  function shelfDoctorIssues() {
+    const bs = state.books;
+    return [
+      { key: "cover", icon: "🖼", label: "Missing cover", fix: "cover", books: bs.filter((b) => !b.coverUrl) },
+      { key: "author", icon: "✍️", label: "Missing author", fix: "edit", books: bs.filter((b) => !(b.author || "").trim()) },
+      { key: "pages", icon: "📄", label: "No page / length count", fix: "edit", books: bs.filter((b) => !b.totalPages) },
+      { key: "genre", icon: "🏷️", label: "No genres yet", fix: "genres", books: bs.filter((b) => !(b.tags && b.tags.length)) },
+      { key: "finish", icon: "📅", label: "Finished, but no date", fix: "edit", books: bs.filter((b) => b.status === "finished" && !b.finishedAt) },
+      { key: "series", icon: "#️⃣", label: "In a series, no book number", fix: "edit", books: bs.filter((b) => (b.seriesName || "").trim() && b.seriesNumber == null) },
+      { key: "dup", icon: "👯", label: "Possible duplicates", fix: "dup", groups: duplicateGroups() },
+    ].filter((g) => (g.books ? g.books.length : g.groups.length) > 0);
+  }
+  function shelfDoctorCount() { return shelfDoctorIssues().reduce((s, g) => s + (g.books ? g.books.length : g.groups.length), 0); }
+  function fixLabel(fix) { return fix === "cover" ? "🔍 Find cover" : fix === "genres" ? "✨ Fetch genres" : "✎ Edit"; }
+  async function fetchGenresForBook(book) {
+    let docs = await searchOpenLibrary(book.title, book.author, book.isbn);
+    if (book.author && !book.isbn) { const m = docs.filter((d) => authorMatches(book.author, d.author_name)); if (m.length) docs = m; }
+    const doc = docs.find((d) => Array.isArray(d.subject) && d.subject.length) || docs[0];
+    let picks = cleanSubjects(doc && doc.subject);
+    if (picks.length < 3 && doc && doc.key) {
+      try { const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json(); picks = cleanSubjects((w.subjects || []).concat(doc.subject || [])); } catch (e) { /* keep what we have */ }
+    }
+    return picks;
+  }
+  function mergeDuplicateGroup(group) {
+    if (!group || group.length < 2) return;
+    const title = group[0].title;
+    if (!confirm(`Merge ${group.length} copies of “${title}” into one?\n\nReading logs, quotes, journal, tags and shelves are combined; the extra copies are removed. This can't be undone.`)) return;
+    const primary = group.slice().sort((a, b) => (b.logs.length - a.logs.length) || (new Date(a.addedAt) - new Date(b.addedAt)))[0];
+    const others = group.filter((b) => b !== primary);
+    others.forEach((o) => {
+      primary.logs = primary.logs.concat(o.logs || []);
+      primary.quotes = (primary.quotes || []).concat(o.quotes || []);
+      primary.journal = (primary.journal || []).concat(o.journal || []);
+      primary.characters = (primary.characters || []).concat(o.characters || []);
+      primary.vocab = (primary.vocab || []).concat(o.vocab || []);
+      primary.finishHistory = (primary.finishHistory || []).concat(o.finishHistory || []);
+      primary.tags = parseList(primary.tags.concat(o.tags || []).join(","));
+      primary.collections = parseList((primary.collections || []).concat(o.collections || []).join(","));
+      primary.owned = primary.owned || o.owned;
+      primary.readCount = Math.max(primary.readCount || 1, o.readCount || 1);
+      ["coverUrl", "author", "isbn", "description", "review", "seriesName", "dnfReason", "pickReason", "lentTo"].forEach((f) => { if (!primary[f] && o[f]) primary[f] = o[f]; });
+      if (!primary.totalPages && o.totalPages) primary.totalPages = o.totalPages;
+      if (primary.seriesNumber == null && o.seriesNumber != null) primary.seriesNumber = o.seriesNumber;
+      if (!primary.rating && o.rating) primary.rating = o.rating;
+      if (!primary.finishedAt && o.finishedAt) primary.finishedAt = o.finishedAt;
+      if (!primary.startedAt && o.startedAt) primary.startedAt = o.startedAt;
+    });
+    const removeIds = new Set(others.map((o) => o.id));
+    state.books = state.books.filter((b) => !removeIds.has(b.id));
+    commit();
+    renderShelfDoctor();
+    toast("🔗", "Merged", title);
+  }
+  function renderShelfDoctor() {
+    const body = $("#doctor-body");
+    if (!body) return;
+    const issues = shelfDoctorIssues();
+    if (!state.books.length) { body.innerHTML = `<p class="doctor-clean">Add some books first, then Shelf Doctor will help you tidy them up.</p>`; return; }
+    if (!issues.length) { body.innerHTML = `<p class="doctor-clean">🎉 Your shelves look healthy — nothing needs attention.</p>`; return; }
+    const total = issues.reduce((s, g) => s + (g.books ? g.books.length : g.groups.length), 0);
+    body.innerHTML = `<p class="muted doctor-intro">${total} thing${total === 1 ? "" : "s"} could use attention. Fix what you like — none of it is required.</p>` +
+      issues.map((g) => {
+        const count = g.books ? g.books.length : g.groups.length;
+        let rows;
+        if (g.key === "dup") {
+          rows = g.groups.map((grp) => `<div class="doctor-row"><div class="doctor-book"><span class="doctor-title">${esc(grp.books[0].title)}</span><span class="muted"> · ${grp.books.length} copies${grp.books[0].author ? " · " + esc(grp.books[0].author) : ""}</span></div><button class="mini" data-doctor-merge="${esc(grp.key)}">🔗 Merge</button></div>`).join("");
+        } else {
+          rows = g.books.map((b) => `<div class="doctor-row"><div class="doctor-book"><span class="doctor-title">${esc(b.title)}</span>${b.author ? `<span class="muted"> · ${esc(b.author)}</span>` : ""}</div><button class="mini" data-doctor-fix="${g.fix}" data-id="${esc(b.id)}">${fixLabel(g.fix)}</button></div>`).join("");
+        }
+        return `<details class="doctor-group"${count <= 6 ? " open" : ""}><summary>${g.icon} ${g.label} <span class="doctor-count">${count}</span></summary>${rows}</details>`;
+      }).join("");
+  }
+  function openShelfDoctor() { closeAccountMenu(); renderShelfDoctor(); showModal("doctor-modal"); }
+
+  // ---------------------------------------------------------------------------
+  // PWA install prompt + first-run onboarding
+  // ---------------------------------------------------------------------------
+  let deferredInstallPrompt = null;
+  function updateInstallUI() {
+    const has = !!deferredInstallPrompt;
+    const b1 = $("#btn-install-app"); if (b1) b1.hidden = !has;
+    const b2 = $("#onboard-install"); if (b2) b2.hidden = !has;
+  }
+  async function promptInstall() {
+    if (!deferredInstallPrompt) { toast("ℹ️", "Add to Home Screen", "Use your browser's Share menu → “Add to Home Screen.”"); return; }
+    deferredInstallPrompt.prompt();
+    try { await deferredInstallPrompt.userChoice; } catch (e) { /* dismissed */ }
+    deferredInstallPrompt = null;
+    updateInstallUI();
+  }
+  const ONBOARD_KEY = "enkelas-onboarded";
+  function finishOnboarding() { try { localStorage.setItem(ONBOARD_KEY, "1"); } catch (e) { /* ignore */ } }
+  function maybeShowOnboarding() {
+    let done = false; try { done = localStorage.getItem(ONBOARD_KEY) === "1"; } catch (e) { /* ignore */ }
+    if (done) return;
+    // Existing/returning users skip it: they already have books, or they're
+    // signed in and their library may still be syncing down.
+    if (state.books.length > 0 || (syncEnabled() && auth)) { finishOnboarding(); return; }
+    updateInstallUI();
+    showModal("onboard-modal");
   }
 
   // ---------------------------------------------------------------------------
@@ -2171,7 +2406,12 @@
       }
     }
 
-    if (!existing) state.books.push(book);
+    if (!existing) {
+      const key = (title + "|" + book.author).toLowerCase();
+      if (state.books.some((b) => (b.title + "|" + (b.author || "")).toLowerCase() === key)
+          && !confirm(`You already have “${title}”${book.author ? " by " + book.author : ""} on your shelves.\n\nAdd it again anyway?`)) return;
+      state.books.push(book);
+    }
     closeModals();
     commit();
     checkNewBadges();
@@ -2844,6 +3084,8 @@
   }
 
   function init() {
+    // Loaded by tests.html (which has no app shell) — expose helpers, skip UI wiring.
+    if (!document.getElementById("main")) return;
     $("#tabs").addEventListener("click", (e) => {
       const tab = e.target.closest(".tab");
       if (!tab) return;
@@ -2862,6 +3104,8 @@
     $("#library-tag").addEventListener("change", (e) => { libraryTag = e.target.value; renderLibrary(); });
     $("#library-collection").addEventListener("change", (e) => { libraryCollection = e.target.value; renderLibrary(); });
     $("#library-sort").addEventListener("change", renderLibrary);
+    $("#library-format").addEventListener("change", (e) => { libraryFormat = e.target.value; renderLibrary(); });
+    $("#library-rating").addEventListener("change", (e) => { libraryRating = Number(e.target.value) || 0; renderLibrary(); });
     $("#library-view-toggle").addEventListener("click", (e) => { const b = e.target.closest("[data-libview]"); if (b) { libraryView = b.dataset.libview; renderLibrary(); } });
 
     // Genre + collection quick-add chips
@@ -3014,6 +3258,75 @@
     $("#btn-connect-file").addEventListener("click", connectFile);
     $("#btn-theme").addEventListener("click", toggleTheme);
 
+    // Settings / data safety
+    $("#btn-settings").addEventListener("click", openSettings);
+    $("#storage-status").addEventListener("click", openSettings);
+    $("#storage-status").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSettings(); } });
+    $("#btn-clear-data").addEventListener("click", clearLocalData);
+    $("#btn-refresh-app").addEventListener("click", refreshAppFiles);
+    $("#btn-shelf-doctor").addEventListener("click", () => { closeModals(); openShelfDoctor(); });
+    $("#btn-doctor-covers").addEventListener("click", async (e) => {
+      const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Searching…";
+      await backfillCovers(true);
+      btn.disabled = false; btn.textContent = "🔍 Find all missing covers";
+      renderShelfDoctor();
+    });
+    $("#doctor-body").addEventListener("click", async (e) => {
+      const mg = e.target.closest("[data-doctor-merge]");
+      if (mg) { const g = duplicateGroups().find((x) => x.key === mg.dataset.doctorMerge); if (g) mergeDuplicateGroup(g.books); return; }
+      const fx = e.target.closest("[data-doctor-fix]");
+      if (!fx) return;
+      const book = state.books.find((b) => b.id === fx.dataset.id);
+      if (!book) return;
+      const fix = fx.dataset.doctorFix;
+      if (fix === "edit") { closeModals(); openBookModal({ book }); return; }
+      if (fix === "cover") {
+        fx.disabled = true; fx.textContent = "Finding…";
+        try {
+          const url = await findCoverFor(book);
+          if (url) { book.coverUrl = url; commit(); toast("🖼", "Cover found", book.title); renderShelfDoctor(); }
+          else { toast("🔍", "No cover found", "Try editing and pasting one."); fx.disabled = false; fx.textContent = "🔍 Find cover"; }
+        } catch (err) { toast("⚠️", "Lookup failed", "Check your connection."); fx.disabled = false; fx.textContent = "🔍 Find cover"; }
+        return;
+      }
+      if (fix === "genres") {
+        fx.disabled = true; fx.textContent = "Fetching…";
+        try {
+          const picks = await fetchGenresForBook(book);
+          if (picks.length) {
+            const have = new Set((book.tags || []).map((x) => x.toLowerCase()));
+            picks.forEach((p) => { if (!have.has(p.toLowerCase())) { have.add(p.toLowerCase()); book.tags.push(p); } });
+            commit(); toast("🏷️", "Genres added", picks.join(", ")); renderShelfDoctor();
+          } else { toast("🔍", "No genres found", "Add a couple by hand."); fx.disabled = false; fx.textContent = "✨ Fetch genres"; }
+        } catch (err) { toast("⚠️", "Couldn't fetch genres", "Check your connection."); fx.disabled = false; fx.textContent = "✨ Fetch genres"; }
+        return;
+      }
+    });
+    $("#settings-modal").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-settings-action]");
+      if (!b) return;
+      const act = b.dataset.settingsAction;
+      if (act === "signin") { closeModals(); openAuthModal("login"); }
+      else if (act === "signout") logout();
+      else if (act === "syncnow") { toast("🔄", "Syncing…", ""); pullData(); }
+    });
+
+    // PWA install + first-run onboarding
+    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstallPrompt = e; updateInstallUI(); });
+    window.addEventListener("appinstalled", () => { deferredInstallPrompt = null; updateInstallUI(); toast("📲", "Installed!", "Enkela's Bookshelf is on your home screen now."); });
+    $("#btn-install-app").addEventListener("click", promptInstall);
+    $("#onboard-modal").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-onboard]");
+      if (!b) return;
+      const act = b.dataset.onboard;
+      finishOnboarding();
+      closeModals();
+      if (act === "goodreads") $("#goodreads-input").click();
+      else if (act === "add") openBookModal({ status: "reading" });
+      else if (act === "goal") switchView("goals");
+      else if (act === "install") promptInstall();
+    });
+
     // Accounts + sync
     if (syncEnabled()) {
       $("#btn-account").addEventListener("click", () => {
@@ -3021,6 +3334,7 @@
         else openAuthModal("login");
       });
       $("#am-sync").addEventListener("click", () => { closeAccountMenu(); toast("🔄", "Syncing…", ""); pullData(); });
+      $("#am-settings").addEventListener("click", openSettings);
       $("#am-signout").addEventListener("click", logout);
       $("#tab-login").addEventListener("click", () => setAuthMode("login"));
       $("#tab-register").addEventListener("click", () => setAuthMode("register"));
@@ -3066,6 +3380,7 @@
     setupAutoSync();
     setupOfflineAndPersistence();
     maybeShowMonthlyRecap();
+    maybeShowOnboarding();
     // After the app settles (and any sync pull has a head start), quietly
     // fill in covers that the Goodreads import / ISBN lookup couldn't find.
     setTimeout(() => backfillCovers(), 3000);
@@ -3112,6 +3427,9 @@
       return lg.id;
     },
   };
+
+  // Pure(ish) helpers exposed for the no-build test harness (tests.html).
+  window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak };
 
   document.addEventListener("DOMContentLoaded", init);
 })();

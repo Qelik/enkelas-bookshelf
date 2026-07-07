@@ -32,17 +32,13 @@
         <div class="account-menu" id="account-menu" hidden>
           <div class="am-name" id="am-name"></div>
           <button class="am-item" id="am-sync">🔄 Sync now</button>
+          <button class="am-item" id="am-settings">⚙️ Settings &amp; backups</button>
           <button class="am-item" id="am-signout">Sign out</button>
         </div>
       </div>
       <button id="btn-theme" class="ghost" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
-      <button id="btn-goodreads" class="ghost" title="Import your Goodreads library (CSV export)">📥 Goodreads</button>
-      <button id="btn-connect-file" class="ghost" title="Read & write a bookshelf.json file on your computer">🔗 Connect file</button>
-      <button id="btn-export" class="ghost" title="Download your data as JSON">⬇ Export</button>
-      <button id="btn-import" class="ghost" title="Load data from a JSON file">⬆ Import</button>
-      <input type="file" id="import-input" accept="application/json,.json" hidden />
-      <input type="file" id="goodreads-input" hidden />
-      <span id="storage-status" class="storage-status" title="Where your data is stored"></span>
+      <button id="btn-settings" class="ghost" title="Settings, backups &amp; data safety" aria-label="Settings">⚙️</button>
+      <span id="storage-status" class="storage-status" role="button" tabindex="0" title="Sync &amp; storage — tap for settings"></span>
     </div>
   </header>
 
@@ -95,6 +91,18 @@
           <input type="search" id="library-search" class="input search" placeholder="🔍 Search title, author, tag" />
           <select id="library-tag" class="select"><option value="">All genres</option></select>
           <select id="library-collection" class="select"><option value="">All shelves</option></select>
+          <select id="library-format" class="select">
+            <option value="">Any format</option>
+            <option value="physical">📖 Physical</option>
+            <option value="ebook">📱 E-book</option>
+            <option value="audio">🎧 Audiobook</option>
+          </select>
+          <select id="library-rating" class="select">
+            <option value="">Any rating</option>
+            <option value="5">★ 5 only</option>
+            <option value="4">★ 4 & up</option>
+            <option value="3">★ 3 & up</option>
+          </select>
           <select id="library-sort" class="select">
             <option value="finished-desc">Recently finished</option>
             <option value="finished-asc">Oldest finished</option>
@@ -525,6 +533,103 @@
     </div>
   </div>
 
+  <!-- SETTINGS / DATA SAFETY -->
+  <div class="modal-backdrop" id="settings-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-head">
+        <h3 id="settings-title">⚙️ Settings</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body settings-body">
+
+        <section class="settings-section">
+          <h4>Account &amp; sync</h4>
+          <p class="settings-account" id="settings-account"></p>
+          <div class="settings-sync">
+            <span class="settings-sync-badge" id="settings-sync-badge"></span>
+            <span class="muted" id="settings-last-sync"></span>
+          </div>
+          <div class="settings-actions" id="settings-account-actions"></div>
+        </section>
+
+        <section class="settings-section">
+          <h4>Your data</h4>
+          <p class="muted">Your bookshelf lives on this device. Keep a backup — export a file every so often, especially before big changes.</p>
+          <div class="settings-actions">
+            <button id="btn-export" class="ghost" title="Download your whole library as a JSON file">⬇ Export backup</button>
+            <button id="btn-import" class="ghost" title="Restore your library from a JSON backup">⬆ Import backup</button>
+            <button id="btn-goodreads" class="ghost" title="Import your Goodreads library (CSV export)">📥 Import Goodreads CSV</button>
+            <button id="btn-connect-file" class="ghost" title="Read &amp; write a bookshelf.json file on your computer">🔗 Connect a file</button>
+          </div>
+          <input type="file" id="import-input" accept="application/json,.json" hidden />
+          <input type="file" id="goodreads-input" hidden />
+        </section>
+
+        <section class="settings-section danger-zone">
+          <h4>Danger zone</h4>
+          <p class="muted">Wipes this device's copy only. Export a backup first if you're unsure.</p>
+          <div class="settings-actions">
+            <button id="btn-clear-data" class="ghost danger">🧹 Clear data on this device</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h4>Library health</h4>
+          <p class="muted">Find books missing covers, authors, genres or dates — and fix them in a couple of taps.</p>
+          <div class="settings-actions">
+            <button id="btn-shelf-doctor" class="ghost">🩺 Open Shelf Doctor</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h4>App</h4>
+          <p class="muted settings-version" id="settings-version"></p>
+          <div class="settings-actions">
+            <button id="btn-install-app" class="ghost" title="Install to your home screen" hidden>📲 Install app</button>
+            <button id="btn-refresh-app" class="ghost" title="Clear cached app files and reload the latest version">🔄 Refresh app files</button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- SHELF DOCTOR — data-quality dashboard -->
+  <div class="modal-backdrop" id="doctor-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="doctor-title">
+      <div class="modal-head">
+        <h3 id="doctor-title">🩺 Shelf Doctor</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="doctor-tools">
+          <button class="ghost" id="btn-doctor-covers">🔍 Find all missing covers</button>
+        </div>
+        <div id="doctor-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FIRST-RUN ONBOARDING -->
+  <div class="modal-backdrop" id="onboard-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="onboard-title">
+      <div class="modal-head">
+        <h3 id="onboard-title">👋 Welcome to your Bookshelf</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">Let's get your books in. Pick whatever's easiest — you can do the rest anytime.</p>
+        <div class="onboard-steps">
+          <button class="onboard-step" data-onboard="goodreads"><span class="ob-emoji">📥</span><span class="ob-text"><strong>Import from Goodreads</strong><small>Bring your whole library in from a CSV export</small></span></button>
+          <button class="onboard-step" data-onboard="add"><span class="ob-emoji">＋</span><span class="ob-text"><strong>Add your first book</strong><small>Search by title, or scan a barcode</small></span></button>
+          <button class="onboard-step" data-onboard="goal"><span class="ob-emoji">🎯</span><span class="ob-text"><strong>Set a reading goal</strong><small>How many books this year?</small></span></button>
+          <button class="onboard-step" id="onboard-install" data-onboard="install" hidden><span class="ob-emoji">📲</span><span class="ob-text"><strong>Install as an app</strong><small>Add it to your home screen for offline reading</small></span></button>
+        </div>
+        <div class="modal-foot"><button type="button" class="ghost" data-onboard="skip">Skip for now</button></div>
+      </div>
+    </div>
+  </div>
+
   <!-- BOOKMARK: WHERE I LEFT OFF -->
   <!-- LEND OUT TO A FRIEND -->
   <div class="modal-backdrop" id="lend-modal" hidden>
@@ -656,6 +761,7 @@
       <button class="ghost reader-eta" id="reader-eta" title="Tap to switch between time left in the chapter and in the whole book"></button>
       <span class="reader-timer" id="reader-timer" title="Active reading time this session">⏱ 0:00</span>
     </div>
+    <div class="reader-diag" id="reader-diag" hidden></div>
   </div>
 
   <div class="toast-stack" id="toast-stack"></div>
