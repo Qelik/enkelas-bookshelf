@@ -23,3 +23,14 @@ preview_id = "0f3b29b9ed2a4c6a9cbecf659eda13cc"
 binding = "CLUBS_DB"
 database_name = "enkelas-clubs"
 database_id = "0f1ac91e-6b3e-4a5f-a929-890cebb86d81"
+
+# Durable Object: one per club = a realtime WebSocket hub (clubs v2).
+# SQLite-backed DO → available on the Workers free plan. The migration below
+# registers the class; keep it mirrored in ../wrangler.jsonc.
+[[durable_objects.bindings]]
+name = "CLUB_ROOMS"
+class_name = "ClubRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ClubRoom"]

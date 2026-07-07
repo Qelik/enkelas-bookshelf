@@ -28,5 +28,15 @@
       "database_name": "enkelas-clubs",
       "database_id": "0f1ac91e-6b3e-4a5f-a929-890cebb86d81"
     }
+  ],
+  // Durable Object realtime hub (clubs v2) — mirror of sync-worker/wrangler.toml.
+  // SQLite-backed DO = free plan. Keep the class + migration in sync.
+  "durable_objects": {
+    "bindings": [
+      { "name": "CLUB_ROOMS", "class_name": "ClubRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ClubRoom"] }
   ]
 }

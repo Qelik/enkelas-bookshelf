@@ -168,6 +168,26 @@ function clampPct(n) { n = Math.round(Number(n) || 0); return n < 0 ? 0 : n > 10
 function clubMember(env, clubId, uid) {
   return env.CLUBS_DB.prepare("SELECT * FROM members WHERE club_id=?1 AND uid=?2").bind(clubId, uid).first();
 }
+function touchClub(env, clubId) {
+  return env.CLUBS_DB.prepare("UPDATE clubs SET last_activity=?2 WHERE id=?1").bind(clubId, new Date().toISOString()).run();
+}
+// Realtime is best-effort: nudge the club's Durable Object to broadcast to any
+// connected members. D1 stays the source of truth (and the spoiler gate).
+function notifyClub(env, clubId, payload) {
+  if (!env.CLUB_ROOMS) return;
+  try {
+    const stub = env.CLUB_ROOMS.get(env.CLUB_ROOMS.idFromName(clubId));
+    stub.fetch(new Request("https://club/broadcast", { method: "POST", body: JSON.stringify(payload || {}) }));
+  } catch (e) { /* realtime unavailable — clients still poll */ }
+}
+async function clubWs(url, request, env, clubId) {
+  if (!env.CLUB_ROOMS) return new Response("realtime unavailable", { status: 503 });
+  const auth = await verifyToken(url.searchParams.get("token"), env.AUTH_SECRET);
+  if (!auth) return new Response("unauthorized", { status: 401 });
+  if (!(await clubMember(env, clubId, auth.uid))) return new Response("forbidden", { status: 403 });
+  const stub = env.CLUB_ROOMS.get(env.CLUB_ROOMS.idFromName(clubId));
+  return stub.fetch(new Request("https://club/ws", request));
+}
 
 async function clubsList(auth, env) {
   const clubs = (await env.CLUBS_DB.prepare(
@@ -253,6 +273,8 @@ async function clubPostComment(request, clubId, auth, env) {
   if (!body) return json({ error: "Empty comment." }, 400);
   await env.CLUBS_DB.prepare("INSERT INTO comments (id,club_id,uid,pos_pct,chapter,label,body,created_at,deleted) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)")
     .bind(crypto.randomUUID(), clubId, auth.uid, clampPct(b.posPct), (b.chapter != null ? Number(b.chapter) : null), (b.label ? String(b.label).slice(0, 60) : null), body, new Date().toISOString()).run();
+  await touchClub(env, clubId);
+  notifyClub(env, clubId, { type: "comment" });
   return json({ ok: true });
 }
 async function clubProgress(request, clubId, auth, env) {
@@ -261,6 +283,7 @@ async function clubProgress(request, clubId, auth, env) {
   const b = await request.json().catch(() => ({}));
   // forward-only, so a re-read or sync hiccup can never un-reveal a spoiler
   await env.CLUBS_DB.prepare("UPDATE members SET progress_pct=MAX(progress_pct,?3) WHERE club_id=?1 AND uid=?2").bind(clubId, auth.uid, clampPct(b.progressPct)).run();
+  notifyClub(env, clubId, { type: "progress" });
   return json({ ok: true });
 }
 async function clubReact(request, clubId, auth, env) {
@@ -276,9 +299,11 @@ async function clubReact(request, clubId, auth, env) {
   const existing = await env.CLUBS_DB.prepare("SELECT 1 FROM reactions WHERE comment_id=?1 AND uid=?2 AND emoji=?3").bind(commentId, auth.uid, emoji).first();
   if (existing) {
     await env.CLUBS_DB.prepare("DELETE FROM reactions WHERE comment_id=?1 AND uid=?2 AND emoji=?3").bind(commentId, auth.uid, emoji).run();
+    notifyClub(env, clubId, { type: "reaction" });
     return json({ ok: true, reacted: false });
   }
   await env.CLUBS_DB.prepare("INSERT INTO reactions (comment_id,uid,emoji,created_at) VALUES (?1,?2,?3,?4)").bind(commentId, auth.uid, emoji, new Date().toISOString()).run();
+  notifyClub(env, clubId, { type: "reaction" });
   return json({ ok: true, reacted: true });
 }
 async function clubLeave(clubId, auth, env) {
@@ -288,12 +313,15 @@ async function clubLeave(clubId, auth, env) {
   return json({ ok: true });
 }
 async function clubsRouter(url, request, env) {
-  const auth = await requireAuth(request, env.AUTH_SECRET);
-  if (!auth) return json({ error: "Not signed in." }, 401);
   if (!env.CLUBS_DB) return json({ error: "Reading clubs aren't enabled on this server yet." }, 503);
   const parts = url.pathname.split("/").filter(Boolean); // ["api","clubs", id?, sub?]
   const id = parts[2], sub = parts[3];
   const m = request.method;
+  // Realtime WebSocket — a browser can't set an Authorization header on the WS
+  // handshake, so the token arrives as a query param and is verified in clubWs.
+  if (id && sub === "ws") return clubWs(url, request, env, id);
+  const auth = await requireAuth(request, env.AUTH_SECRET);
+  if (!auth) return json({ error: "Not signed in." }, 401);
   if (!id) {
     if (m === "GET") return clubsList(auth, env);
     if (m === "POST") return clubCreate(request, auth, env);
@@ -326,10 +354,37 @@ export default {
       if (url.pathname === "/api/data" && request.method === "GET") return await getData(request, env, env.AUTH_SECRET);
       if (url.pathname === "/api/data" && request.method === "PUT") return await putData(request, env, env.AUTH_SECRET);
       if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return await clubsRouter(url, request, env);
-      if (url.pathname === "/" || url.pathname === "/api") return json({ ok: true, service: "enkelas-bookshelf-sync", clubs: !!env.CLUBS_DB });
+      if (url.pathname === "/" || url.pathname === "/api") return json({ ok: true, service: "enkelas-bookshelf-sync", clubs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS });
       return json({ error: "Not found" }, 404);
     } catch (e) {
       return json({ error: "Server error" }, 500);
     }
   },
 };
+
+// One Durable Object per club = a realtime hub. Members open a WebSocket to it;
+// when the worker writes to D1 it pings /broadcast and the DO relays a small nudge
+// ("something changed") to every connected socket, which then re-fetches from D1
+// (so the spoiler gate stays server-enforced — the socket carries no book content).
+export class ClubRoom {
+  constructor(state) { this.state = state; }
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname.endsWith("/ws")) {
+      if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket") return new Response("expected websocket", { status: 426 });
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.state.acceptWebSocket(server); // hibernation API: survives DO sleep
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (url.pathname.endsWith("/broadcast") && request.method === "POST") {
+      const msg = await request.text();
+      for (const ws of this.state.getWebSockets()) { try { ws.send(msg); } catch (e) { /* drop dead sockets */ } }
+      return new Response("ok");
+    }
+    return new Response("not found", { status: 404 });
+  }
+  webSocketMessage() { /* clients don't send; ignore */ }
+  webSocketClose(ws) { try { ws.close(); } catch (e) { /* already closed */ } }
+  webSocketError() { /* socket dropped; nothing to do */ }
+}

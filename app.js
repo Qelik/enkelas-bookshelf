@@ -2306,9 +2306,27 @@
   // ---------------------------------------------------------------------------
   // Reading Clubs (spoiler-safe, account-backed; needs the sync worker + D1)
   // ---------------------------------------------------------------------------
-  let currentClubId = null, clubPollTimer = null;
+  let currentClubId = null, clubPollTimer = null, clubSocket = null;
   function clubApi(path, opts) { return apiFetch("/api/clubs" + path, opts || {}); }
   function firstName(n) { return String(n || "?").trim().split(/\s+/)[0] || "?"; }
+  // Realtime: a WebSocket to the club's Durable Object. On any nudge we re-fetch
+  // from D1 (so the spoiler gate stays server-side). Polling remains a fallback.
+  function closeClubWs() { if (clubSocket) { try { clubSocket.onclose = null; clubSocket.close(); } catch (e) { /* already closed */ } clubSocket = null; } }
+  function openClubWs(clubId) {
+    closeClubWs();
+    if (!("WebSocket" in window) || !SYNC_API || !auth) return;
+    try {
+      const base = SYNC_API.replace(/\/$/, "").replace(/^http/, "ws");
+      const ws = new WebSocket(base + "/api/clubs/" + encodeURIComponent(clubId) + "/ws?token=" + encodeURIComponent(auth.token || ""));
+      clubSocket = ws;
+      ws.onmessage = () => { if (currentClubId === clubId && !$("#clubs-modal").hidden) refreshClub(true); };
+      ws.onclose = () => { if (clubSocket === ws) clubSocket = null; };
+      ws.onerror = () => { /* fall back to polling */ };
+    } catch (e) { /* fall back to polling */ }
+  }
+  // Per-club "last seen" (unread dots), stored locally.
+  function loadClubSeen() { try { return JSON.parse(localStorage.getItem("enkelas-club-seen")) || {}; } catch (e) { return {}; } }
+  function markClubSeen(clubId) { try { const s = loadClubSeen(); s[clubId] = new Date().toISOString(); localStorage.setItem("enkelas-club-seen", JSON.stringify(s)); } catch (e) { /* ignore */ } }
   function openClubs() {
     closeAccountMenu();
     if (!syncEnabled()) { toast("ℹ️", "Clubs need an account", "This feature syncs with friends via your account."); return; }
@@ -2317,7 +2335,7 @@
     showModal("clubs-modal");
     renderClubsListScreen();
   }
-  function stopClubPoll() { clearTimeout(clubPollTimer); clubPollTimer = null; }
+  function stopClubPoll() { clearTimeout(clubPollTimer); clubPollTimer = null; closeClubWs(); }
   async function renderClubsListScreen() {
     currentClubId = null; stopClubPoll();
     const body = $("#clubs-body");
@@ -2326,8 +2344,9 @@
     if (res.status === 503) { body.innerHTML = `<p class="empty">Reading clubs aren't switched on yet — the sync worker needs its clubs database enabled.</p>`; return; }
     if (!res.ok) { body.innerHTML = `<p class="empty">Couldn't load your clubs — check your connection.</p>`; return; }
     const clubs = (data && data.clubs) || [];
+    const seen = loadClubSeen();
     body.innerHTML =
-      (clubs.length ? `<div class="club-list">${clubs.map(clubRowHTML).join("")}</div>` : `<p class="empty">No clubs yet. Start one for a book you're reading, or join a friend's with their code.</p>`) +
+      (clubs.length ? `<div class="club-list">${clubs.map((c) => clubRowHTML(c, seen)).join("")}</div>` : `<p class="empty">No clubs yet. Start one for a book you're reading, or join a friend's with their code.</p>`) +
       `<div class="club-forms">
         <form id="club-create-form" class="club-form">
           <h4>Start a club</h4>
@@ -2342,11 +2361,12 @@
         </form>
       </div>`;
   }
-  function clubRowHTML(c) {
+  function clubRowHTML(c, seen) {
     const members = c.members || [];
     const me = c.me || {};
+    const unread = c.last_activity && (!(seen || {})[c.id] || c.last_activity > seen[c.id]);
     return `<button class="club-row" data-club-open="${esc(c.id)}">
-      <span class="club-row-main"><strong>${esc(c.book_title)}</strong>${c.book_author ? `<span class="muted"> · ${esc(c.book_author)}</span>` : ""}</span>
+      <span class="club-row-main"><strong>${esc(c.book_title)}</strong>${unread ? `<span class="club-dot" title="New activity"></span>` : ""}${c.book_author ? `<span class="muted"> · ${esc(c.book_author)}</span>` : ""}</span>
       <span class="club-row-meta">${members.length} member${members.length === 1 ? "" : "s"} · you're ${me.progress_pct || 0}%</span>
     </button>`;
   }
@@ -2355,7 +2375,10 @@
     $("#clubs-body").innerHTML = `<p class="muted">Loading…</p>`;
     await refreshClub(false);
     stopClubPoll();
-    const loop = () => { clubPollTimer = setTimeout(async () => { if (currentClubId === clubId && !$("#clubs-modal").hidden) { await refreshClub(true); loop(); } }, 20000); };
+    markClubSeen(clubId); // opening it clears its unread dot
+    openClubWs(clubId);   // live updates
+    // Polling stays as a backstop in case the socket can't connect.
+    const loop = () => { clubPollTimer = setTimeout(async () => { if (currentClubId === clubId && !$("#clubs-modal").hidden) { if (!clubSocket) await refreshClub(true); loop(); } }, 20000); };
     loop();
   }
   async function refreshClub(quiet) {
@@ -3221,6 +3244,7 @@
   function closeModals() {
     stopScan();
     resetTimer();
+    stopClubPoll(); // also closes any open club WebSocket
     $$(".modal-backdrop").forEach((m) => (m.hidden = true));
     $("#finish-modal-title").textContent = "Finish this book";
   }

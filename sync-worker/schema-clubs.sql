@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS clubs (
   book_isbn   TEXT,
   total_pages INTEGER,                       -- informational (for % display)
   created_at  TEXT NOT NULL,
-  archived    INTEGER NOT NULL DEFAULT 0
+  archived    INTEGER NOT NULL DEFAULT 0,
+  last_activity TEXT                          -- ISO of the last comment/reaction (unread dots)
 );
 
 CREATE TABLE IF NOT EXISTS members (
