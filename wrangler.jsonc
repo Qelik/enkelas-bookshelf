@@ -18,5 +18,15 @@
       "id": "cdeead88aa7d42579a16de9aa549fc14",
       "preview_id": "0f3b29b9ed2a4c6a9cbecf659eda13cc"
     }
+  ],
+  // Reading Clubs D1 database — mirror of sync-worker/wrangler.toml. Fill
+  // database_id after `npx wrangler d1 create enkelas-clubs`. Do NOT deploy
+  // (push to main) until this holds the real id, or the build will fail.
+  "d1_databases": [
+    {
+      "binding": "CLUBS_DB",
+      "database_name": "enkelas-clubs",
+      "database_id": "0f1ac91e-6b3e-4a5f-a929-890cebb86d81"
+    }
   ]
 }

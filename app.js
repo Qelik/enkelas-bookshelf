@@ -2304,6 +2304,120 @@
   function openShelfDoctor() { closeAccountMenu(); renderShelfDoctor(); showModal("doctor-modal"); }
 
   // ---------------------------------------------------------------------------
+  // Reading Clubs (spoiler-safe, account-backed; needs the sync worker + D1)
+  // ---------------------------------------------------------------------------
+  let currentClubId = null, clubPollTimer = null;
+  function clubApi(path, opts) { return apiFetch("/api/clubs" + path, opts || {}); }
+  function firstName(n) { return String(n || "?").trim().split(/\s+/)[0] || "?"; }
+  function openClubs() {
+    closeAccountMenu();
+    if (!syncEnabled()) { toast("ℹ️", "Clubs need an account", "This feature syncs with friends via your account."); return; }
+    if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in first", "Reading clubs sync with friends through your account."); return; }
+    currentClubId = null;
+    showModal("clubs-modal");
+    renderClubsListScreen();
+  }
+  function stopClubPoll() { clearTimeout(clubPollTimer); clubPollTimer = null; }
+  async function renderClubsListScreen() {
+    currentClubId = null; stopClubPoll();
+    const body = $("#clubs-body");
+    body.innerHTML = `<p class="muted">Loading your clubs…</p>`;
+    const { res, data } = await clubApi("");
+    if (res.status === 503) { body.innerHTML = `<p class="empty">Reading clubs aren't switched on yet — the sync worker needs its clubs database enabled.</p>`; return; }
+    if (!res.ok) { body.innerHTML = `<p class="empty">Couldn't load your clubs — check your connection.</p>`; return; }
+    const clubs = (data && data.clubs) || [];
+    body.innerHTML =
+      (clubs.length ? `<div class="club-list">${clubs.map(clubRowHTML).join("")}</div>` : `<p class="empty">No clubs yet. Start one for a book you're reading, or join a friend's with their code.</p>`) +
+      `<div class="club-forms">
+        <form id="club-create-form" class="club-form">
+          <h4>Start a club</h4>
+          <input class="input" id="club-book-title" placeholder="Book title" required maxlength="140" />
+          <input class="input" id="club-book-author" placeholder="Author (optional)" maxlength="140" />
+          <button class="primary" type="submit">Create club</button>
+        </form>
+        <form id="club-join-form" class="club-form">
+          <h4>Join with a code</h4>
+          <input class="input" id="club-join-code" placeholder="8-letter code" maxlength="8" autocapitalize="characters" />
+          <button class="ghost" type="submit">Join club</button>
+        </form>
+      </div>`;
+  }
+  function clubRowHTML(c) {
+    const members = c.members || [];
+    const me = c.me || {};
+    return `<button class="club-row" data-club-open="${esc(c.id)}">
+      <span class="club-row-main"><strong>${esc(c.book_title)}</strong>${c.book_author ? `<span class="muted"> · ${esc(c.book_author)}</span>` : ""}</span>
+      <span class="club-row-meta">${members.length} member${members.length === 1 ? "" : "s"} · you're ${me.progress_pct || 0}%</span>
+    </button>`;
+  }
+  async function openClub(clubId) {
+    currentClubId = clubId;
+    $("#clubs-body").innerHTML = `<p class="muted">Loading…</p>`;
+    await refreshClub(false);
+    stopClubPoll();
+    const loop = () => { clubPollTimer = setTimeout(async () => { if (currentClubId === clubId && !$("#clubs-modal").hidden) { await refreshClub(true); loop(); } }, 20000); };
+    loop();
+  }
+  async function refreshClub(quiet) {
+    const clubId = currentClubId;
+    if (!clubId) return;
+    const [detailR, commentsR] = await Promise.all([clubApi("/" + clubId), clubApi("/" + clubId + "/comments")]);
+    if (!detailR.res.ok) { if (!quiet) $("#clubs-body").innerHTML = `<p class="empty">Couldn't open this club.</p><button class="mini" data-club-back>← All clubs</button>`; return; }
+    // Don't clobber the box the user is typing in on a background poll.
+    if (quiet && document.activeElement && document.activeElement.id === "club-comment-body") return;
+    renderClubScreen(detailR.data, commentsR.data || {});
+  }
+  function renderClubScreen(d, cm) {
+    const body = $("#clubs-body");
+    if (!body || !d.club || currentClubId !== d.club.id) return;
+    const me = d.me || {};
+    const myPct = me.progress_pct || 0;
+    const members = d.members || [];
+    const comments = cm.comments || [];
+    const locked = cm.lockedAhead || 0;
+    body.innerHTML = `
+      <button class="mini" data-club-back>← All clubs</button>
+      <h3 class="club-title">${esc(d.club.book_title)}</h3>
+      ${d.club.book_author ? `<p class="muted club-sub">${esc(d.club.book_author)}</p>` : ""}
+      <div class="club-members">${members.map((m) => `<span class="club-chip"${m.uid === me.uid ? ' data-me="1"' : ""} title="${esc(m.display_name || "")} · ${m.progress_pct}%${m.role === "host" ? " · host" : ""}">${esc(firstName(m.display_name))} ${m.progress_pct}%</span>`).join("")}</div>
+      <div class="club-progress">
+        <label for="club-progress-range">You're <strong id="club-my-pct">${myPct}</strong>% through</label>
+        <input type="range" id="club-progress-range" min="0" max="100" value="${myPct}" />
+      </div>
+      <div class="club-comments">
+        ${comments.length ? comments.map(clubCommentHTML).join("") : `<p class="muted">No comments you can see yet${myPct < 100 ? " — read on to unlock more" : ""}.</p>`}
+        ${locked ? `<p class="club-locked">🔒 ${locked} comment${locked === 1 ? "" : "s"} ahead — keep reading to unlock ${locked === 1 ? "it" : "them"}.</p>` : ""}
+      </div>
+      <form id="club-comment-form" class="club-comment-form">
+        <input class="input" id="club-comment-body" placeholder="Share a thought (up to where you are)…" maxlength="2000" autocomplete="off" />
+        <button class="primary" type="submit">Post at ${myPct}%</button>
+      </form>
+      <div class="club-foot">
+        <span class="muted">Invite code: <strong>${esc(d.joinCode || "—")}</strong></span>
+        <button class="mini" data-club-copy="${esc(d.joinCode || "")}">Copy code</button>
+        <button class="mini danger" data-club-leave="${esc(d.club.id)}">Leave</button>
+      </div>`;
+  }
+  function clubCommentHTML(c) {
+    return `<div class="club-comment"><div class="cc-head"><strong>${esc(firstName(c.display_name))}</strong> <span class="muted">· ${c.pos_pct}%${c.label ? " · " + esc(c.label) : ""}</span></div><p class="cc-body">${esc(c.body)}</p></div>`;
+  }
+  async function setClubProgress(pct) {
+    if (!currentClubId) return;
+    await clubApi("/" + currentClubId + "/progress", { method: "PUT", body: JSON.stringify({ progressPct: pct }) });
+    await refreshClub(false); // server is forward-only; re-read reveals newly-unlocked comments
+  }
+  async function postClubComment() {
+    const el = $("#club-comment-body");
+    const bodyText = el ? el.value.trim() : "";
+    if (!bodyText || !currentClubId) return;
+    const pct = Number($("#club-progress-range") ? $("#club-progress-range").value : 0) || 0;
+    if (el) el.value = "";
+    const { res } = await clubApi("/" + currentClubId + "/comments", { method: "POST", body: JSON.stringify({ body: bodyText, posPct: pct }) });
+    if (!res.ok) { toast("⚠️", "Couldn't post", "Try again in a moment."); if (el) el.value = bodyText; return; }
+    await refreshClub(false);
+  }
+
+  // ---------------------------------------------------------------------------
   // PWA install prompt + first-run onboarding
   // ---------------------------------------------------------------------------
   let deferredInstallPrompt = null;
@@ -3472,6 +3586,33 @@
     $("#btn-clear-data").addEventListener("click", clearLocalData);
     $("#btn-refresh-app").addEventListener("click", refreshAppFiles);
     $("#btn-shelf-doctor").addEventListener("click", () => { closeModals(); openShelfDoctor(); });
+    // Reading clubs
+    $("#btn-clubs").addEventListener("click", () => { closeModals(); openClubs(); });
+    const clubName = () => (auth && auth.user && auth.user.fullName) || "You";
+    $("#clubs-body").addEventListener("click", (e) => {
+      const open = e.target.closest("[data-club-open]"); if (open) { openClub(open.dataset.clubOpen); return; }
+      if (e.target.closest("[data-club-back]")) { renderClubsListScreen(); return; }
+      const leave = e.target.closest("[data-club-leave]");
+      if (leave) { if (confirm("Leave this club? You can rejoin later with the code.")) clubApi("/" + leave.dataset.clubLeave + "/leave", { method: "POST" }).then(() => { toast("👋", "Left the club", ""); renderClubsListScreen(); }); return; }
+      const copy = e.target.closest("[data-club-copy]");
+      if (copy && copy.dataset.clubCopy) { try { navigator.clipboard.writeText(copy.dataset.clubCopy); } catch (e2) { /* ignore */ } toast("📋", "Invite code copied", copy.dataset.clubCopy); return; }
+    });
+    $("#clubs-body").addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (e.target.id === "club-create-form") {
+        const title = $("#club-book-title").value.trim(); if (!title) return;
+        clubApi("", { method: "POST", body: JSON.stringify({ bookTitle: title, bookAuthor: $("#club-book-author").value.trim(), displayName: clubName() }) })
+          .then(({ res, data }) => { if (res.ok && data.clubId) { toast("👥", "Club created", "Invite code " + data.joinCode); openClub(data.clubId); } else toast("⚠️", "Couldn't create the club", (data && data.error) || ""); });
+      } else if (e.target.id === "club-join-form") {
+        const code = $("#club-join-code").value.trim().toUpperCase(); if (!code) return;
+        clubApi("/join", { method: "POST", body: JSON.stringify({ joinCode: code, displayName: clubName() }) })
+          .then(({ res, data }) => { if (res.ok && data.clubId) { toast("👥", "Joined the club!", ""); openClub(data.clubId); } else toast("⚠️", "Couldn't join", (data && data.error) || ""); });
+      } else if (e.target.id === "club-comment-form") {
+        postClubComment();
+      }
+    });
+    $("#clubs-body").addEventListener("input", (e) => { if (e.target.id === "club-progress-range") { const v = $("#club-my-pct"); if (v) v.textContent = e.target.value; } });
+    $("#clubs-body").addEventListener("change", (e) => { if (e.target.id === "club-progress-range") setClubProgress(Number(e.target.value) || 0); });
     $("#btn-doctor-covers").addEventListener("click", async (e) => {
       const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Searching…";
       await backfillCovers(true);

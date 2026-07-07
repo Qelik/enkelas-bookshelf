@@ -584,6 +584,14 @@
         </section>
 
         <section class="settings-section">
+          <h4>Reading clubs</h4>
+          <p class="muted">Tiny, private, spoiler-safe book clubs — comments unlock for each friend only as they reach that point in the book.</p>
+          <div class="settings-actions">
+            <button id="btn-clubs" class="ghost">👥 Reading clubs</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
           <h4>Library health</h4>
           <p class="muted">Find books missing covers, authors, genres or dates — and fix them in a couple of taps.</p>
           <div class="settings-actions">
@@ -617,6 +625,17 @@
         </div>
         <div id="doctor-body"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- READING CLUBS — spoiler-safe -->
+  <div class="modal-backdrop" id="clubs-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clubs-title">
+      <div class="modal-head">
+        <h3 id="clubs-title">👥 Reading clubs</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="clubs-body"></div>
     </div>
   </div>
 
