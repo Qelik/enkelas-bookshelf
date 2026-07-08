@@ -287,6 +287,12 @@
   let auth = loadAuth();
   let pushTimer = null;
   let authMode = "login";
+  let lastPushAt = 0, lastPullAt = 0;
+  // Free Workers KV tier is tight on writes (~1k/day). Coalesce cloud writes so
+  // the eReader's per-minute session logging + rapid edits don't each cost a write.
+  const PUSH_MIN_MS = 120000; // ≥2 min between cloud writes
+  const PULL_MIN_MS = 60000;  // ≥1 min between automatic pulls
+  function isDirty() { return (state.updatedAt || "") > (loadSyncBase() || ""); }
 
   function syncEnabled() { return !!SYNC_API; }
   function loadAuth() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)) || null; } catch (e) { return null; } }
@@ -380,13 +386,15 @@
   function schedulePush() {
     if (!syncEnabled() || !auth) return;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => pushData(false), 1200);
+    const since = Date.now() - lastPushAt;
+    pushTimer = setTimeout(() => pushData(false), since >= PUSH_MIN_MS ? 1200 : (PUSH_MIN_MS - since));
   }
   // Resolves true when the account now holds this device's latest data
   // (or a consciously chosen version) — logout uses this before wiping.
   async function pushData(force) {
     if (!syncEnabled() || !auth) return false;
     setSyncStatus("syncing");
+    lastPushAt = Date.now();
     const body = { blob: state, updatedAt: state.updatedAt };
     if (force) body.force = true; else body.baseUpdatedAt = loadSyncBase();
     try {
@@ -405,6 +413,7 @@
   async function pullData() {
     if (!syncEnabled() || !auth) return;
     setSyncStatus("syncing");
+    lastPullAt = Date.now();
     try {
       const { res, data } = await apiFetch("/api/data", { method: "GET" });
       if (res.status === 401) { handleAuthExpired(); return; }
@@ -427,14 +436,17 @@
   // PWA before a debounce fires), pull fresh data when it returns to the
   // foreground or comes back online, and refresh every few minutes while open.
   function setupAutoSync() {
+    const maybePull = () => { if (syncEnabled() && auth && Date.now() - lastPullAt >= PULL_MIN_MS) pullData(); };
     document.addEventListener("visibilitychange", () => {
       if (!syncEnabled() || !auth) return;
-      if (document.hidden) { clearTimeout(pushTimer); pushData(false); }
-      else pullData();
+      // Only flush on background when there's actually something new — avoids a
+      // wasted KV write every time the app is switched away with nothing changed.
+      if (document.hidden) { clearTimeout(pushTimer); if (isDirty()) pushData(false); }
+      else maybePull();
     });
     window.addEventListener("online", () => { if (syncEnabled() && auth) pullData(); });
     window.addEventListener("offline", () => { if (syncEnabled() && auth) setSyncStatus("offline"); });
-    setInterval(() => { if (syncEnabled() && auth && !document.hidden) pullData(); }, 5 * 60 * 1000);
+    setInterval(() => { if (!document.hidden) maybePull(); }, 15 * 60 * 1000);
   }
 
   function handleAuthExpired() { saveAuth(null); saveSyncBase(null); renderAccount(); setSyncStatus("needslogin"); toast("🔑", "Please sign in again", "Your session expired."); }
