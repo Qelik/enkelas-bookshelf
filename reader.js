@@ -11,7 +11,7 @@
 
   // Bumped alongside meaningful reader changes; lets us tell at a glance which
   // build a device is actually running when the SW/HTTP caches misbehave.
-  window.__readerBuild = "2026-07-05";
+  window.__readerBuild = "2026-07-10";
 
   const GAP = 48;            // must match .reader-content column-gap
   const IDLE_MS = 120000;    // stop the clock after 2 min without a page turn/touch
@@ -185,6 +185,10 @@
   let tickTimer = null;
   let etaMode = "chapter";
   let els = null;
+  let drawerTab = "toc";   // which drawer tab is showing
+  let sessionStartPct = 0; // book % when this reading session began (for the summary)
+  let lastSearch = { q: "", results: null };
+  let selbarTimer = null;  // debounce for the selection action bar
 
   function grabEls() {
     els = {
@@ -203,6 +207,10 @@
       etaEl: $("#reader-eta"),
       timerEl: $("#reader-timer"),
       diagEl: $("#reader-diag"),
+      drawer: $("#reader-drawer"),
+      drawerBody: $("#reader-drawer-body"),
+      selbar: $("#reader-selbar"),
+      bookmarkBtn: $("#reader-bookmark-btn"),
     };
   }
 
@@ -289,6 +297,246 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Highlights — anchored to the TEXT itself (chapter + nearest occurrence), so
+  // they survive font-size changes, rotations and re-pagination.
+  // ---------------------------------------------------------------------------
+  function textNodesIn(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let n; while ((n = walker.nextNode())) nodes.push(n);
+    return nodes;
+  }
+  // The occurrence of `needle` in `hay` whose index is closest to `near`.
+  function findOccurrence(hay, needle, near) {
+    let best = -1, bestDist = Infinity, i = hay.indexOf(needle);
+    while (i >= 0) {
+      const d = Math.abs(i - (near || 0));
+      if (d < bestDist) { best = i; bestDist = d; }
+      i = hay.indexOf(needle, i + 1);
+    }
+    return best;
+  }
+  // Wrap the char range [start, end) of root's text in <mark> elements — one per
+  // intersected text node, processed in reverse so offsets stay valid.
+  function wrapTextRange(root, start, end, cls, hlId) {
+    const nodes = textNodesIn(root);
+    let off = 0; const segs = [];
+    for (const nd of nodes) {
+      const len = nd.nodeValue.length;
+      const a = Math.max(start, off), b = Math.min(end, off + len);
+      if (a < b) segs.push({ nd, from: a - off, to: b - off });
+      off += len;
+      if (off >= end) break;
+    }
+    segs.reverse().forEach((sg) => {
+      const r = document.createRange();
+      r.setStart(sg.nd, sg.from); r.setEnd(sg.nd, sg.to);
+      const mark = document.createElement("mark");
+      mark.className = cls;
+      if (hlId) mark.dataset.hl = hlId;
+      try { r.surroundContents(mark); } catch (e) { /* skip odd boundary */ }
+    });
+    return segs.length > 0;
+  }
+  function applyHighlightsTo(container, chIndex) {
+    if (!rec || !rec.highlights || !rec.highlights.length) return;
+    const hay = container.textContent;
+    rec.highlights.filter((h) => h.ch === chIndex).forEach((h) => {
+      const i = findOccurrence(hay, h.text, h.start);
+      if (i >= 0) wrapTextRange(container, i, i + h.text.length, "rd-hl", h.id);
+    });
+  }
+  function removeFlashMarks(container) {
+    container.querySelectorAll("mark.rd-flash").forEach((m) => {
+      const parent = m.parentNode;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      parent.removeChild(m);
+      parent.normalize();
+    });
+  }
+
+  // What's selected inside the current page, plus its char offset in the chapter.
+  function currentSelectionInfo() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const r = sel.getRangeAt(0);
+    if (!els.currentContent.contains(r.commonAncestorContainer)) return null;
+    const text = sel.toString().replace(/\s+/g, " ").trim();
+    if (!text || text.length < 3) return null;
+    const pre = document.createRange();
+    pre.selectNodeContents(els.currentContent);
+    pre.setEnd(r.startContainer, r.startOffset);
+    return { text: sel.toString(), clean: text, start: pre.toString().length, rect: r.getBoundingClientRect() };
+  }
+  function hideSelbar() { if (els.selbar) els.selbar.hidden = true; }
+  function maybeShowSelbar() {
+    if (!book || !els.selbar) return;
+    const info = currentSelectionInfo();
+    if (!info) { hideSelbar(); return; }
+    els.selbar.hidden = false;
+    const bw = els.selbar.offsetWidth || 200, bh = els.selbar.offsetHeight || 40;
+    let x = info.rect.left + info.rect.width / 2 - bw / 2;
+    let y = info.rect.top - bh - 8;
+    if (y < 44) y = info.rect.bottom + 8; // don't cover the top bar
+    x = Math.max(8, Math.min(x, window.innerWidth - bw - 8));
+    els.selbar.style.left = x + "px";
+    els.selbar.style.top = y + "px";
+  }
+  function addHighlightFromSelection() {
+    const info = currentSelectionInfo();
+    if (!info || !rec) { hideSelbar(); return; }
+    rec.highlights = rec.highlights || [];
+    const hl = { id: "hl-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ch: pos.ch, text: info.text, start: info.start, addedAt: new Date().toISOString() };
+    rec.highlights.push(hl);
+    wrapTextRange(els.currentContent, info.start, info.start + info.text.length, "rd-hl", hl.id);
+    idbPut(rec);
+    try { window.getSelection().removeAllRanges(); } catch (e) { /* ignore */ }
+    hideSelbar();
+    toast("🖍", "Highlighted", "Find it under 📑 → Highlights.");
+  }
+  function saveQuoteFromSelection() {
+    const info = currentSelectionInfo();
+    if (!info) { hideSelbar(); return; }
+    if (!rec || !rec.linkedBookId || !window.BookshelfAPI || !window.BookshelfAPI.addQuote) {
+      toast("🔗", "Not linked yet", "Link this ePub to a bookshelf book (in the eReader list) to save quotes.");
+      return;
+    }
+    const ok = window.BookshelfAPI.addQuote(rec.linkedBookId, info.clean);
+    if (ok) {
+      try { window.getSelection().removeAllRanges(); } catch (e) { /* ignore */ }
+      hideSelbar();
+      toast("✍", "Quote saved", "It's on the book's page in your bookshelf.");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bookmarks — a chapter + fraction anchor (same scheme the resize handler
+  // uses), plus a text snippet so the list is recognisable.
+  // ---------------------------------------------------------------------------
+  function currentFrac() { return pag.pages > 1 ? pos.page / (pag.pages - 1) : 0; }
+  function findBookmarkHere() {
+    if (!rec || !rec.bookmarks) return null;
+    return rec.bookmarks.find((m) => m.ch === pos.ch && Math.round((m.frac || 0) * (pag.pages - 1)) === pos.page) || null;
+  }
+  function toggleBookmark() {
+    if (!rec || !book) return;
+    rec.bookmarks = rec.bookmarks || [];
+    const existing = findBookmarkHere();
+    if (existing) {
+      rec.bookmarks = rec.bookmarks.filter((m) => m.id !== existing.id);
+      toast("🔖", "Bookmark removed", "");
+    } else {
+      const txt = els.currentContent.textContent || "";
+      const approx = Math.floor((pos.page / Math.max(1, pag.pages)) * txt.length);
+      rec.bookmarks.push({
+        id: "bm-" + Date.now().toString(36),
+        ch: pos.ch, frac: currentFrac(), pct: book.chars ? bookPct() : 0,
+        snippet: txt.slice(approx, approx + 90).trim(),
+        addedAt: new Date().toISOString(),
+      });
+      toast("🔖", "Bookmarked", "Find it under 📑 → Bookmarks.");
+    }
+    idbPut(rec);
+    updateBookmarkBtn();
+  }
+  function updateBookmarkBtn() {
+    if (els.bookmarkBtn) els.bookmarkBtn.classList.toggle("on", !!findBookmarkHere());
+  }
+  async function gotoFrac(ch, frac) {
+    await showChapter(ch, 0);
+    pos.page = Math.max(0, Math.min(Math.round((frac || 0) * (pag.pages - 1)), pag.pages - 1));
+    setPage(els.currentContent, pos.page, pag.step);
+    updateBars();
+    saveProgress();
+  }
+  // Land on the page containing `text` (nearest occurrence to `near`), flash it.
+  async function gotoText(ch, text, near) {
+    await showChapter(ch, 0);
+    const hay = els.currentContent.textContent;
+    const i = findOccurrence(hay.toLowerCase(), String(text).toLowerCase(), near);
+    if (i < 0) return;
+    wrapTextRange(els.currentContent, i, i + text.length, "rd-flash");
+    const mk = els.currentContent.querySelector("mark.rd-flash");
+    if (mk) {
+      const base = els.currentContent.getBoundingClientRect();
+      const page = Math.max(0, Math.floor((mk.getBoundingClientRect().left - base.left) / pag.step));
+      pos.page = Math.min(page, pag.pages - 1);
+      setPage(els.currentContent, pos.page, pag.step);
+    }
+    updateBars();
+    saveProgress();
+    setTimeout(() => { if (els && els.currentContent) removeFlashMarks(els.currentContent); }, 2200);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drawer: contents / bookmarks / highlights / search
+  // ---------------------------------------------------------------------------
+  function openDrawer(tab) {
+    if (!els.drawer || !book) return;
+    drawerTab = tab || drawerTab;
+    els.drawer.hidden = false;
+    renderDrawer();
+    if (drawerTab === "search") { const inp = $("#rd-search-input"); if (inp) setTimeout(() => inp.focus(), 60); }
+  }
+  function closeDrawer() { if (els.drawer) els.drawer.hidden = true; }
+  function renderDrawer() {
+    if (!els.drawerBody || !book) return;
+    document.querySelectorAll("#rd-tabs .rd-tab").forEach((b) => b.classList.toggle("active", b.dataset.rdtab === drawerTab));
+    if (drawerTab === "toc") {
+      els.drawerBody.innerHTML = book.spine.map((p, i) => {
+        const label = book.labels[p] || "Chapter " + (i + 1);
+        return `<button class="rd-row${i === pos.ch ? " current" : ""}" data-goch="${i}">
+          <span class="rd-row-main">${esc(label)}</span>
+          ${i === pos.ch ? `<span class="rd-row-side">📍</span>` : ""}
+        </button>`;
+      }).join("") || `<p class="muted">No chapters found.</p>`;
+    } else if (drawerTab === "marks") {
+      const marks = (rec.bookmarks || []).slice().sort((a, b) => a.ch - b.ch || a.frac - b.frac);
+      els.drawerBody.innerHTML = marks.length ? marks.map((m) => `
+        <div class="rd-row" data-gobm="${esc(m.id)}">
+          <span class="rd-row-main">🔖 ${esc(m.snippet || "…")}<br><span class="muted">${esc(book.labels[book.spine[m.ch]] || "Chapter " + (m.ch + 1))}${m.pct ? " · " + m.pct + "%" : ""}</span></span>
+          <button class="icon-btn rd-del" data-delbm="${esc(m.id)}" title="Remove bookmark">🗑</button>
+        </div>`).join("")
+        : `<p class="muted">No bookmarks yet — tap 🔖 on any page.</p>`;
+    } else if (drawerTab === "hls") {
+      const hls = (rec.highlights || []).slice().sort((a, b) => a.ch - b.ch || a.start - b.start);
+      els.drawerBody.innerHTML = hls.length ? hls.map((h) => `
+        <div class="rd-row" data-gohl="${esc(h.id)}">
+          <span class="rd-row-main">🖍 ${esc(h.text.length > 120 ? h.text.slice(0, 118) + "…" : h.text)}<br><span class="muted">${esc(book.labels[book.spine[h.ch]] || "Chapter " + (h.ch + 1))}</span></span>
+          <button class="icon-btn rd-del" data-delhl="${esc(h.id)}" title="Remove highlight">🗑</button>
+        </div>`).join("")
+        : `<p class="muted">No highlights yet — select some text while reading.</p>`;
+    } else if (drawerTab === "search") {
+      const res = lastSearch.results;
+      els.drawerBody.innerHTML = `
+        <form id="rd-search-form" class="rd-search">
+          <input class="input" id="rd-search-input" type="search" placeholder="Search inside this book…" value="${esc(lastSearch.q)}" />
+          <button class="primary" type="submit">Find</button>
+        </form>
+        <div id="rd-search-results">${res === null ? "" : (res.length
+          ? res.map((r, idx) => `<button class="rd-row" data-gores="${idx}"><span class="rd-row-main">${esc(r.snippet)}<br><span class="muted">${esc(book.labels[book.spine[r.ch]] || "Chapter " + (r.ch + 1))}</span></span></button>`).join("") + (res.truncated ? `<p class="muted">Showing the first ${res.length} matches.</p>` : "")
+          : `<p class="muted">No matches for “${esc(lastSearch.q)}”.</p>`)}</div>`;
+    }
+  }
+  async function searchBook(q) {
+    const needle = q.toLowerCase();
+    const out = [];
+    for (let i = 0; i < book.spine.length; i++) {
+      const f = book.zip.file(book.spine[i]);
+      if (!f) continue;
+      const s = (await f.async("string")).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+      const low = s.toLowerCase();
+      let idx = low.indexOf(needle);
+      while (idx >= 0) {
+        if (out.length >= 80) { out.truncated = true; return out; }
+        out.push({ ch: i, frac: idx / Math.max(1, s.length), match: s.substr(idx, q.length), snippet: "…" + s.slice(Math.max(0, idx - 40), idx + q.length + 60).trim() + "…" });
+        idx = low.indexOf(needle, idx + Math.max(1, needle.length));
+      }
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
   // Pagination (CSS columns → horizontal pages)
   // ---------------------------------------------------------------------------
   function layout(contentEl) {
@@ -304,6 +552,7 @@
   async function showChapter(i, page, fromEnd) {
     const html = await chapterHTML(i);
     els.currentContent.innerHTML = html;
+    applyHighlightsTo(els.currentContent, i);
     els.currentContent.style.transform = "translateX(0)";
     pag = layout(els.currentContent);
     pos.ch = i;
@@ -345,10 +594,11 @@
       // Leaf carries the target page back in over the current one.
       const html = await chapterHTML(target.ch);
       els.underContent.innerHTML = html;
+      applyHighlightsTo(els.underContent, target.ch);
       els.underContent.style.transform = "translateX(0)";
       const tpag = layout(els.underContent);
       const tpage = target.page === -1 ? tpag.pages - 1 : target.page;
-      leafFace.innerHTML = html;
+      leafFace.innerHTML = els.underContent.innerHTML;
       leafFace.style.columnWidth = tpag.step - GAP + "px";
       setPage(leafFace, tpage, tpag.step);
       target.page = tpage;
@@ -515,6 +765,7 @@
     els.chapterEl.textContent = label;
     els.posEl.textContent = "Ch " + (pos.ch + 1) + "/" + book.spine.length + " · page " + (pos.page + 1) + "/" + pag.pages + (book.chars ? " · " + bookPct() + "%" : "");
     els.etaEl.textContent = etaText();
+    updateBookmarkBtn();
   }
   function startClock() {
     session = { seconds: 0, chars: 0, lastActivity: Date.now(), lastTick: Date.now(), logId: null };
@@ -575,6 +826,12 @@
       rec = r;
       rec.lastOpened = new Date().toISOString();
       rec.stats = rec.stats || { seconds: 0, cpm: 0 };
+      rec.bookmarks = rec.bookmarks || [];
+      rec.highlights = rec.highlights || [];
+      sessionStartPct = (r.progress && r.progress.pct) || 0;
+      lastSearch = { q: "", results: null };
+      closeDrawer();
+      hideSelbar();
       chapterCache = new Map();
       etaMode = localStorage.getItem(ETA_KEY) === "book" ? "book" : "chapter";
       const fs = Number(localStorage.getItem(FS_KEY)) || 19;
@@ -599,20 +856,50 @@
     clearInterval(tickTimer);
     updateSpeed();
     saveProgress();
+    closeDrawer();
+    hideSelbar();
     const secs = session ? session.seconds : 0;
-    // Final sync of the live session log (it's been updating each minute).
-    if (secs >= 60 && rec.linkedBookId && window.BookshelfAPI) {
-      syncSessionLog();
-      toast("📖", "Session saved", Math.round(secs / 60) + " min logged to your bookshelf");
-    } else if (secs >= 60) {
-      toast("⏱", "Nice session!", Math.round(secs / 60) + " min — link this ePub to a book to log it automatically.");
+    // Gather the summary BEFORE the session/book state is torn down.
+    let summary = null;
+    if (secs >= 60) {
+      const linked = rec.linkedBookId && window.BookshelfAPI
+        ? window.BookshelfAPI.getBooks().find((b) => b.id === rec.linkedBookId) : null;
+      let pages = 0;
+      if (linked && linked.totalPages && book && book.totalChars) pages = Math.round((session.chars / book.totalChars) * linked.totalPages);
+      summary = {
+        mins: Math.round(secs / 60), pages,
+        fromPct: sessionStartPct, toPct: book && book.chars ? bookPct() : sessionStartPct,
+        title: (book && book.title) || "", linked: !!linked,
+      };
     }
+    // Final sync of the live session log (it's been updating each minute).
+    if (secs >= 60 && rec.linkedBookId && window.BookshelfAPI) syncSessionLog();
     idbPut(rec);
     session = null;
     blobUrls.forEach((u) => URL.revokeObjectURL(u));
     blobUrls = [];
     book = null; rec = null;
     els.overlay.hidden = true;
+    if (summary) showSessionSummary(summary);
+  }
+  // A friendly recap after a real session (1 min+): time, pages, progress, streak.
+  function showSessionSummary(s) {
+    const modal = $("#reader-summary-modal"), body = $("#reader-summary-body");
+    if (!modal || !body) { toast("📖", "Session saved", s.mins + " min of reading"); return; }
+    let streakRow = "";
+    try {
+      const st = window.BookshelfAPI && window.BookshelfAPI.streak ? window.BookshelfAPI.streak() : null;
+      if (st && st.current > 1) streakRow = `<div class="rs-row"><span>🔥</span><span><strong>${st.current}-day</strong> reading streak${st.current >= st.longest ? " — your best!" : ""}</span></div>`;
+    } catch (e) { /* ignore */ }
+    const gained = Math.max(0, (s.toPct || 0) - (s.fromPct || 0));
+    body.innerHTML = `
+      ${s.title ? `<p class="muted rs-book">${esc(s.title)}</p>` : ""}
+      <div class="rs-row"><span>⏱</span><span><strong>${s.mins} min</strong> of focused reading</span></div>
+      ${s.pages ? `<div class="rs-row"><span>📄</span><span>about <strong>${s.pages} pages</strong></span></div>` : ""}
+      ${gained ? `<div class="rs-row"><span>📈</span><span><strong>${s.fromPct}% → ${s.toPct}%</strong> of the book</span></div>` : ""}
+      ${streakRow}
+      ${s.linked ? `<p class="muted">Logged to your bookshelf automatically.</p>` : `<p class="muted">Link this ePub to a bookshelf book (in the eReader list) and sessions log themselves.</p>`}`;
+    modal.hidden = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -717,6 +1004,74 @@
     $("#reader-font-minus").addEventListener("click", () => bumpFont(-1));
     $("#reader-font-plus").addEventListener("click", () => bumpFont(1));
     $("#reader-theme-btn").addEventListener("click", cycleTheme);
+
+    // Contents / bookmarks / highlights / search drawer
+    $("#reader-toc-btn").addEventListener("click", () => (els.drawer.hidden ? openDrawer("toc") : closeDrawer()));
+    $("#reader-search-btn").addEventListener("click", () => openDrawer("search"));
+    $("#reader-bookmark-btn").addEventListener("click", toggleBookmark);
+    $("#reader-drawer-close").addEventListener("click", closeDrawer);
+    $("#rd-tabs").addEventListener("click", (e) => {
+      const tab = e.target.closest("[data-rdtab]");
+      if (tab) { drawerTab = tab.dataset.rdtab; renderDrawer(); }
+    });
+    els.drawerBody.addEventListener("click", async (e) => {
+      const del = e.target.closest("[data-delbm], [data-delhl]");
+      if (del) {
+        if (del.dataset.delbm) rec.bookmarks = (rec.bookmarks || []).filter((m) => m.id !== del.dataset.delbm);
+        if (del.dataset.delhl) {
+          rec.highlights = (rec.highlights || []).filter((h) => h.id !== del.dataset.delhl);
+          await showChapter(pos.ch, pos.page); // re-render so the mark disappears
+        }
+        idbPut(rec);
+        renderDrawer();
+        updateBookmarkBtn();
+        return;
+      }
+      const ch = e.target.closest("[data-goch]");
+      if (ch) { closeDrawer(); await showChapter(Number(ch.dataset.goch), 0); markActivity(); return; }
+      const bm = e.target.closest("[data-gobm]");
+      if (bm) {
+        const m = (rec.bookmarks || []).find((x) => x.id === bm.dataset.gobm);
+        if (m) { closeDrawer(); await gotoFrac(m.ch, m.frac); markActivity(); }
+        return;
+      }
+      const hl = e.target.closest("[data-gohl]");
+      if (hl) {
+        const h = (rec.highlights || []).find((x) => x.id === hl.dataset.gohl);
+        if (h) { closeDrawer(); await gotoText(h.ch, h.text, h.start); markActivity(); }
+        return;
+      }
+      const res = e.target.closest("[data-gores]");
+      if (res && lastSearch.results) {
+        const r = lastSearch.results[Number(res.dataset.gores)];
+        if (r) {
+          closeDrawer();
+          await showChapter(r.ch, 0);
+          const near = Math.floor(r.frac * (els.currentContent.textContent || "").length);
+          await gotoText(r.ch, r.match, near);
+          markActivity();
+        }
+      }
+    });
+    els.drawerBody.addEventListener("submit", async (e) => {
+      if (e.target.id !== "rd-search-form") return;
+      e.preventDefault();
+      const q = ($("#rd-search-input").value || "").trim();
+      if (q.length < 2) return;
+      lastSearch = { q, results: null };
+      $("#rd-search-results").innerHTML = `<p class="muted">Searching…</p>`;
+      lastSearch.results = await searchBook(q);
+      renderDrawer();
+    });
+
+    // Text selection → highlight / save-quote actions
+    document.addEventListener("selectionchange", () => {
+      if (!els || els.overlay.hidden) return;
+      clearTimeout(selbarTimer);
+      selbarTimer = setTimeout(maybeShowSelbar, 250);
+    });
+    $("#sel-highlight").addEventListener("click", addHighlightFromSelection);
+    $("#sel-quote").addEventListener("click", saveQuoteFromSelection);
     $("#reader-eta").addEventListener("click", () => {
       etaMode = etaMode === "chapter" ? "book" : "chapter";
       try { localStorage.setItem(ETA_KEY, etaMode); } catch (e) { /* ignore */ }
@@ -725,9 +1080,14 @@
     setupDragTurn();
     document.addEventListener("keydown", (e) => {
       if (!els || els.overlay.hidden) return;
+      if (e.target && /^(input|textarea|select)$/i.test(e.target.tagName)) return; // typing in the search box
       if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); turnPage(1); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); turnPage(-1); }
-      else if (e.key === "Escape") closeReader();
+      else if (e.key === "Escape") {
+        if (els.selbar && !els.selbar.hidden) hideSelbar();
+        else if (els.drawer && !els.drawer.hidden) closeDrawer();
+        else closeReader();
+      }
     });
     window.addEventListener("resize", () => {
       if (!book || els.overlay.hidden) return;
@@ -769,6 +1129,11 @@
     openLibrary() {
       renderList();
       $("#ereader-modal").hidden = false;
+    },
+    // For the app's "export everything" backup + backup-health panel.
+    exportAll() { return idbAll(); },
+    async importAll(recs) {
+      for (const r of recs) if (r && r.id && r.data) await idbPut(r);
     },
   };
 

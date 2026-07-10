@@ -141,6 +141,51 @@
         eq(T.parseList("a, b ,a , B"), ["a", "b"], "case-insensitive dedupe, trimmed");
       });
 
+      // --- readNextPicks (local TBR recommender) ------------------------------
+      function rnBook(over) {
+        var b = { id: Math.random().toString(36).slice(2), title: "t", author: "", tags: [], status: "finished", addedAt: "2026-01-01T00:00:00Z", logs: [] };
+        for (var k in over) b[k] = over[k];
+        return b;
+      }
+      test("readNextPicks: next-in-series beats a cold pick", function () {
+        var books = [
+          rnBook({ title: "S1", seriesName: "Saga", seriesNumber: 1, rating: 5, tags: ["Fantasy"] }),
+          rnBook({ title: "Other", rating: 4, tags: ["Fantasy"] }),
+          rnBook({ title: "S2", seriesName: "Saga", seriesNumber: 2, status: "want", tags: ["Fantasy"] }),
+          rnBook({ title: "Cold", status: "want", tags: [] }),
+        ];
+        var picks = T.readNextPicks(books);
+        assert(picks.length >= 1, "produces picks");
+        assert(picks[0].book.title === "S2", "series continuation ranks first (got " + (picks[0] && picks[0].book.title) + ")");
+        assert(picks[0].why.join(" ").indexOf("Saga") !== -1, "explains the series reason");
+      });
+      test("readNextPicks: loved genres pull TBR books up, DNFs push down", function () {
+        var books = [
+          rnBook({ title: "F1", rating: 5, tags: ["Fantasy"] }),
+          rnBook({ title: "F2", rating: 4.5, tags: ["Fantasy"] }),
+          rnBook({ title: "H1", status: "dnf", tags: ["Horror"] }),
+          rnBook({ title: "WantF", status: "want", tags: ["Fantasy"] }),
+          rnBook({ title: "WantH", status: "want", tags: ["Horror"] }),
+        ];
+        var picks = T.readNextPicks(books);
+        assert(picks.length >= 1 && picks[0].book.title === "WantF", "loved genre first");
+        assert(!picks.some(function (p) { return p.book.title === "WantH"; }) || picks[picks.length - 1].book.title === "WantH", "DNF'd genre doesn't lead");
+      });
+      test("readNextPicks: stays quiet without enough history", function () {
+        eq(T.readNextPicks([rnBook({ status: "want" }), rnBook({ status: "want" })]), [], "no finished books → no picks");
+      });
+
+      // --- full-backup base64 round-trip --------------------------------------
+      test("bufToB64/b64ToBuf survive a binary round-trip", function () {
+        var src = new Uint8Array(70000); // > one 0x8000 chunk
+        for (var i = 0; i < src.length; i++) src[i] = (i * 31 + 7) & 0xff;
+        var back = new Uint8Array(T.b64ToBuf(T.bufToB64(src.buffer)));
+        assert(back.length === src.length, "length preserved");
+        var same = true;
+        for (var j = 0; j < src.length; j++) if (src[j] !== back[j]) { same = false; break; }
+        assert(same, "bytes identical");
+      });
+
       // --- render results ----------------------------------------------------
       var box = document.getElementById("results");
       box.innerHTML = results.map(function (r) {

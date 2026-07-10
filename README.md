@@ -32,6 +32,12 @@ On a phone, open that link and use the browser's **Share → Add to Home Screen*
 - **Stats & charts** — a Stats tab with a **reading calendar heatmap**, pages-per-day and pages-per-month charts, a **by-genre** breakdown, a **ratings distribution**, and a shareable **Year in Review** recap.
 - **Dark mode** — a 🌙 / ☀️ toggle in the header; your choice is remembered.
 - **Auto cover art** — covers are fetched automatically from the free [Open Library](https://openlibrary.org) API by title/author/ISBN, with a Google Books fallback. Books that come in without a cover (e.g. from a Goodreads import) are quietly backfilled in the background. Wrong cover? Pick another candidate or paste your own image URL.
+- **Reading clubs (spoiler-safe)** — read a book together with friends (⚙️ Settings → 👥 Reading clubs, requires sign-in). Start a club, share the **8-letter invite code** or an **invite link** (📤 Share invite — opening the link joins automatically, even if the friend signs in first). Every member sets how far through they are, and comments are **locked until you've read that far** — the server only ever sends you comments at or below your own progress, so spoilers physically can't reach you. Includes per-comment reactions (❤️🤯😂😢👀), a member progress board, and live updates while the club is open.
+- **Community recommendations** — a shared 🌟 Community board where every reader can recommend books per genre and vote 👍/👎; books you've already finished are hidden by default.
+- **Read next** — a private, fully on-device recommender: the Want tab opens with up to three picks from your own list, scored against your ratings, favourite genres and authors, series in progress, DNFs, what you own, and how long a book has waited — each with the reasons spelled out. Nothing leaves the device.
+- **eReader extras** — inside the built-in ePub reader: a 📑 contents drawer, 🔖 bookmarks, 🖍 text highlights (they survive font-size changes), ✍ save-a-quote straight to the book's page, 🔍 full-book search, and a session summary card (minutes, pages, progress, streak) when you close the book.
+- **Data safety** — Settings shows a backup-health panel (what's on the device, when you last exported, whether storage is protected); a gentle backup reminder appears if exports get stale; **📦 Export everything** bundles books + settings + your ePubs (bookmarks and highlights included) into one restorable file; and a 🗂 sync-conflict history lists every time two devices disagreed and which copy won.
+- **Shelf insights** — the Stats tab's insight cards now include your shelf: unread owned books (and which has waited longest), series waiting to be continued, possible duplicate editions, favourite genres/authors with nothing queued, and a pick that fits your recent reading rhythm.
 
 ## Running it
 
@@ -56,6 +62,7 @@ exactly as before, fully local on the one device.
 - Backend: a small **Cloudflare Worker + KV** (free tier) in [`sync-worker/`](sync-worker/) — see its README to deploy your own. Passwords are salted + PBKDF2-hashed; sessions are signed, expiring tokens.
 - The app points at the worker via `SYNC_API` in `app.js` (a per-device `localStorage` override, `enkelas-sync-api`, is also supported).
 - No "forgot password" email in this version — the owner resets a password with one `wrangler kv key delete` command (see the worker README).
+- **Reading clubs & the community board** share the same worker, backed by a **D1 database** (`schema-clubs.sql`) plus a **Durable Object** per club for live updates. The spoiler gate is enforced server-side (`pos_pct <= your progress`, progress is forward-only), so no client bug can leak a spoiler.
 
 ## Where your data lives
 
@@ -123,6 +130,16 @@ Hosting over **HTTPS** is what enables the offline/installable (PWA) features.
 | `index.html` | Page structure, modals |
 | `styles.css` | All styling (warm "bookshelf" theme + dark mode) |
 | `app.js` | State, persistence, rendering, achievements, charts, Open Library lookups |
+| `reader.js` | Built-in ePub reader (page turns, sessions, TOC/bookmarks/highlights/search) |
 | `manifest.json` | PWA manifest (makes it installable to the home screen) |
 | `sw.js` | Service worker (offline support) |
+| `sync-worker/` | Optional Cloudflare Worker backend (accounts, sync, clubs, community) |
 | `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` | App icons |
+
+## Tests & releasing
+
+- `./scripts/run-tests.sh` — serves the folder and runs `tests.html` (the no-build data-logic tests) in headless Chrome. Or just open `tests.html` on the served app.
+- `node scripts/preflight.mjs` — pre-release checklist: catches an unbumped `sw.js` cache version, a stale `APP_VERSION`, precache typos, syntax errors, and drift between the two wrangler configs.
+- `cd sync-worker && ./test-endpoints.sh` — spins up `wrangler dev --local` and exercises the API end-to-end: auth, sync conflicts (409), the clubs spoiler gate, and the community board.
+- `fixtures/` — sample import files for manual QA (a bookshelf export and a Goodreads CSV).
+- Before shipping: bump the `CACHE` version in `sw.js` (and `APP_VERSION` in `app.js`) whenever shell files change, then run the QA pass in `QA.md`.

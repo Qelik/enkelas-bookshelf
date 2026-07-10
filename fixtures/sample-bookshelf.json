@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-01T10:00:00.000Z",
+  "settings": { "goal": { "year": 2026, "target": 24, "pagesTarget": 8000, "dailyPages": 25 } },
+  "books": [
+    {
+      "id": "fixture-reading-1",
+      "title": "The Name of the Wind",
+      "author": "Patrick Rothfuss",
+      "totalPages": 662,
+      "isbn": "9780756404741",
+      "tags": ["Fantasy", "Adventure"],
+      "status": "reading",
+      "format": "physical",
+      "owned": true,
+      "seriesName": "The Kingkiller Chronicle",
+      "seriesNumber": 1,
+      "startedAt": "2026-06-01T00:00:00.000Z",
+      "addedAt": "2026-06-01T09:12:00.000Z",
+      "logs": [
+        { "id": "fx-log-1", "date": "2026-06-01T21:30:00.000Z", "pages": 40, "minutes": 55, "mood": "", "note": "Great opening." },
+        { "id": "fx-log-2", "date": "2026-06-03T22:00:00.000Z", "pages": 35, "minutes": 40, "mood": "", "note": "" }
+      ],
+      "quotes": [{ "id": "fx-q-1", "text": "Words are pale shadows of forgotten names.", "page": 71 }]
+    },
+    {
+      "id": "fixture-finished-1",
+      "title": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "totalPages": 432,
+      "tags": ["Classics", "Romance"],
+      "status": "finished",
+      "format": "ebook",
+      "rating": 4.5,
+      "review": "A fixture review.",
+      "finishedAt": "2026-05-20T00:00:00.000Z",
+      "addedAt": "2026-05-01T00:00:00.000Z",
+      "logs": [{ "id": "fx-log-3", "date": "2026-05-20T00:00:00.000Z", "pages": 432, "minutes": 0, "mood": "", "note": "Added as already read" }]
+    },
+    {
+      "id": "fixture-want-1",
+      "title": "The Wise Man's Fear",
+      "author": "Patrick Rothfuss",
+      "totalPages": 994,
+      "tags": ["Fantasy"],
+      "status": "want",
+      "seriesName": "The Kingkiller Chronicle",
+      "seriesNumber": 2,
+      "expectation": 5,
+      "pickReason": "Need to know what happens next.",
+      "addedAt": "2026-01-05T00:00:00.000Z",
+      "logs": []
+    }
+  ]
+}

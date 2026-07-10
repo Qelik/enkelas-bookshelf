@@ -12,3 +12,5 @@ sync-worker/.dev.vars
 
 # wrangler (root deploys via Workers Builds)
 .wrangler/
+# …but synthetic QA fixtures are fine
+!fixtures/sample-goodreads.csv

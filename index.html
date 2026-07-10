@@ -80,6 +80,7 @@
           <button class="primary" data-add="want">＋ Add to list</button>
         </div>
       </div>
+      <div id="read-next"></div>
       <div class="card-grid" id="want-list"></div>
       <p class="empty" id="want-empty" hidden></p>
     </section>
@@ -583,14 +584,19 @@
             <span class="muted" id="settings-last-sync"></span>
           </div>
           <div class="settings-actions" id="settings-account-actions"></div>
+          <div class="settings-actions">
+            <button id="btn-conflicts" class="ghost" title="What happened when two devices disagreed">🗂 Sync conflict history</button>
+          </div>
         </section>
 
         <section class="settings-section">
           <h4>Your data</h4>
+          <div class="backup-health" id="backup-health"></div>
           <p class="muted">Your bookshelf lives on this device. Keep a backup — export a file every so often, especially before big changes.</p>
           <div class="settings-actions">
             <button id="btn-export" class="ghost" title="Download your whole library as a JSON file">⬇ Export backup</button>
-            <button id="btn-import" class="ghost" title="Restore your library from a JSON backup">⬆ Import backup</button>
+            <button id="btn-export-full" class="ghost" title="One file with everything: books, settings, and the ePubs in your eReader">📦 Export everything</button>
+            <button id="btn-import" class="ghost" title="Restore your library from a JSON backup (either kind)">⬆ Import backup</button>
             <button id="btn-goodreads" class="ghost" title="Import your Goodreads library (CSV export)">📥 Import Goodreads CSV</button>
             <button id="btn-connect-file" class="ghost" title="Read &amp; write a bookshelf.json file on your computer">🔗 Connect a file</button>
           </div>
@@ -632,6 +638,17 @@
         </section>
 
       </div>
+    </div>
+  </div>
+
+  <!-- SYNC CONFLICT HISTORY -->
+  <div class="modal-backdrop" id="conflicts-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflicts-title">
+      <div class="modal-head">
+        <h3 id="conflicts-title">🗂 Sync conflict history</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="conflicts-body"></div>
     </div>
   </div>
 
@@ -828,6 +845,9 @@
         <button class="icon-btn" id="reader-font-minus" title="Smaller text">A−</button>
         <button class="icon-btn" id="reader-font-plus" title="Larger text">A+</button>
         <button class="icon-btn" id="reader-theme-btn" title="Paper / sepia / night">🎨</button>
+        <button class="icon-btn" id="reader-bookmark-btn" title="Bookmark this page">🔖</button>
+        <button class="icon-btn" id="reader-search-btn" title="Search in this book">🔍</button>
+        <button class="icon-btn" id="reader-toc-btn" title="Contents, bookmarks &amp; highlights">📑</button>
       </div>
     </div>
     <div class="reader-book" id="reader-book">
@@ -846,6 +866,35 @@
       <span class="reader-timer" id="reader-timer" title="Active reading time this session">⏱ 0:00</span>
     </div>
     <div class="reader-diag" id="reader-diag" hidden></div>
+    <!-- Contents / bookmarks / highlights / search drawer -->
+    <aside class="reader-drawer" id="reader-drawer" hidden>
+      <div class="rd-drawer-head">
+        <div class="rd-tabs" id="rd-tabs">
+          <button class="rd-tab" data-rdtab="toc">Contents</button>
+          <button class="rd-tab" data-rdtab="marks">Bookmarks</button>
+          <button class="rd-tab" data-rdtab="hls">Highlights</button>
+          <button class="rd-tab" data-rdtab="search">Search</button>
+        </div>
+        <button class="icon-btn" id="reader-drawer-close" aria-label="Close panel">✕</button>
+      </div>
+      <div class="rd-drawer-body" id="reader-drawer-body"></div>
+    </aside>
+    <!-- Floating actions for selected text -->
+    <div class="reader-selbar" id="reader-selbar" hidden>
+      <button id="sel-highlight">🖍 Highlight</button>
+      <button id="sel-quote">✍ Save quote</button>
+    </div>
+  </div>
+
+  <!-- eReader session summary (shown after closing a long-enough session) -->
+  <div class="modal-backdrop" id="reader-summary-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reader-summary-title">
+      <div class="modal-head">
+        <h3 id="reader-summary-title">📖 Nice session!</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="reader-summary-body"></div>
+    </div>
   </div>
 
   <div class="toast-stack" id="toast-stack"></div>

@@ -13,8 +13,11 @@
   const AUTH_KEY = "enkelas-bookshelf-auth";
   const SYNCBASE_KEY = "enkelas-bookshelf-syncbase";
   const LASTSYNC_KEY = "enkelas-bookshelf-lastsync";
+  const LASTEXPORT_KEY = "enkelas-last-export";
+  const BACKUPNAG_KEY = "enkelas-backup-nag";
+  const CONFLICTLOG_KEY = "enkelas-conflict-log";
   const SCHEMA_VERSION = 1;
-  const APP_VERSION = "2026.07.10"; // bump alongside the sw.js CACHE version on each release
+  const APP_VERSION = "2026.07.10b"; // bump alongside the sw.js CACHE version on each release
   const DAY = 86400000;
   // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
   // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -310,6 +313,21 @@
   }
   function loadLastSync() { try { return localStorage.getItem(LASTSYNC_KEY) || null; } catch (e) { return null; } }
   function markSynced() { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch (e) { /* ignore */ } }
+  function loadLastExport() { try { return localStorage.getItem(LASTEXPORT_KEY) || null; } catch (e) { return null; } }
+  function markExported() {
+    try { localStorage.setItem(LASTEXPORT_KEY, new Date().toISOString()); } catch (e) { /* ignore */ }
+    if (!$("#settings-modal").hidden) renderSettings();
+  }
+  // Every sync conflict (two devices disagreeing) is remembered, so "wait, where
+  // did that change go?" always has an answer. Capped, newest first.
+  function loadConflictLog() { try { return JSON.parse(localStorage.getItem(CONFLICTLOG_KEY)) || []; } catch (e) { return []; } }
+  function logConflict(where, choice) {
+    try {
+      const log = loadConflictLog();
+      log.unshift({ at: new Date().toISOString(), where, choice, books: state.books.length });
+      localStorage.setItem(CONFLICTLOG_KEY, JSON.stringify(log.slice(0, 20)));
+    } catch (e) { /* ignore */ }
+  }
   function relTimeShort(iso) {
     if (!iso) return "";
     const diff = Date.now() - new Date(iso).getTime();
@@ -374,6 +392,7 @@
         adoptServer(serverBlob, data.updatedAt);
       } else if (serverBlob && localHasBooks) {
         const useServer = confirm("This account already has a saved bookshelf.\n\nOK = load your account's books here (replaces what's on this device).\nCancel = keep this device's books and upload them to the account.");
+        logConflict("sign-in", useServer ? "kept the account's copy" : "kept this device's copy");
         if (useServer) adoptServer(serverBlob, data.updatedAt); else await pushData(true);
       } else {
         await pushData(true);
@@ -381,6 +400,7 @@
     } catch (e) { /* offline; will sync on next change/load */ }
     renderAccount();
     renderStorageStatus();
+    maybePendingClubJoin(); // an invite link may have been waiting on this sign-in
   }
 
   function schedulePush() {
@@ -402,6 +422,7 @@
       if (res.status === 401) { handleAuthExpired(); return false; }
       if (res.status === 409 && data && data.blob) {
         const useServer = confirm("Your bookshelf was changed on another device.\n\nOK = use that newer version here.\nCancel = overwrite it with this device's version.");
+        logConflict("sync push", useServer ? "took the other device's newer copy" : "overwrote with this device's copy");
         if (useServer) { adoptServer(data.blob, data.updatedAt); markSynced(); setSyncStatus("idle"); return true; }
         return pushData(true);
       }
@@ -919,11 +940,78 @@
     if (!items) return "";
     return `<div class="insight-card"><div class="insight-emoji">${emoji}</div><div><h4>${esc(title)}</h4>${items}</div></div>`;
   }
+  // ---- Shelf intelligence: what's sitting on the shelf, and what's missing --
+  function unreadOwnedBooks() {
+    return state.books.filter((b) => b.owned && b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0);
+  }
+  function shelfInsightLines() {
+    const lines = [];
+    const unread = unreadOwnedBooks();
+    if (unread.length) {
+      const oldest = unread.slice().sort((a, b) => new Date(a.addedAt || 0) - new Date(b.addedAt || 0))[0];
+      const months = Math.floor((Date.now() - new Date(oldest.addedAt || Date.now()).getTime()) / (30.44 * DAY));
+      lines.push(`<strong>${unread.length}</strong> owned book${unread.length === 1 ? "" : "s"} still unread${months >= 3 ? ` — <strong>${esc(oldest.title)}</strong> has waited longest (${months} months)` : ""}`);
+    }
+    // Series started but not finished — with the concrete next step.
+    const bySeries = {};
+    state.books.forEach((b) => { if (b.seriesName) { const k = b.seriesName.toLowerCase(); (bySeries[k] = bySeries[k] || []).push(b); } });
+    let openSeries = 0, ex = null;
+    Object.values(bySeries).forEach((list) => {
+      if (!list.some((b) => b.status === "finished")) return;
+      const next = list.filter((b) => b.status !== "finished" && b.status !== "dnf")
+        .sort((a, b) => (a.seriesNumber == null ? 999 : a.seriesNumber) - (b.seriesNumber == null ? 999 : b.seriesNumber))[0];
+      if (next) { openSeries++; if (!ex) ex = next; }
+    });
+    if (openSeries) lines.push(`<strong>${openSeries}</strong> series waiting to be continued${ex ? ` — next up: <strong>${esc(ex.title)}</strong>` : ""}`);
+    const dupes = duplicateGroups();
+    if (dupes.length) lines.push(`<strong>${dupes.length}</strong> possible duplicate edition${dupes.length === 1 ? "" : "s"} — Shelf Doctor can merge them`);
+    // Genre gap: a favourite genre with nothing waiting on the TBR/shelf.
+    const finished = state.books.filter((b) => b.status === "finished");
+    if (finished.length >= 3) {
+      const tally = {};
+      finished.forEach((b) => (b.tags || []).forEach((t) => { tally[t] = (tally[t] || 0) + 1; }));
+      const waiting = new Set();
+      state.books.filter((b) => b.status === "want").concat(unread).forEach((b) => (b.tags || []).forEach((t) => waiting.add(t.toLowerCase())));
+      const gap = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 3).find(([t]) => !waiting.has(t.toLowerCase()));
+      if (gap) lines.push(`You've finished <strong>${gap[1]} ${esc(gap[0])}</strong> books but have none waiting — a gap on your shelf`);
+      // Author gap: someone you rate highly with nothing of theirs queued.
+      const byAuthor = {};
+      finished.forEach((b) => { const k = (b.author || "").trim(); if (k && b.rating) { (byAuthor[k] = byAuthor[k] || []).push(Number(b.rating)); } });
+      const tbrAuthors = new Set(state.books.filter((b) => b.status === "want").concat(unread).map((b) => (b.author || "").trim().toLowerCase()));
+      const fav = Object.entries(byAuthor)
+        .filter(([, rs]) => rs.length >= 2 && rs.reduce((a, r) => a + r, 0) / rs.length >= 4)
+        .sort((a, b) => b[1].length - a[1].length)
+        .find(([a]) => !tbrAuthors.has(a.toLowerCase()));
+      if (fav) lines.push(`You rate <strong>${esc(fav[0])}</strong> ${(fav[1].reduce((a, r) => a + r, 0) / fav[1].length).toFixed(1)}★ on average — nothing of theirs is on your list`);
+    }
+    return lines;
+  }
+  // A pick that fits HOW the reader is reading right now (recent session size),
+  // with the mood of recent sessions as colour.
+  function moodMatchLine() {
+    const cutoff = Date.now() - 21 * DAY;
+    const recent = [];
+    state.books.forEach((b) => (b.logs || []).forEach((l) => { if (new Date(l.date).getTime() >= cutoff && l.pages > 0) recent.push(l); }));
+    if (recent.length < 3) return "";
+    const avg = recent.reduce((a, l) => a + l.pages, 0) / recent.length;
+    const moods = recent.map((l) => l.mood).filter(Boolean);
+    const topMood = moods.length ? moods.sort((a, b) => moods.filter((m) => m === b).length - moods.filter((m) => m === a).length)[0] : "";
+    const pool = state.books.filter((b) => (b.status === "want" || (b.owned && b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0)) && b.totalPages);
+    if (!pool.length) return "";
+    const short = avg < 22;
+    const pick = pool.slice().sort((a, b) => short ? a.totalPages - b.totalPages : b.totalPages - a.totalPages)[0];
+    return `Lately you read in ${short ? "short bursts" : "long, deep sessions"}${topMood ? ` (mostly feeling ${esc(topMood)})` : ""} — <strong>${esc(pick.title)}</strong> (${num(pick.totalPages)}p) fits that rhythm`;
+  }
+
   function renderInsights() {
     const el = $("#insights");
     if (!el) return;
     const s = sessionInsights(), t = tasteProfile(), nudges = coachNudges();
     const cards = [];
+    const shelf = shelfInsightLines();
+    const mood = moodMatchLine();
+    if (shelf.length) cards.push(insightCard("🧭", "Shelf insights", shelf));
+    if (mood) cards.push(insightCard("🎯", "For right now", [mood]));
     if (s) cards.push(insightCard("⏰", "Your reading rhythm", [
       s.bestTime ? `You read most in the <strong>${s.bestTime.toLowerCase()}</strong>` : "",
       s.bestDay ? `Your biggest reading day is <strong>${s.bestDay}</strong>` : "",
@@ -1020,7 +1108,102 @@
     }).join("");
   }
 
+  // ---- "Read next" — a fully local recommender over the TBR ----------------
+  // Scores every want-list book against the reader's own history (ratings,
+  // genres, authors, series position, DNFs, ownership, expectations, TBR age).
+  // Nothing leaves the device; with too little history it stays quiet.
+  function readNextPicks(books) {
+    const src = books || state.books;
+    const finished = src.filter((b) => b.status === "finished");
+    const dnf = src.filter((b) => b.status === "dnf");
+    const want = src.filter((b) => b.status === "want");
+    if (want.length < 2 || finished.length < 2) return [];
+
+    // Taste weights: loved = +2 … hated = -2; an unrated finish is a mild +.
+    const tasteOf = (b) => (b.rating ? Number(b.rating) - 3 : 0.5);
+    const genre = {}; // tag -> {sum, n}
+    const author = {}; // author -> {sum, n, dnf}
+    finished.forEach((b) => {
+      const w = tasteOf(b);
+      (b.tags || []).forEach((t) => { const k = t.toLowerCase(); const e = genre[k] = genre[k] || { sum: 0, n: 0 }; e.sum += w; e.n++; });
+      const ak = (b.author || "").trim().toLowerCase();
+      if (ak) { const e = author[ak] = author[ak] || { sum: 0, n: 0, dnf: 0 }; e.sum += w; e.n++; }
+    });
+    dnf.forEach((b) => {
+      (b.tags || []).forEach((t) => { const k = t.toLowerCase(); const e = genre[k] = genre[k] || { sum: 0, n: 0 }; e.sum -= 1; e.n++; });
+      const ak = (b.author || "").trim().toLowerCase();
+      if (ak) { const e = author[ak] = author[ak] || { sum: 0, n: 0, dnf: 0 }; e.dnf++; }
+    });
+    // Furthest finished installment per series, for continuation boosts.
+    const seriesDone = {};
+    src.forEach((b) => {
+      if (b.status === "finished" && b.seriesName) {
+        const k = b.seriesName.toLowerCase();
+        seriesDone[k] = Math.max(seriesDone[k] || 0, b.seriesNumber != null ? Number(b.seriesNumber) : 0.5);
+      }
+    });
+    const dnfSeries = new Set(dnf.filter((b) => b.seriesName).map((b) => b.seriesName.toLowerCase()));
+
+    const now = Date.now();
+    const picks = want.map((b) => {
+      let score = 0; const why = [];
+      // Genres: confidence-scaled average taste per tag (one 5★ book shouldn't dominate).
+      let bestTag = null, bestTagScore = 0;
+      (b.tags || []).forEach((t) => {
+        const e = genre[t.toLowerCase()];
+        if (!e || !e.n) return;
+        const s = (e.sum / e.n) * Math.min(1, e.n / 3);
+        score += s * 2;
+        if (s > bestTagScore) { bestTag = t; bestTagScore = s; }
+      });
+      if (bestTag && bestTagScore >= 0.3) why.push(`you rate ${bestTag} highly`);
+      // Author: your average with them, minus a penalty per DNF of theirs.
+      const ae = author[(b.author || "").trim().toLowerCase()];
+      if (ae) {
+        const s = (ae.n ? ae.sum / ae.n : 0) * Math.min(1, ae.n / 2) - ae.dnf * 1.5;
+        score += s * 3;
+        if (s >= 0.5) why.push(`more from ${b.author}`);
+      }
+      // Series: the very next installment is the strongest signal there is.
+      if (b.seriesName) {
+        const k = b.seriesName.toLowerCase();
+        const done = seriesDone[k] || 0;
+        if (done && b.seriesNumber != null && Number(b.seriesNumber) === Math.floor(done) + 1) { score += 4; why.push(`next in ${b.seriesName}`); }
+        else if (done) { score += 0.5; }
+        if (dnfSeries.has(k)) score -= 2;
+      }
+      if (b.owned) { score += 1.5; why.push("already on your shelf"); }
+      if (b.expectation) { score += Number(b.expectation) - 3; if (Number(b.expectation) >= 4) why.push("you had high hopes for it"); }
+      const months = (now - new Date(b.addedAt || now).getTime()) / (30.44 * 24 * 3600 * 1000);
+      if (months >= 6) { score += Math.min(2, months / 12); why.push(`${Math.round(months)} months on your list`); }
+      return { book: b, score: Math.round(score * 100) / 100, why };
+    });
+    picks.sort((a, b) => b.score - a.score);
+    return picks.filter((p) => p.score > 0.5).slice(0, 3);
+  }
+
+  function renderReadNext() {
+    const box = $("#read-next");
+    if (!box) return;
+    const picks = readNextPicks();
+    if (!picks.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="read-next">
+      <h3 class="rn-title">✨ Read next? <span class="muted rn-sub">picked from your list, just for you — nothing leaves this device</span></h3>
+      <div class="rn-row">${picks.map(({ book: b, why }) => `
+        <div class="rn-card" data-id="${b.id}">
+          ${coverHTML(b)}
+          <div class="rn-meta">
+            <strong class="rn-book">${esc(b.title)}</strong>
+            <span class="muted">${esc(b.author) || "Unknown author"}</span>
+            <div class="rn-why">${why.slice(0, 3).map((w) => `<span class="rn-chip">${esc(w)}</span>`).join("")}</div>
+            <button class="mini primary" data-action="start" data-id="${b.id}">▶ Start reading</button>
+          </div>
+        </div>`).join("")}</div>
+    </div>`;
+  }
+
   function renderWant() {
+    renderReadNext();
     const all = state.books.filter((b) => b.status === "want");
     const list = all.filter((b) => bookMatches(b, wantQuery)).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
     const empty = $("#want-empty");
@@ -2217,6 +2400,66 @@
       ? (last ? "Last synced " + relTimeLong(last) : "Not synced yet")
       : "";
     $("#settings-version").textContent = "Enkela's Bookshelf · version " + APP_VERSION;
+    renderBackupHealth();
+  }
+  // A tiny at-a-glance "is my data safe?" panel: what's here, when it was last
+  // backed up, whether the browser promised to keep it.
+  function renderBackupHealth() {
+    const box = $("#backup-health");
+    if (!box) return;
+    const logs = state.books.reduce((n, b) => n + (b.logs || []).length, 0);
+    const lastX = loadLastExport();
+    const days = lastX ? Math.floor((Date.now() - new Date(lastX).getTime()) / DAY) : null;
+    const stale = lastX === null || days > 30;
+    const rows = [
+      `<div class="bh-row"><span>📚</span><span>${state.books.length} book${state.books.length === 1 ? "" : "s"} · ${num(logs)} reading session${logs === 1 ? "" : "s"} on this device</span></div>`,
+      `<div class="bh-row${stale ? " warn" : ""}"><span>🛟</span><span>Last backup export: <strong>${lastX ? relTimeLong(lastX) : "never"}</strong>${stale ? " — a fresh one wouldn't hurt" : ""}</span></div>`,
+      `<div class="bh-row" id="bh-persist"><span>🔒</span><span>Checking storage protection…</span></div>`,
+      `<div class="bh-row" id="bh-epubs" hidden><span>📕</span><span></span></div>`,
+    ];
+    box.innerHTML = rows.join("");
+    if (navigator.storage && navigator.storage.persisted) {
+      navigator.storage.persisted().then((p) => {
+        const el = $("#bh-persist");
+        if (el) el.innerHTML = `<span>${p ? "🔒" : "⚠️"}</span><span>${p ? "The browser granted persistent storage — it won't auto-clear your data." : "Storage isn't marked persistent yet — installing the app (Add to Home Screen) protects it."}</span>`;
+      }).catch(() => { const el = $("#bh-persist"); if (el) el.hidden = true; });
+    } else { const el = $("#bh-persist"); if (el) el.hidden = true; }
+    if (window.EReader && window.EReader.exportAll) {
+      window.EReader.exportAll().then((recs) => {
+        const el = $("#bh-epubs");
+        if (!el || !recs.length) return;
+        const bytes = recs.reduce((n, r) => n + ((r.data && r.data.byteLength) || 0), 0);
+        const size = bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(1) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB";
+        el.hidden = false;
+        el.lastElementChild.textContent = recs.length + " ePub" + (recs.length === 1 ? "" : "s") + " in the eReader (" + size + ") — only “Export everything” includes these.";
+      }).catch(() => { /* ignore */ });
+    }
+  }
+  function openConflicts() {
+    const body = $("#conflicts-body");
+    const log = loadConflictLog();
+    body.innerHTML = log.length
+      ? `<p class="muted">When two devices change the bookshelf at the same time, you pick a winner. Every time that happened is listed here.</p>`
+        + log.map((c) => `<div class="conflict-row"><strong>${esc(relTimeLong(c.at))}</strong> · during ${esc(c.where)} → ${esc(c.choice)} <span class="muted">(${c.books} books after)</span></div>`).join("")
+      : `<p class="empty">No sync conflicts so far — every change has merged cleanly. 🎉</p>`;
+    showModal("conflicts-modal");
+  }
+  // A gentle, throttled nudge when the library has grown but no export exists
+  // (or the last one is getting old). Signed-in users get more slack — the
+  // account itself is a live backup.
+  function maybeBackupReminder() {
+    try {
+      if (state.books.length < 5) return;
+      const now = Date.now();
+      if (now - Number(localStorage.getItem(BACKUPNAG_KEY) || 0) < 13 * DAY) return;
+      const lastX = loadLastExport();
+      const ageDays = lastX ? (now - new Date(lastX).getTime()) / DAY : Infinity;
+      if (ageDays < ((syncEnabled() && auth) ? 60 : 30)) return;
+      localStorage.setItem(BACKUPNAG_KEY, String(now));
+      toast("🛟", "Backup reminder", lastX
+        ? "It's been " + Math.round(ageDays) + " days since your last export — Settings → ⬇ Export backup."
+        : "You've never exported a backup — Settings → ⬇ Export backup takes two taps.");
+    } catch (e) { /* ignore */ }
   }
   function openSettings() { closeAccountMenu(); renderSettings(); showModal("settings-modal"); }
   function clearLocalData() {
@@ -2350,13 +2593,56 @@
   // Per-club "last seen" (unread dots), stored locally.
   function loadClubSeen() { try { return JSON.parse(localStorage.getItem("enkelas-club-seen")) || {}; } catch (e) { return {}; } }
   function markClubSeen(clubId) { try { const s = loadClubSeen(); s[clubId] = new Date().toISOString(); localStorage.setItem("enkelas-club-seen", JSON.stringify(s)); } catch (e) { /* ignore */ } }
-  function openClubs() {
+  // Shows the clubs modal (auth-gated) without loading anything into it yet.
+  // Returns false when the user still needs to sign in first.
+  function openClubsShell() {
     closeAccountMenu();
-    if (!syncEnabled()) { toast("ℹ️", "Clubs need an account", "This feature syncs with friends via your account."); return; }
-    if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in first", "Reading clubs sync with friends through your account."); return; }
+    if (!syncEnabled()) { toast("ℹ️", "Clubs need an account", "This feature syncs with friends via your account."); return false; }
+    if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in first", "Reading clubs sync with friends through your account."); return false; }
     currentClubId = null;
     showModal("clubs-modal");
+    return true;
+  }
+  function openClubs() {
+    if (!openClubsShell()) return;
     renderClubsListScreen();
+  }
+  function clubDisplayName() { return (auth && auth.user && auth.user.fullName) || "You"; }
+  async function joinClubByCode(code) {
+    const body = $("#clubs-body");
+    if (body) body.innerHTML = `<p class="muted">Joining club…</p>`;
+    try {
+      const { res, data } = await clubApi("/join", { method: "POST", body: JSON.stringify({ joinCode: code, displayName: clubDisplayName() }) });
+      if (res.ok && data.clubId) { toast("👥", "Joined the club!", ""); openClub(data.clubId); return; }
+      toast("⚠️", "Couldn't join", (data && data.error) || "Check the code and try again.");
+    } catch (e) {
+      toast("📴", "Couldn't reach the club server", "Check your connection and try the code again.");
+    }
+    renderClubsListScreen();
+  }
+  // Invite links: <app URL>#join/CODE — opening one joins (or prompts sign-in first).
+  const PENDING_JOIN_KEY = "enkelas-club-pendingjoin";
+  function clubInviteUrl(code) {
+    if (!/^https?:/.test(location.protocol)) return ""; // file:// has no shareable origin
+    return location.origin + location.pathname + "#join/" + encodeURIComponent(code);
+  }
+  async function shareClubInvite(code, bookTitle) {
+    const url = clubInviteUrl(code);
+    const text = `Join my reading club${bookTitle ? ` for “${bookTitle}”` : ""} — invite code ${code}`;
+    if (navigator.share) {
+      try { await navigator.share(url ? { title: "Reading club invite", text, url } : { title: "Reading club invite", text }); return; }
+      catch (e) { if (e && e.name === "AbortError") return; /* fall through to clipboard */ }
+    }
+    try { await navigator.clipboard.writeText(url ? text + "\n" + url : text); toast("📋", "Invite copied", "Send it to a friend."); }
+    catch (e) { toast("ℹ️", "Invite code " + code, url); }
+  }
+  function maybePendingClubJoin() {
+    let code = null;
+    try { code = localStorage.getItem(PENDING_JOIN_KEY); } catch (e) { /* ignore */ }
+    if (!code || !auth || !syncEnabled()) return;
+    try { localStorage.removeItem(PENDING_JOIN_KEY); } catch (e) { /* ignore */ }
+    closeModals();
+    if (openClubsShell()) joinClubByCode(code);
   }
   function stopClubPoll() { clearTimeout(clubPollTimer); clubPollTimer = null; closeClubWs(); }
   async function renderClubsListScreen() {
@@ -2425,7 +2711,7 @@
       <button class="mini" data-club-back>← All clubs</button>
       <h3 class="club-title">${esc(d.club.book_title)}</h3>
       ${d.club.book_author ? `<p class="muted club-sub">${esc(d.club.book_author)}</p>` : ""}
-      <div class="club-members">${members.map((m) => `<span class="club-chip"${m.uid === me.uid ? ' data-me="1"' : ""} title="${esc(m.display_name || "")} · ${m.progress_pct}%${m.role === "host" ? " · host" : ""}">${esc(firstName(m.display_name))} ${m.progress_pct}%</span>`).join("")}</div>
+      <div class="club-members">${members.map((m) => clubMemberHTML(m, me.uid)).join("")}</div>
       <div class="club-progress">
         <label for="club-progress-range">You're <strong id="club-my-pct">${myPct}</strong>% through</label>
         <input type="range" id="club-progress-range" min="0" max="100" value="${myPct}" />
@@ -2441,8 +2727,18 @@
       <div class="club-foot">
         <span class="muted">Invite code: <strong>${esc(d.joinCode || "—")}</strong></span>
         <button class="mini" data-club-copy="${esc(d.joinCode || "")}">Copy code</button>
+        <button class="mini" data-club-share="${esc(d.joinCode || "")}" data-club-share-title="${esc(d.club.book_title || "")}">📤 Share invite</button>
         <button class="mini danger" data-club-leave="${esc(d.club.id)}">Leave</button>
       </div>`;
+  }
+  // One row per member: name (host gets a crown) + progress bar + %.
+  function clubMemberHTML(m, meUid) {
+    const pct = Math.max(0, Math.min(100, Number(m.progress_pct) || 0));
+    return `<div class="club-member${m.uid === meUid ? " me" : ""}" title="${esc(m.display_name || "")}${m.role === "host" ? " · host" : ""}">
+      <span class="cm-name">${esc(firstName(m.display_name))}${m.role === "host" ? " 👑" : ""}</span>
+      <span class="cm-bar"><span class="cm-fill" style="width:${pct}%"></span></span>
+      <span class="cm-pct">${pct}%</span>
+    </div>`;
   }
   const CLUB_REACTS = ["❤️", "🤯", "😂", "😢", "👀"];
   function clubCommentHTML(c) {
@@ -3536,23 +3832,81 @@
   // ---------------------------------------------------------------------------
   // Data import / export / file connect / Goodreads
   // ---------------------------------------------------------------------------
-  function exportJSON() {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  function downloadBlob(text, filename) {
+    const blob = new Blob([text], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "enkelas-bookshelf.json"; a.click();
+    a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
+  }
+  function exportJSON() {
+    downloadBlob(JSON.stringify(state, null, 2), "enkelas-bookshelf.json");
+    markExported();
     toast("⬇️", "Exported", "enkelas-bookshelf.json downloaded");
+  }
+  // Base64 helpers for bundling ePub bytes into the "export everything" file.
+  function bufToB64(buf) {
+    const u8 = new Uint8Array(buf);
+    let s = "";
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function b64ToBuf(s) {
+    const bin = atob(s);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8.buffer;
+  }
+  // One file with EVERYTHING: books, preferences, and the eReader's ePubs
+  // (bookmarks, highlights and reading stats included) — a whole-life backup.
+  async function exportEverything() {
+    const btn = $("#btn-export-full");
+    if (btn) { btn.disabled = true; btn.textContent = "Packing…"; }
+    try {
+      const bundle = {
+        kind: "enkelas-full-backup", version: 1,
+        exportedAt: new Date().toISOString(),
+        appVersion: APP_VERSION,
+        state,
+        prefs: { theme: loadTheme() },
+        epubs: [],
+      };
+      if (window.EReader && window.EReader.exportAll) {
+        const recs = await window.EReader.exportAll();
+        bundle.epubs = recs.map((r) => Object.assign({}, r, { data: bufToB64(r.data) }));
+      }
+      downloadBlob(JSON.stringify(bundle), "enkelas-bookshelf-full.json");
+      markExported();
+      toast("📦", "Everything exported", state.books.length + " books" + (bundle.epubs.length ? " + " + bundle.epubs.length + " ePub" + (bundle.epubs.length === 1 ? "" : "s") : ""));
+    } catch (e) {
+      console.warn(e);
+      toast("⚠️", "Export failed", "Try the plain backup instead.");
+    }
+    if (btn) { btn.disabled = false; btn.textContent = "📦 Export everything"; }
   }
   function importJSON(file) {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        state = normalize(JSON.parse(reader.result));
+        const data = JSON.parse(reader.result);
+        const isFull = data && data.kind === "enkelas-full-backup";
+        state = normalize(isFull ? data.state : data);
         knownBadges = new Set();
         commit();
         knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
-        toast("⬆️", "Imported", state.books.length + " books loaded");
+        let epubNote = "";
+        if (isFull && Array.isArray(data.epubs) && data.epubs.length && window.EReader && window.EReader.importAll) {
+          try {
+            await window.EReader.importAll(data.epubs.map((r) => Object.assign({}, r, { data: b64ToBuf(r.data) })));
+            epubNote = " · " + data.epubs.length + " ePub" + (data.epubs.length === 1 ? "" : "s") + " restored";
+          } catch (e2) { epubNote = " · ePubs couldn't be restored"; }
+        }
+        if (isFull && data.prefs && data.prefs.theme) {
+          const th = data.prefs.theme === "dark" ? "dark" : "light";
+          try { localStorage.setItem(THEME_KEY, th); } catch (e2) { /* ignore */ }
+          applyTheme(th);
+        }
+        toast("⬆️", "Imported", state.books.length + " books loaded" + epubNote);
       } catch (e) { toast("⚠️", "Import failed", "That file isn't valid bookshelf JSON."); }
     };
     reader.readAsText(file);
@@ -3718,8 +4072,8 @@
     }
     const addBtn = e.target.closest("[data-add]");
     if (addBtn) { openBookModal({ status: addBtn.dataset.add }); return; }
-    // Tapping anywhere else on a book card opens its detail page.
-    const card = e.target.closest(".book-card[data-id]");
+    // Tapping anywhere else on a book card (or a Read-next pick) opens its detail page.
+    const card = e.target.closest(".book-card[data-id], .rn-card[data-id]");
     if (card && !e.target.closest("button, a, input, select, textarea, details, summary, label")) {
       const book = state.books.find((b) => b.id === card.dataset.id);
       if (book) openBookPage(book);
@@ -3921,16 +4275,19 @@
     $("#storage-status").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSettings(); } });
     $("#btn-clear-data").addEventListener("click", clearLocalData);
     $("#btn-refresh-app").addEventListener("click", refreshAppFiles);
+    $("#btn-export-full").addEventListener("click", exportEverything);
+    $("#btn-conflicts").addEventListener("click", () => { closeModals(); openConflicts(); });
     $("#btn-shelf-doctor").addEventListener("click", () => { closeModals(); openShelfDoctor(); });
     // Reading clubs
     $("#btn-clubs").addEventListener("click", () => { closeModals(); openClubs(); });
-    const clubName = () => (auth && auth.user && auth.user.fullName) || "You";
     $("#clubs-body").addEventListener("click", (e) => {
       const react = e.target.closest("[data-react]"); if (react) { toggleReaction(react.dataset.comment, react.dataset.react); return; }
       const open = e.target.closest("[data-club-open]"); if (open) { openClub(open.dataset.clubOpen); return; }
       if (e.target.closest("[data-club-back]")) { renderClubsListScreen(); return; }
       const leave = e.target.closest("[data-club-leave]");
       if (leave) { if (confirm("Leave this club? You can rejoin later with the code.")) clubApi("/" + leave.dataset.clubLeave + "/leave", { method: "POST" }).then(() => { toast("👋", "Left the club", ""); renderClubsListScreen(); }); return; }
+      const share = e.target.closest("[data-club-share]");
+      if (share && share.dataset.clubShare) { shareClubInvite(share.dataset.clubShare, share.dataset.clubShareTitle || ""); return; }
       const copy = e.target.closest("[data-club-copy]");
       if (copy && copy.dataset.clubCopy) { try { navigator.clipboard.writeText(copy.dataset.clubCopy); } catch (e2) { /* ignore */ } toast("📋", "Invite code copied", copy.dataset.clubCopy); return; }
     });
@@ -3938,12 +4295,11 @@
       e.preventDefault();
       if (e.target.id === "club-create-form") {
         const title = $("#club-book-title").value.trim(); if (!title) return;
-        clubApi("", { method: "POST", body: JSON.stringify({ bookTitle: title, bookAuthor: $("#club-book-author").value.trim(), displayName: clubName() }) })
+        clubApi("", { method: "POST", body: JSON.stringify({ bookTitle: title, bookAuthor: $("#club-book-author").value.trim(), displayName: clubDisplayName() }) })
           .then(({ res, data }) => { if (res.ok && data.clubId) { toast("👥", "Club created", "Invite code " + data.joinCode); openClub(data.clubId); } else toast("⚠️", "Couldn't create the club", (data && data.error) || ""); });
       } else if (e.target.id === "club-join-form") {
         const code = $("#club-join-code").value.trim().toUpperCase(); if (!code) return;
-        clubApi("/join", { method: "POST", body: JSON.stringify({ joinCode: code, displayName: clubName() }) })
-          .then(({ res, data }) => { if (res.ok && data.clubId) { toast("👥", "Joined the club!", ""); openClub(data.clubId); } else toast("⚠️", "Couldn't join", (data && data.error) || ""); });
+        joinClubByCode(code);
       } else if (e.target.id === "club-comment-form") {
         postClubComment();
       }
@@ -4077,6 +4433,18 @@
     const deepBook = deepLink && state.books.find((x) => x.id === decodeURIComponent(deepLink[1]));
     if (deepBook) openBookPage(deepBook, { push: false });
     else if (deepLink) histCleanHash();
+    // Deep link: a #join/CODE invite URL joins that club (after sign-in if needed).
+    const joinLink = (location.hash || "").match(/^#join\/([A-Za-z0-9]{4,12})$/i);
+    if (joinLink) {
+      histCleanHash();
+      const code = joinLink[1].toUpperCase();
+      if (syncEnabled() && auth) { if (openClubsShell()) joinClubByCode(code); }
+      else if (syncEnabled()) {
+        try { localStorage.setItem(PENDING_JOIN_KEY, code); } catch (e) { /* ignore */ }
+        openAuthModal("login");
+        toast("👥", "You've been invited to a club", "Sign in and you'll join automatically.");
+      }
+    }
     renderAccount();
     if (syncEnabled() && auth) pullData();
     setupAutoSync();
@@ -4086,6 +4454,7 @@
     // After the app settles (and any sync pull has a head start), quietly
     // fill in covers that the Goodreads import / ISBN lookup couldn't find.
     setTimeout(() => backfillCovers(), 3000);
+    setTimeout(() => maybeBackupReminder(), 8000);
   }
 
   // Small bridge so the eReader (reader.js) can list books and save sessions.
@@ -4128,10 +4497,22 @@
       checkNewBadges();
       return lg.id;
     },
+    // The reader's "save quote" lands the selection straight on the linked book.
+    addQuote(bookId, text) {
+      const b = state.books.find((x) => x.id === bookId);
+      const t = String(text || "").trim();
+      if (!b || !t) return false;
+      b.quotes = b.quotes || [];
+      b.quotes.push({ id: uid(), text: t.slice(0, 2000), page: null });
+      commit();
+      return true;
+    },
+    // Reading streak for the reader's session summary.
+    streak() { return readingStreak(); },
   };
 
   // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-  window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak };
+  window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf };
 
   document.addEventListener("DOMContentLoaded", init);
 })();

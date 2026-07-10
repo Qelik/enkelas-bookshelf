@@ -300,9 +300,14 @@ html[data-theme="dark"] .series-flag { color: #e08b7d; }
 .club-form h4 { margin: 0 0 2px; font-size: 14px; }
 .club-title { margin: 10px 0 0; }
 .club-sub { margin: 0 0 6px; }
-.club-members { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
-.club-chip { font-size: 12.5px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
-.club-chip[data-me] { background: var(--accent-soft); border-color: var(--accent-2); font-weight: 600; }
+.club-members { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
+.club-member { display: grid; grid-template-columns: minmax(72px, auto) 1fr 42px; align-items: center; gap: 10px; font-size: 13px; }
+.club-member .cm-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.club-member.me .cm-name { font-weight: 700; }
+.club-member .cm-bar { height: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.club-member .cm-fill { display: block; height: 100%; background: var(--accent-2); border-radius: 999px; transition: width .3s ease; }
+.club-member.me .cm-fill { background: var(--accent); }
+.club-member .cm-pct { text-align: right; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .club-progress { margin: 10px 0 14px; }
 .club-progress label { display: block; font-size: 13.5px; margin-bottom: 4px; }
 .club-progress input[type=range] { width: 100%; accent-color: var(--accent); }
@@ -321,6 +326,29 @@ html[data-theme="dark"] .cc-react.on { background: rgba(201,138,75,.22); }
 .club-comment-form .input { flex: 1; }
 .club-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
 @media (max-width: 520px) { .club-forms { grid-template-columns: 1fr; } }
+
+/* Backup health + conflict history */
+.backup-health { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.bh-row { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; }
+.bh-row.warn { color: #9a6a1f; }
+html[data-theme="dark"] .bh-row.warn { color: #e0b05c; }
+.conflict-row { padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.conflict-row:last-child { border-bottom: none; }
+
+/* "Read next" — local TBR picks */
+.read-next { background: var(--accent-soft); border: 1px solid var(--accent-2); border-radius: 14px; padding: 14px 16px; margin-bottom: 18px; }
+.rn-title { margin: 0 0 10px; font-size: 16px; }
+.rn-sub { font-weight: 400; font-size: 12.5px; }
+.rn-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.rn-card { display: flex; gap: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px; cursor: pointer; }
+.rn-card:hover { border-color: var(--accent-2); }
+.rn-card .cover { width: 52px; height: 78px; min-width: 52px; font-size: 8px; border-radius: 6px; }
+.rn-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rn-book { font-size: 14px; line-height: 1.25; }
+.rn-why { display: flex; flex-wrap: wrap; gap: 4px; }
+.rn-chip { font-size: 11.5px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--ink-soft); }
+.rn-meta .mini { margin-top: auto; align-self: flex-start; }
+html[data-theme="dark"] .read-next { background: rgba(201, 138, 75, .12); }
 
 /* Community recommendations */
 .linklike { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
@@ -968,6 +996,65 @@ html[data-theme="dark"] .lent-badge.overdue { background: #40291a; color: #e0a07
     linear-gradient(90deg, rgba(0,0,0,.16), transparent 22%, transparent 75%, rgba(0,0,0,.06)),
     var(--rd-page);
 }
+/* Highlights + search-hit flash inside the book */
+.reader-content mark.rd-hl { background: rgba(240, 200, 80, .55); color: inherit; border-radius: 2px; padding: 0 1px; }
+#reader-overlay[data-rd-theme="sepia"] .reader-content mark.rd-hl { background: rgba(214, 158, 46, .45); }
+#reader-overlay[data-rd-theme="night"] .reader-content mark.rd-hl { background: rgba(240, 200, 80, .28); }
+.reader-content mark.rd-flash { background: rgba(120, 190, 255, .55); color: inherit; border-radius: 2px; animation: rd-flash-pulse 1.1s ease-in-out 2; }
+#reader-overlay[data-rd-theme="night"] .reader-content mark.rd-flash { background: rgba(120, 190, 255, .32); }
+@keyframes rd-flash-pulse { 50% { background: rgba(120, 190, 255, .18); } }
+
+/* Selection action bar (highlight / save quote) */
+.reader-selbar {
+  position: fixed; z-index: 140;
+  display: flex; gap: 6px; padding: 6px;
+  background: var(--toast-bg, #2c2722); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.35);
+}
+.reader-selbar button { background: transparent; border: none; color: #f5efe2; font-size: 13.5px; font-weight: 600; padding: 6px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.reader-selbar button:hover { background: rgba(255,255,255,.12); }
+
+/* Contents / bookmarks / highlights / search drawer */
+.reader-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 15;
+  width: min(360px, 92vw);
+  display: flex; flex-direction: column;
+  background: var(--rd-page); color: var(--rd-ink);
+  border-left: 1px solid rgba(0,0,0,.15);
+  box-shadow: -12px 0 30px rgba(20,12,2,.25);
+  padding-top: var(--safe-top);
+}
+.rd-drawer-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px; border-bottom: 1px solid rgba(0,0,0,.12); }
+.rd-drawer-head .icon-btn { color: inherit; }
+.rd-tabs { flex: 1; display: flex; gap: 2px; overflow-x: auto; }
+.rd-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: inherit; opacity: .65; font-weight: 600; font-size: 13px; padding: 7px 9px; cursor: pointer; white-space: nowrap; }
+.rd-tab.active { opacity: 1; border-bottom-color: currentColor; }
+.rd-drawer-body { flex: 1; overflow-y: auto; padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 4px; }
+.rd-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  text-align: left; background: transparent; border: none; color: inherit;
+  font: inherit; font-size: 13.5px; line-height: 1.45;
+  padding: 8px 9px; border-radius: 8px; cursor: pointer;
+}
+.rd-row:hover { background: rgba(0,0,0,.07); }
+#reader-overlay[data-rd-theme="night"] .rd-row:hover { background: rgba(255,255,255,.07); }
+.rd-row.current { background: rgba(0,0,0,.09); font-weight: 700; }
+#reader-overlay[data-rd-theme="night"] .rd-row.current { background: rgba(255,255,255,.10); }
+.rd-row-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rd-row-main .muted { color: inherit; opacity: .6; font-size: 12px; }
+.rd-row .rd-del { color: inherit; opacity: .6; }
+.rd-row .rd-del:hover { opacity: 1; }
+.rd-search { display: flex; gap: 6px; margin: 4px 0 8px; }
+.rd-search .input { flex: 1; background: rgba(255,255,255,.55); color: inherit; }
+#reader-overlay[data-rd-theme="night"] .rd-search .input { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.2); }
+
+/* Bookmark button lights up on a bookmarked page */
+#reader-bookmark-btn.on { background: rgba(240, 200, 80, .45); border-radius: 8px; }
+
+/* Session summary rows */
+.rs-book { margin: 0 0 10px; font-style: italic; }
+.rs-row { display: flex; align-items: center; gap: 10px; font-size: 15px; margin: 8px 0; }
+
 .reader-turnzone { position: absolute; top: 0; bottom: 0; width: 18%; z-index: 8; cursor: pointer; background: transparent; border: none; }
 .reader-turnzone.prev { left: 0; }
 .reader-turnzone.next { right: 0; }
@@ -983,6 +1070,10 @@ html[data-theme="dark"] .lent-badge.overdue { background: #40291a; color: #e0a07
   .reader-page, .leaf-face { padding: 22px 24px; }
   #reader-overlay { --rd-fs: 17px; }
   .reader-bottombar { flex-wrap: wrap; gap: 6px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  /* six tools now live up top — compact them so the book title keeps room */
+  .reader-topbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
+  .reader-tools { gap: 0; }
+  .reader-tools .icon-btn { padding: 8px 5px; font-size: 13px; }
   .journey-feed::before { left: 20px; }
   .j-day { padding-left: 36px; }
   .kv-form .input { flex-basis: 100%; }
