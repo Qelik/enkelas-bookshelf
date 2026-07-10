@@ -2264,7 +2264,7 @@ function openYearReview(year) {
 // ---------------------------------------------------------------------------
 // Keepsakes: downloads, markdown journals, shareable cards, monthly recap
 // ---------------------------------------------------------------------------
-function downloadBlob(name, blob) {
+function downloadFileBlob(name, blob) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -2272,7 +2272,7 @@ function downloadBlob(name, blob) {
     a.click();
     URL.revokeObjectURL(url);
 }
-function downloadText(name, text) { downloadBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" })); }
+function downloadText(name, text) { downloadFileBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" })); }
 function slugify(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "book"; }
 function appTitle() { return $("#app-title") ? $("#app-title").textContent : "Enkela's Bookshelf"; }
 function bookMarkdown(b) {
@@ -2494,7 +2494,7 @@ async function shareBookCard(b) {
                 toast("⚠️", "Couldn't create the card", "The cover image blocked export — try removing it.");
                 return;
             }
-            downloadBlob(slugify(b.title) + "-card.png", blob);
+            downloadFileBlob(slugify(b.title) + "-card.png", blob);
             toast("🖼", "Book card saved", "A shareable image of “" + b.title + "”");
         }, "image/png");
     }
@@ -2562,7 +2562,7 @@ async function shareSnapshotCard() {
                 toast("⚠️", "Couldn't create the card", "");
                 return;
             }
-            downloadBlob("my-reading-snapshot.png", blob);
+            downloadFileBlob("my-reading-snapshot.png", blob);
             toast("📸", "Snapshot saved", "A shareable picture of your reading right now");
         }, "image/png");
     }
@@ -2621,7 +2621,7 @@ async function shareYearCard(year) {
     cv.toBlob((blob) => {
         if (!blob)
             return;
-        downloadBlob("year-in-books-" + year + ".png", blob);
+        downloadFileBlob("year-in-books-" + year + ".png", blob);
         toast("🖼", "Year card saved", year + " recap as an image");
     }, "image/png");
 }
