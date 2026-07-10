@@ -1,0 +1,18 @@
+{
+  // Service worker: separate program because lib.webworker and lib.dom cannot
+  // coexist. src/sw.ts has no imports, so the emitted ./sw.js stays a classic
+  // script and the register("sw.js") call in app.ts needs no {type:"module"}.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "rootDir": "src",
+    "outDir": ".",
+    "strict": true,
+    "noEmitOnError": false,
+    "types": [],
+    "skipLibCheck": true
+  },
+  "files": ["src/sw.ts"]
+}

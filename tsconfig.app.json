@@ -1,0 +1,20 @@
+{
+  // Page scripts: app.ts + reader.ts emit browser-native ES modules to the repo
+  // root under their historical names (./app.js, ./reader.js) so index.html,
+  // sw.js's precache list, and tests.html keep working unchanged.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "rootDir": "src",
+    "outDir": ".",
+    "strict": true,
+    // Emit continues while the strict burn-down is in progress; flipped to
+    // true once the codebase is diagnostic-clean.
+    "noEmitOnError": false,
+    "types": [],
+    "skipLibCheck": true
+  },
+  "files": ["src/types.ts", "src/globals.d.ts", "src/app.ts", "src/reader.ts"]
+}

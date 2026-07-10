@@ -14,3 +14,8 @@ sync-worker/.dev.vars
 .wrangler/
 # …but synthetic QA fixtures are fine
 !fixtures/sample-goodreads.csv
+
+# TypeScript toolchain (emitted app.js/reader.js/sw.js stay COMMITTED — do not ignore them)
+node_modules/
+*.tsbuildinfo
+.vscode/
