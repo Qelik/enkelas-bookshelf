@@ -26,9 +26,10 @@
   <div id="summary">Running…</div>
   <div id="results"></div>
 
-  <!-- app.js exposes window.__test and its init() no-ops without the app shell -->
-  <script src="app.js"></script>
-  <script>
+  <!-- app.js exposes window.__test and its init() no-ops without the app shell.
+       It is an ES module now, so the harness imports it and runs afterwards. -->
+  <script type="module">
+    import "./app.js";
     (function () {
       var T = window.__test;
       var results = [], passed = 0, failed = 0;

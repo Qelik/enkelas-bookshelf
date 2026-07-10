@@ -899,8 +899,9 @@
 
   <div class="toast-stack" id="toast-stack"></div>
 
-  <script src="app.js"></script>
+  <!-- JSZip stays a classic script (runs at parse time, before the module
+       graph). app.js is the single module entry; it imports reader.js. -->
   <script src="vendor/jszip.min.js"></script>
-  <script src="reader.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
