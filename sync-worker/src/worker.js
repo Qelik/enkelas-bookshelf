@@ -343,6 +343,86 @@ async function clubsRouter(url, request, env) {
   return json({ error: "Not found" }, 404);
 }
 
+// ---- Community recommendations (D1, shares CLUBS_DB) ------------------------
+// One global, public board. Reading the board needs no account; recommending
+// and voting do. Votes are 1 (worth reading) or -1 (not worth it), one per user
+// per book, and clicking the same vote again clears it (toggle off).
+async function recsList(env, auth) {
+  const recs = (await env.CLUBS_DB.prepare(
+    "SELECT id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at FROM recs WHERE deleted=0"
+  ).all()).results || [];
+  const tallies = (await env.CLUBS_DB.prepare(
+    "SELECT rec_id, SUM(CASE WHEN vote=1 THEN 1 ELSE 0 END) AS up, SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END) AS down FROM rec_votes GROUP BY rec_id"
+  ).all()).results || [];
+  const byId = {};
+  for (const t of tallies) byId[t.rec_id] = { up: Number(t.up) || 0, down: Number(t.down) || 0 };
+  const mine = {};
+  if (auth) {
+    const mv = (await env.CLUBS_DB.prepare("SELECT rec_id, vote FROM rec_votes WHERE uid=?1").bind(auth.uid).all()).results || [];
+    for (const v of mv) mine[v.rec_id] = v.vote;
+  }
+  for (const r of recs) {
+    const t = byId[r.id] || { up: 0, down: 0 };
+    r.up = t.up; r.down = t.down; r.score = t.up - t.down;
+    r.myVote = mine[r.id] || 0;
+    r.mine = auth ? r.created_by === auth.uid : false;
+  }
+  return json({ recs, signedIn: !!auth });
+}
+async function recsCreate(request, auth, env) {
+  const b = await request.json().catch(() => ({}));
+  const title = String(b.bookTitle || "").trim().slice(0, 200);
+  const category = String(b.category || "").trim().slice(0, 60) || "General";
+  if (!title) return json({ error: "A book title is required." }, 400);
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.CLUBS_DB.prepare(
+    "INSERT INTO recs (id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at,deleted) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0)"
+  ).bind(id, category, title, String(b.bookAuthor || "").slice(0, 200), String(b.bookIsbn || "").slice(0, 20), String(b.coverUrl || "").slice(0, 500), String(b.note || "").slice(0, 500), auth.uid, String(b.displayName || "").slice(0, 60), now).run();
+  // Recommending a book counts as endorsing it — auto-cast a "worth reading" vote.
+  await env.CLUBS_DB.prepare("INSERT OR REPLACE INTO rec_votes (rec_id,uid,vote,created_at) VALUES (?1,?2,1,?3)").bind(id, auth.uid, now).run();
+  return json({ ok: true, id });
+}
+async function recsVote(request, id, auth, env) {
+  const b = await request.json().catch(() => ({}));
+  const vote = Number(b.vote) === -1 ? -1 : 1;
+  const rec = await env.CLUBS_DB.prepare("SELECT id FROM recs WHERE id=?1 AND deleted=0").bind(id).first();
+  if (!rec) return json({ error: "That recommendation no longer exists." }, 404);
+  const existing = await env.CLUBS_DB.prepare("SELECT vote FROM rec_votes WHERE rec_id=?1 AND uid=?2").bind(id, auth.uid).first();
+  if (existing && existing.vote === vote) {
+    await env.CLUBS_DB.prepare("DELETE FROM rec_votes WHERE rec_id=?1 AND uid=?2").bind(id, auth.uid).run();
+    return json({ ok: true, myVote: 0 });
+  }
+  await env.CLUBS_DB.prepare("INSERT OR REPLACE INTO rec_votes (rec_id,uid,vote,created_at) VALUES (?1,?2,?3,?4)").bind(id, auth.uid, vote, new Date().toISOString()).run();
+  return json({ ok: true, myVote: vote });
+}
+async function recsDelete(id, auth, env) {
+  const rec = await env.CLUBS_DB.prepare("SELECT created_by FROM recs WHERE id=?1 AND deleted=0").bind(id).first();
+  if (!rec) return json({ error: "Not found." }, 404);
+  if (rec.created_by !== auth.uid) return json({ error: "You can only remove your own recommendation." }, 403);
+  await env.CLUBS_DB.batch([
+    env.CLUBS_DB.prepare("UPDATE recs SET deleted=1 WHERE id=?1").bind(id),
+    env.CLUBS_DB.prepare("DELETE FROM rec_votes WHERE rec_id=?1").bind(id),
+  ]);
+  return json({ ok: true });
+}
+async function recsRouter(url, request, env) {
+  if (!env.CLUBS_DB) return json({ error: "Recommendations aren't enabled on this server yet." }, 503);
+  const parts = url.pathname.split("/").filter(Boolean); // ["api","recs", id?, sub?]
+  const id = parts[2], sub = parts[3];
+  const m = request.method;
+  const auth = await requireAuth(request, env.AUTH_SECRET); // may be null — viewing is public
+  if (!id) {
+    if (m === "GET") return recsList(env, auth);
+    if (m === "POST") return auth ? recsCreate(request, auth, env) : json({ error: "Not signed in." }, 401);
+  } else if (sub === "vote" && m === "POST") {
+    return auth ? recsVote(request, id, auth, env) : json({ error: "Not signed in." }, 401);
+  } else if (sub === "delete" && m === "POST") {
+    return auth ? recsDelete(id, auth, env) : json({ error: "Not signed in." }, 401);
+  }
+  return json({ error: "Not found" }, 404);
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
@@ -354,7 +434,8 @@ export default {
       if (url.pathname === "/api/data" && request.method === "GET") return await getData(request, env, env.AUTH_SECRET);
       if (url.pathname === "/api/data" && request.method === "PUT") return await putData(request, env, env.AUTH_SECRET);
       if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return await clubsRouter(url, request, env);
-      if (url.pathname === "/" || url.pathname === "/api") return json({ ok: true, service: "enkelas-bookshelf-sync", clubs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS });
+      if (url.pathname === "/api/recs" || url.pathname.indexOf("/api/recs/") === 0) return await recsRouter(url, request, env);
+      if (url.pathname === "/" || url.pathname === "/api") return json({ ok: true, service: "enkelas-bookshelf-sync", clubs: !!env.CLUBS_DB, recs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS });
       return json({ error: "Not found" }, 404);
     } catch (e) {
       return json({ error: "Server error" }, 500);

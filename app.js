@@ -14,7 +14,7 @@
   const SYNCBASE_KEY = "enkelas-bookshelf-syncbase";
   const LASTSYNC_KEY = "enkelas-bookshelf-lastsync";
   const SCHEMA_VERSION = 1;
-  const APP_VERSION = "2026.07.06"; // bump alongside the sw.js CACHE version on each release
+  const APP_VERSION = "2026.07.10"; // bump alongside the sw.js CACHE version on each release
   const DAY = 86400000;
   // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
   // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -1484,7 +1484,8 @@
         <button class="mini" data-detail-action="dnf">✕ DNF</button>` : ""}
         ${book.status === "want" ? `<button class="mini act-main" data-detail-action="start">▶ Start reading</button>` : ""}
         ${book.status === "finished" ? `<button class="mini act-main" data-detail-action="reread">🔁 Read again</button>
-        <button class="mini" data-detail-action="rate">★ Rate</button>` : ""}
+        <button class="mini" data-detail-action="rate">★ Rate</button>
+        <button class="mini" data-detail-action="recommend">🌟 Recommend</button>` : ""}
         ${book.status === "dnf" ? `<button class="mini act-main" data-detail-action="start">▶ Pick it up again</button>` : ""}
         <button class="mini" data-detail-action="toggle-owned">${book.owned ? "🏠 On my shelf ✓" : "🏠 I own this"}</button>
         <button class="mini" data-detail-action="${book.lentTo ? "lend-return" : "lend"}">${book.lentTo ? "↩ Got it back" : "📤 Lend out"}</button>
@@ -2476,6 +2477,188 @@
     const { res } = await clubApi("/" + currentClubId + "/comments", { method: "POST", body: JSON.stringify({ body: bodyText, posPct: pct }) });
     if (!res.ok) { toast("⚠️", "Couldn't post", "Try again in a moment."); if (el) el.value = bodyText; return; }
     await refreshClub(false);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Community recommendations — a shared, per-category board everyone votes on.
+  // Backed by the sync worker's D1 (public to read; sign-in required to vote or
+  // recommend). Books the current reader has already finished are hidden by
+  // default, filtered client-side against their own synced library.
+  // ---------------------------------------------------------------------------
+  let communityCategory = "", communitySort = "top", communityHideRead = true, lastRecs = null, recsSignedIn = false;
+  function recsApi(path, opts) { return apiFetch("/api/recs" + path, opts || {}); }
+  function normStr(s) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+  function isbnDigits(s) { return String(s || "").replace(/\D/g, ""); }
+  // Normalized keys of everything the reader has finished, for the "hide read" filter.
+  function readMatchers() {
+    const titles = new Set(), pairs = new Set(), isbns = new Set();
+    booksFinished().forEach((b) => {
+      const t = normStr(b.title); if (t) { titles.add(t); pairs.add(t + "|" + normStr(b.author)); }
+      const i = isbnDigits(b.isbn); if (i.length >= 10) isbns.add(i);
+    });
+    return { titles, pairs, isbns };
+  }
+  function recIsRead(r, m) {
+    const i = isbnDigits(r.book_isbn); if (i.length >= 10 && m.isbns.has(i)) return true;
+    const t = normStr(r.book_title); if (!t) return false;
+    const a = normStr(r.book_author);
+    return a ? m.pairs.has(t + "|" + a) : m.titles.has(t);
+  }
+  function openCommunity() { renderCommunity(); }
+  async function renderCommunity() {
+    const body = $("#community-body");
+    if (!body) return;
+    if (!syncEnabled()) { body.innerHTML = `<p class="empty">Community recommendations sync through the app's account server, which isn't configured here.</p>`; return; }
+    if (lastRecs === null) body.innerHTML = `<p class="muted">Loading recommendations…</p>`;
+    const { res, data } = await recsApi("");
+    if (res.status === 503) { body.innerHTML = `<p class="empty">Recommendations aren't switched on yet — the sync worker needs its database enabled.</p>`; return; }
+    if (!res.ok || !data) { body.innerHTML = `<p class="empty">Couldn't load recommendations — check your connection.</p>`; return; }
+    lastRecs = data.recs || [];
+    recsSignedIn = !!data.signedIn;
+    drawCommunity();
+  }
+  function drawCommunity() {
+    const body = $("#community-body");
+    if (!body) return;
+    const all = lastRecs || [];
+    populateCommunityCategoryFilter(all);
+    const matchers = communityHideRead ? readMatchers() : null;
+    let hiddenRead = 0;
+    let recs = all.filter((r) => {
+      if (matchers && recIsRead(r, matchers)) { hiddenRead++; return false; }
+      if (communityCategory && normStr(r.category) !== normStr(communityCategory)) return false;
+      return true;
+    });
+    const sortFn = communitySort === "new"
+      ? (a, b) => (b.created_at || "").localeCompare(a.created_at || "")
+      : (a, b) => (b.score - a.score) || (b.up - a.up) || (b.created_at || "").localeCompare(a.created_at || "");
+    recs.sort(sortFn);
+
+    const signInBanner = !recsSignedIn
+      ? `<div class="community-signin">👋 <button class="linklike" data-community-signin>Sign in</button> to vote and add your own recommendations.</div>`
+      : "";
+    const readNote = (communityHideRead && hiddenRead)
+      ? `<p class="community-readnote muted">${hiddenRead} book${hiddenRead === 1 ? "" : "s"} you've read ${hiddenRead === 1 ? "is" : "are"} hidden. <button class="linklike" data-community-showread>Show ${hiddenRead === 1 ? "it" : "them"}</button></p>`
+      : "";
+
+    if (!recs.length) {
+      body.innerHTML = signInBanner + `<p class="empty">${all.length ? "Nothing here yet in this view." : "No recommendations yet — be the first to share a book you loved."}</p>` + readNote;
+      return;
+    }
+
+    let html = signInBanner;
+    if (communityCategory) {
+      html += `<div class="rec-group">${recs.map(recCardHTML).join("")}</div>`;
+    } else {
+      // Group by category, categories ordered by how many picks they hold.
+      const groups = {};
+      recs.forEach((r) => { const k = r.category || "General"; (groups[k] = groups[k] || []).push(r); });
+      const cats = Object.keys(groups).sort((a, b) => (groups[b].length - groups[a].length) || a.toLowerCase().localeCompare(b.toLowerCase()));
+      html += cats.map((c) => `<div class="rec-cat"><h3 class="rec-cat-title">${esc(c)} <span class="muted">· ${groups[c].length}</span></h3><div class="rec-group">${groups[c].map(recCardHTML).join("")}</div></div>`).join("");
+    }
+    body.innerHTML = html + readNote;
+  }
+  function recCardHTML(r) {
+    const up = r.up || 0, down = r.down || 0, mine = r.myVote || 0;
+    const cover = r.cover_url
+      ? `<img class="rec-cover" src="${esc(r.cover_url)}" alt="" loading="lazy" />`
+      : `<div class="rec-cover rec-cover-ph">📖</div>`;
+    const worth = (up + down) ? Math.round((up / (up + down)) * 100) : 0;
+    const verdict = (up + down) >= 2 ? `<span class="rec-verdict ${worth >= 60 ? "good" : worth <= 40 ? "meh" : ""}">${worth}% say worth reading</span>` : "";
+    return `<article class="rec-card" data-rec="${esc(r.id)}">
+      ${cover}
+      <div class="rec-main">
+        <div class="rec-head">
+          <strong class="rec-title">${esc(r.book_title)}</strong>
+          ${r.book_author ? `<span class="muted rec-author"> · ${esc(r.book_author)}</span>` : ""}
+        </div>
+        ${r.note ? `<p class="rec-note">${esc(r.note)}</p>` : ""}
+        <div class="rec-meta muted">Recommended by ${esc(firstName(r.created_name) || "a reader")}${r.mine ? " (you)" : ""} ${verdict}</div>
+        <div class="rec-vote">
+          <button type="button" class="rec-btn up${mine === 1 ? " on" : ""}" data-vote="1" title="Worth reading">👍 <span>${up}</span></button>
+          <button type="button" class="rec-btn down${mine === -1 ? " on" : ""}" data-vote="-1" title="Not worth it">👎 <span>${down}</span></button>
+          ${r.mine ? `<button type="button" class="rec-btn rec-del" data-rec-del title="Remove your recommendation">🗑</button>` : ""}
+        </div>
+      </div>
+    </article>`;
+  }
+  function populateCommunityCategoryFilter(recs) {
+    const sel = $("#community-category");
+    if (!sel) return;
+    const cur = communityCategory;
+    const cats = Array.from(new Set((recs || []).map((r) => r.category || "General"))).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    sel.innerHTML = `<option value="">All categories</option>` + cats.map((c) => `<option value="${esc(c)}"${normStr(c) === normStr(cur) ? " selected" : ""}>${esc(c)}</option>`).join("");
+    if (cur && !cats.some((c) => normStr(c) === normStr(cur))) { communityCategory = ""; sel.value = ""; }
+  }
+  async function voteRec(id, vote) {
+    if (!id) return;
+    if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in to vote", "Voting is tied to your account so everyone votes once."); return; }
+    // Optimistic: flip the local vote + tallies, redraw, then reconcile with the server.
+    const r = (lastRecs || []).find((x) => x.id === id);
+    if (r) {
+      const prev = r.myVote || 0;
+      if (prev === 1) r.up--; else if (prev === -1) r.down--;
+      const next = prev === vote ? 0 : vote;
+      if (next === 1) r.up++; else if (next === -1) r.down++;
+      r.myVote = next; r.score = r.up - r.down;
+      drawCommunity();
+    }
+    const { res, data } = await recsApi("/" + id + "/vote", { method: "POST", body: JSON.stringify({ vote }) });
+    if (!res.ok) { toast("⚠️", "Couldn't record your vote", "Try again in a moment."); await renderCommunity(); return; }
+    if (r && data && typeof data.myVote === "number") { r.myVote = data.myVote; r.score = r.up - r.down; }
+  }
+  async function deleteRec(id) {
+    if (!id || !confirm("Remove your recommendation from the community board?")) return;
+    const { res } = await recsApi("/" + id + "/delete", { method: "POST", body: "{}" });
+    if (!res.ok) { toast("⚠️", "Couldn't remove it", "Try again in a moment."); return; }
+    lastRecs = (lastRecs || []).filter((r) => r.id !== id);
+    drawCommunity();
+    toast("🗑", "Recommendation removed", "");
+  }
+  function populateRecCategoryDatalist() {
+    const dl = $("#rec-category-list");
+    if (!dl) return;
+    const fromLib = allTags();
+    const fromBoard = (lastRecs || []).map((r) => r.category).filter(Boolean);
+    const cats = Array.from(new Set([...fromLib, ...fromBoard])).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    dl.innerHTML = cats.map((c) => `<option value="${esc(c)}"></option>`).join("");
+  }
+  function openRecommendModal(prefill) {
+    if (!syncEnabled()) { toast("ℹ️", "Needs an account", "Recommendations sync through your account."); return; }
+    if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in first", "Recommending a book is tied to your account."); return; }
+    populateRecCategoryDatalist();
+    $("#rec-title").value = (prefill && prefill.title) || "";
+    $("#rec-author").value = (prefill && prefill.author) || "";
+    $("#rec-category").value = (prefill && prefill.category) || "";
+    $("#rec-note").value = "";
+    $("#recommend-modal").dataset.isbn = (prefill && prefill.isbn) || "";
+    $("#recommend-modal").dataset.cover = (prefill && prefill.cover) || "";
+    showModal("recommend-modal");
+    setTimeout(() => { const t = $("#rec-title"); if (t) t.focus(); }, 60);
+  }
+  async function submitRecommend() {
+    const title = $("#rec-title").value.trim();
+    const category = $("#rec-category").value.trim();
+    if (!title) { toast("✍️", "Add a title", "Which book are you recommending?"); return; }
+    if (!category) { toast("🏷️", "Pick a category", "Which shelf does it belong on?"); return; }
+    let author = $("#rec-author").value.trim();
+    let isbn = $("#recommend-modal").dataset.isbn || "";
+    let cover = $("#recommend-modal").dataset.cover || "";
+    // Borrow author/cover/ISBN from the reader's own copy if they have one.
+    if (!cover || !author) {
+      const match = state.books.find((b) => normStr(b.title) === normStr(title));
+      if (match) { author = author || match.author || ""; cover = cover || match.coverUrl || ""; isbn = isbn || match.isbn || ""; }
+    }
+    const body = { bookTitle: title, bookAuthor: author, category, note: $("#rec-note").value.trim(), bookIsbn: isbn, coverUrl: cover, displayName: (auth && auth.user && auth.user.fullName) || "" };
+    const { res } = await recsApi("", { method: "POST", body: JSON.stringify(body) });
+    if (!res.ok) { toast("⚠️", "Couldn't share it", "Try again in a moment."); return; }
+    closeModals();
+    // If the book is one the reader has finished, it's hidden from their own
+    // board by default — say so, so a "successful but invisible" post isn't confusing.
+    const hiddenFromMe = communityHideRead && recIsRead({ book_title: title, book_author: author, book_isbn: isbn }, readMatchers());
+    toast("🌟", "Recommendation shared", hiddenFromMe ? title + " — hidden on your board since you've read it, but everyone else sees it" : title);
+    // Stay put when recommending from a book page; refresh in place when on the board.
+    if (activeView === "community") await renderCommunity();
   }
 
   // ---------------------------------------------------------------------------
@@ -3490,6 +3673,7 @@
     // The book page is a real page: hide the app chrome (header/stats/tabs)
     // so it starts at the top with just the Back bar.
     document.body.classList.toggle("book-open", view === "book");
+    if (view === "community") openCommunity();
   }
 
   function onMainClick(e) {
@@ -3591,6 +3775,7 @@
       else if (act === "finish") openFinishModal(book);
       else if (act === "dnf") openDnfModal(book);
       else if (act === "rate") rateBook(book);
+      else if (act === "recommend") openRecommendModal({ title: book.title, author: book.author, category: (book.tags || [])[0] || "", isbn: book.isbn, cover: book.coverUrl });
       else if (act === "toggle-owned") { book.owned = !book.owned; commit(); toast("🏠", book.owned ? "Added to your home shelf" : "Removed from your home shelf", book.title); }
       else if (act === "lend") openLendModal(book);
       else if (act === "lend-return") { const who = book.lentTo; book.lentTo = ""; book.lentAt = null; commit(); toast("↩", "Welcome back!", `“${book.title}” returned from ${who}`); }
@@ -3765,6 +3950,23 @@
     });
     $("#clubs-body").addEventListener("input", (e) => { if (e.target.id === "club-progress-range") { const v = $("#club-my-pct"); if (v) v.textContent = e.target.value; } });
     $("#clubs-body").addEventListener("change", (e) => { if (e.target.id === "club-progress-range") setClubProgress(Number(e.target.value) || 0); });
+
+    // Community recommendations
+    $("#btn-recommend").addEventListener("click", () => openRecommendModal());
+    $("#recommend-form").addEventListener("submit", (e) => { e.preventDefault(); submitRecommend(); });
+    $("#community-category").addEventListener("change", (e) => { communityCategory = e.target.value; drawCommunity(); });
+    $("#community-sort").addEventListener("change", (e) => { communitySort = e.target.value; drawCommunity(); });
+    $("#community-hide-read").addEventListener("change", (e) => { communityHideRead = e.target.checked; drawCommunity(); });
+    $("#community-body").addEventListener("click", (e) => {
+      if (e.target.closest("[data-community-signin]")) { closeModals(); openAuthModal("login"); return; }
+      if (e.target.closest("[data-community-showread]")) { communityHideRead = false; const cb = $("#community-hide-read"); if (cb) cb.checked = false; drawCommunity(); return; }
+      const card = e.target.closest("[data-rec]");
+      if (!card) return;
+      const id = card.dataset.rec;
+      if (e.target.closest("[data-rec-del]")) { deleteRec(id); return; }
+      const vote = e.target.closest("[data-vote]");
+      if (vote) voteRec(id, Number(vote.dataset.vote));
+    });
     $("#btn-doctor-covers").addEventListener("click", async (e) => {
       const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Searching…";
       await backfillCovers(true);

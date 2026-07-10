@@ -53,6 +53,7 @@
     <button class="tab" data-view="goals">🎯 Goals</button>
     <button class="tab" data-view="stats">📊 Stats</button>
     <button class="tab" data-view="achievements">🏅 Achievements</button>
+    <button class="tab" data-view="community">🌟 Community</button>
   </nav>
 
   <main id="main">
@@ -244,6 +245,26 @@
         <h3>✨ Special</h3>
         <div class="badge-grid" id="badges-special"></div>
       </div>
+    </section>
+
+    <!-- COMMUNITY RECOMMENDATIONS — shared, voteable, per category -->
+    <section class="view" id="view-community" hidden>
+      <div class="view-head community-head">
+        <div>
+          <h2>🌟 Community recommendations</h2>
+          <p class="muted community-intro">Books readers vouch for, by category. Vote whether each is worth reading — books you've already finished are hidden.</p>
+        </div>
+        <button class="primary" id="btn-recommend">＋ Recommend a book</button>
+      </div>
+      <div class="community-controls">
+        <select class="select" id="community-category" aria-label="Filter by category"><option value="">All categories</option></select>
+        <select class="select" id="community-sort" aria-label="Sort recommendations">
+          <option value="top">🔝 Top voted</option>
+          <option value="new">🆕 Newest</option>
+        </select>
+        <label class="own-check community-toggle"><input type="checkbox" id="community-hide-read" checked /> Hide books I've read</label>
+      </div>
+      <div id="community-body"><p class="muted">Loading recommendations…</p></div>
     </section>
 
     <!-- FULL BOOK PAGE (opened by tapping a book card) -->
@@ -638,6 +659,38 @@
         <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
       </div>
       <div class="modal-body" id="clubs-body"></div>
+    </div>
+  </div>
+
+  <!-- RECOMMEND A BOOK TO THE COMMUNITY -->
+  <div class="modal-backdrop" id="recommend-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recommend-title">
+      <div class="modal-head">
+        <h3 id="recommend-title">🌟 Recommend a book</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <form id="recommend-form" class="modal-body">
+        <p class="muted">Share a book you loved with everyone. It'll appear under its category for readers to vote on.</p>
+        <div class="grid-2">
+          <div>
+            <label for="rec-title">Title *</label>
+            <input type="text" id="rec-title" class="input" required maxlength="200" />
+          </div>
+          <div>
+            <label for="rec-author">Author</label>
+            <input type="text" id="rec-author" class="input" maxlength="200" />
+          </div>
+        </div>
+        <label for="rec-category">Category *</label>
+        <input type="text" id="rec-category" class="input" required maxlength="60" list="rec-category-list" placeholder="e.g. Fantasy, Memoir, Sci-Fi" />
+        <datalist id="rec-category-list"></datalist>
+        <label for="rec-note">Why should people read it? <span class="muted">(optional)</span></label>
+        <textarea id="rec-note" class="input" maxlength="500" rows="3" placeholder="A sentence or two on what makes it worth their time…"></textarea>
+        <div class="modal-foot">
+          <button type="button" class="ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="primary">Share recommendation</button>
+        </div>
+      </form>
     </div>
   </div>
 
