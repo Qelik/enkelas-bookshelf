@@ -112,6 +112,8 @@ main { padding: 18px 28px 80px; }
 .head-controls .primary, .head-controls .ghost { white-space: nowrap; }
 .empty { color: var(--ink-soft); font-size: 15px; background: var(--paper-2); border: 1px dashed var(--line); border-radius: var(--radius); padding: 28px; text-align: center; }
 .muted { color: var(--ink-soft); font-weight: 400; font-size: 12.5px; }
+.log-page-hint { margin: 6px 2px 0; }
+.log-page-hint.warn { color: #c0392b; }
 
 /* ---------- Book cards ---------- */
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
@@ -335,12 +337,28 @@ html[data-theme="dark"] .cc-react.on { background: rgba(201,138,75,.22); }
 .cover-preview img { width: 100%; height: 100%; object-fit: cover; }
 .cover-ph { color: #fff; font-size: 12px; }
 .cover-actions { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-.cover-candidates { display: flex; gap: 8px; flex-wrap: wrap; min-height: 0; }
-.cover-candidates img {
-  width: 44px; height: 64px; object-fit: cover; border-radius: 5px; cursor: pointer;
-  border: 2px solid transparent; box-shadow: var(--shadow-sm);
+.cover-candidates:empty { display: none; }
+.cand-hint { margin: 4px 0 2px; }
+.cand-list { display: flex; flex-direction: column; gap: 6px; max-height: 216px; overflow-y: auto; }
+.cand {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 6px; border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(255,255,255,.6); cursor: pointer; transition: border-color .12s, background .12s;
 }
-.cover-candidates img:hover, .cover-candidates img.sel { border-color: var(--accent); }
+.cand:hover { background: #fff; border-color: var(--accent-soft); }
+.cand.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cand-cover {
+  width: 36px; min-width: 36px; height: 52px; border-radius: 4px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--accent-soft), #d9c4a8);
+}
+.cand-cover img { width: 100%; height: 100%; object-fit: cover; }
+.cand-noimg { font-size: 20px; }
+.cand-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cand-title { font-weight: 600; font-size: 13.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cand-sub { font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-theme="dark"] .cand { background: rgba(255,255,255,.05); }
+html[data-theme="dark"] .cand:hover { background: rgba(255,255,255,.1); }
 
 /* star input */
 .star-input { font-size: 26px; color: var(--accent-soft); cursor: pointer; user-select: none; display: inline-flex; gap: 2px; }

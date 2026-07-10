@@ -431,6 +431,7 @@
       <form id="log-form" class="modal-body">
         <input type="hidden" id="log-book-id" />
         <input type="hidden" id="log-id" />
+        <input type="hidden" id="log-baseline" />
         <p class="log-book-name" id="log-book-name"></p>
         <div class="timer" id="log-timer">
           <button type="button" class="ghost" id="timer-btn">⏱ Start timer</button>
@@ -438,8 +439,9 @@
         </div>
         <div class="grid-2">
           <div>
-            <label for="log-pages"><span id="log-pages-label">Pages read this session *</span></label>
+            <label for="log-pages"><span id="log-pages-label">Current page *</span></label>
             <input type="number" id="log-pages" class="input" min="1" max="100000" required />
+            <p class="log-page-hint muted" id="log-page-hint" hidden></p>
           </div>
           <div>
             <label for="log-when">When</label>

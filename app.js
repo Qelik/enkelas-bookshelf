@@ -551,6 +551,16 @@
   // Derived values
   // ---------------------------------------------------------------------------
   function pagesRead(book) { return book.logs.reduce((s, l) => s + (Number(l.pages) || 0), 0); }
+  // Cumulative pages read *before* a given session — i.e. the page you were on
+  // when that session began. For a brand-new log (log == null) that's everything
+  // read so far. For an edit, it's the sum of every earlier session by date.
+  function pagesBefore(book, log) {
+    if (!log) return pagesRead(book);
+    const sorted = [...book.logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let sum = 0;
+    for (const l of sorted) { if (l.id === log.id) break; sum += Number(l.pages) || 0; }
+    return sum;
+  }
   function totalPagesRead() { return state.books.reduce((s, b) => s + pagesRead(b), 0); }
   function booksFinished() { return state.books.filter((b) => b.status === "finished"); }
   function libraryBooks() { return state.books.filter((b) => b.status === "finished" || b.status === "dnf"); }
@@ -2654,33 +2664,15 @@
           docs = matched;
         } else {
           renderCandidates(docs);
-          toast("🔍", "Couldn't confirm that author", `No “${title}” by ${author} in the catalogue — pick a cover below or paste one, and the rest stays as you typed it.`);
+          toast("🔍", "Couldn't confirm that author", `No “${title}” by ${author} in the catalogue — pick the right book below to fill its details, or leave what you typed.`);
           return; // leave the user's fields untouched rather than fill wrong data
         }
       }
-      const top = docs[0];
-      if (!$("#f-author").value && top.author_name) $("#f-author").value = top.author_name[0];
-      if (!$("#f-pages").value && top.number_of_pages_median) $("#f-pages").value = top.number_of_pages_median;
-      if (!$("#f-isbn").value && top.isbn && top.isbn[0]) $("#f-isbn").value = top.isbn[0];
-      if (!$("#f-year").value && top.first_publish_year) $("#f-year").value = top.first_publish_year;
-      if (!$("#f-title").value) $("#f-title").value = top.title || "";
-      const firstCover = top.cover_i ? coverFromId(top.cover_i) : (top.isbn ? coverFromIsbn(top.isbn[0]) : "");
-      if (firstCover) { $("#f-cover").value = firstCover; setCoverPreview(firstCover); }
-      if (!$("#f-tags").value.trim()) {
-        const picks = cleanSubjects(top.subject);
-        if (picks.length) { $("#f-tags").value = picks.join(", "); renderTagHelpers(); }
-      }
-      renderCandidates(docs);
-      // Second call: fetch a short description from the work record.
-      if (!$("#f-desc").value.trim() && top.key) {
-        fetch("https://openlibrary.org" + top.key + ".json").then((r) => r.ok ? r.json() : null).then((w) => {
-          if (!w) return;
-          let d = w.description;
-          if (d && typeof d === "object") d = d.value;
-          if (d && !$("#f-desc").value.trim()) $("#f-desc").value = String(d).split("\n")[0].slice(0, 600);
-        }).catch(() => {});
-      }
-      toast("✨", "Found it!", "Wrong cover or genres? Tweak them below.");
+      // Show the matches as a pickable list and pre-fill from the best one,
+      // leaving anything the user already typed untouched.
+      renderCandidates(docs, 0);
+      applyDoc(docs[0], { overwrite: false });
+      toast("✨", "Found it!", docs.length > 1 ? "Not the one? Pick another below." : "Wrong cover or genres? Tweak them below.");
     } catch (e) {
       console.warn(e);
       toast("⚠️", "Lookup failed", "Check your connection, or paste a cover URL.");
@@ -2688,9 +2680,67 @@
       btn.disabled = false; btn.textContent = "🔍 Auto-fetch details & cover";
     }
   }
-  function renderCandidates(docs) {
-    const urls = docs.map((d) => d.cover_i ? coverFromId(d.cover_i, "M") : (d.isbn && d.isbn[0] ? coverFromIsbn(d.isbn[0], "M") : null)).filter(Boolean);
-    $("#cover-candidates").innerHTML = urls.map((u) => `<img src="${esc(u)}" data-cover="${esc(u.replace("-M.jpg", "-L.jpg"))}" alt="cover option" />`).join("");
+
+  // The most recent search results, kept so the candidate click handler can look
+  // a pick up by index. A token guards the async description/genre fetch so a
+  // slow response from an earlier pick can't overwrite a newer one.
+  let lastSearchDocs = [];
+  let applyDocToken = 0;
+  // Fill the add/edit form from one Open Library result. overwrite=true means the
+  // user explicitly picked this book, so replace the catalogue fields;
+  // overwrite=false auto-fills from the top match but keeps whatever was typed.
+  async function applyDoc(doc, opts) {
+    if (!doc) return;
+    opts = opts || {};
+    const overwrite = !!opts.overwrite;
+    const myToken = ++applyDocToken;
+    const put = (sel, val) => { if (val == null || val === "") return; if (overwrite || !$(sel).value) $(sel).value = val; };
+    put("#f-title", doc.title);
+    put("#f-author", doc.author_name && doc.author_name[0]);
+    put("#f-pages", doc.number_of_pages_median);
+    put("#f-isbn", doc.isbn && doc.isbn[0]);
+    put("#f-year", doc.first_publish_year);
+    const cover = doc.cover_i ? coverFromId(doc.cover_i) : (doc.isbn && doc.isbn[0] ? coverFromIsbn(doc.isbn[0]) : "");
+    if (cover && (overwrite || !$("#f-cover").value)) { $("#f-cover").value = cover; setCoverPreview(cover); }
+    const picks = cleanSubjects(doc.subject);
+    if (picks.length && (overwrite || !$("#f-tags").value.trim())) { $("#f-tags").value = picks.join(", "); renderTagHelpers(); }
+    // The work record carries the description + a fuller subject list. Fetch it,
+    // but drop the result if a newer pick has since superseded this one.
+    if (doc.key && (overwrite || picks.length < 3 || !$("#f-desc").value.trim())) {
+      try {
+        const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json();
+        if (myToken !== applyDocToken || !w) return;
+        let d = w.description;
+        if (d && typeof d === "object") d = d.value;
+        d = d ? String(d).split("\n")[0].slice(0, 600) : "";
+        if (overwrite) $("#f-desc").value = d;                 // reflect the chosen book, even if blank
+        else if (d && !$("#f-desc").value.trim()) $("#f-desc").value = d;
+        const richer = cleanSubjects((w.subjects || []).concat(doc.subject || []));
+        if (richer.length > picks.length && (overwrite || !$("#f-tags").value.trim())) { $("#f-tags").value = richer.join(", "); renderTagHelpers(); }
+      } catch (e) { /* offline or no work record — keep what we have */ }
+    }
+  }
+  // Render the search results as a list of pickable books (cover + title +
+  // author + year), so the user chooses the right edition instead of us guessing.
+  function renderCandidates(docs, selIdx) {
+    lastSearchDocs = Array.isArray(docs) ? docs : [];
+    const box = $("#cover-candidates");
+    if (!lastSearchDocs.length) { box.innerHTML = ""; return; }
+    const cards = lastSearchDocs.slice(0, 8).map((d, i) => {
+      const thumb = d.cover_i ? coverFromId(d.cover_i, "M") : (d.isbn && d.isbn[0] ? coverFromIsbn(d.isbn[0], "M") : "");
+      const cov = thumb
+        ? `<img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.outerHTML='<span class=\\'cand-noimg\\'>📕</span>'" />`
+        : `<span class="cand-noimg">📕</span>`;
+      const bits = [d.author_name && d.author_name[0] ? esc(d.author_name[0]) : "Unknown author"];
+      if (d.first_publish_year) bits.push(d.first_publish_year);
+      if (d.number_of_pages_median) bits.push(d.number_of_pages_median + "p");
+      return `<button type="button" class="cand${i === selIdx ? " sel" : ""}" data-doc-idx="${i}" title="Use this book's details">
+        <span class="cand-cover">${cov}</span>
+        <span class="cand-meta"><span class="cand-title">${esc(d.title || "Untitled")}</span><span class="cand-sub">${bits.join(" · ")}</span></span>
+      </button>`;
+    }).join("");
+    const hint = lastSearchDocs.length > 1 ? "Pick the right book to autofill its details:" : "Found this — pick it to fill the rest:";
+    box.innerHTML = `<p class="cand-hint muted">${hint}</p><div class="cand-list">${cards}</div>`;
   }
 
   function saveBookFromForm(e) {
@@ -2760,18 +2810,48 @@
   // ---------------------------------------------------------------------------
   function openLogModal(book, log) {
     resetTimer();
+    const isAudio = book.format === "audio";
+    const baseline = pagesBefore(book, log);
     $("#log-book-id").value = book.id;
     $("#log-id").value = log ? log.id : "";
+    $("#log-baseline").value = baseline;
     $("#log-book-name").textContent = book.title;
     $("#log-modal-title").textContent = log ? "Edit reading session" : "Log a reading session";
-    $("#log-pages-label").textContent = (book.format === "audio" ? "Minutes read this session *" : "Pages read this session *");
-    $("#log-pages").value = log ? log.pages : "";
+    // Audio books track minutes as a running total per session; page-based books
+    // ask for the page you've reached and we work out the delta ourselves.
+    $("#log-pages-label").textContent = isAudio ? "Minutes read this session *" : "Current page *";
+    $("#log-pages").min = isAudio ? 1 : baseline + 1;
+    $("#log-pages").value = log ? (isAudio ? log.pages : baseline + log.pages) : "";
     $("#log-minutes").value = log && log.minutes ? log.minutes : "";
     $("#log-note").value = log ? log.note : "";
     $("#log-when").value = log ? toLocalInput(log.date) : nowLocalInput();
     paintMood(log ? log.mood : "");
+    updateLogPageHint();
     showModal("log-modal");
     setTimeout(() => $("#log-pages").focus(), 50);
+  }
+  // Live helper under the page field: shows where you left off and the pages
+  // this session works out to. Hidden entirely for audio books.
+  function updateLogPageHint() {
+    const hint = $("#log-page-hint");
+    if (!hint) return;
+    const book = state.books.find((b) => b.id === $("#log-book-id").value);
+    if (!book || book.format === "audio") { hint.hidden = true; return; }
+    hint.hidden = false;
+    const baseline = Number($("#log-baseline").value) || 0;
+    const total = book.totalPages || 0;
+    const cur = Number($("#log-pages").value);
+    let msg = (baseline > 0 ? `You were on page ${num(baseline)}` : "Starting from the beginning");
+    if (total) msg += ` of ${num(total)}`;
+    msg += ".";
+    let warn = false;
+    if ($("#log-pages").value !== "") {
+      const delta = cur - baseline;
+      if (delta > 0) msg += ` That's +${num(delta)} ${unitLabel(book)} this session.`;
+      else { msg += " ⚠️ Enter a page beyond where you left off."; warn = true; }
+    }
+    hint.textContent = msg;
+    hint.classList.toggle("warn", warn);
   }
   function paintMood(mood) {
     $("#log-mood").value = mood || "";
@@ -2781,8 +2861,17 @@
     e.preventDefault();
     const book = state.books.find((b) => b.id === $("#log-book-id").value);
     if (!book) return;
-    const pages = Number($("#log-pages").value);
-    if (!pages || pages < 1) return;
+    const isAudio = book.format === "audio";
+    const entered = Number($("#log-pages").value);
+    if (!entered || entered < 1) return;
+    // For page-based books the field holds the page reached; the session's page
+    // count is that minus where we left off. Audio still logs raw minutes.
+    const baseline = Number($("#log-baseline").value) || 0;
+    const pages = isAudio ? entered : entered - baseline;
+    if (!isAudio && pages < 1) {
+      toast("⚠️", "Check the page number", `You were already on page ${num(baseline)} — enter a higher page.`);
+      return;
+    }
     const when = $("#log-when").value ? new Date($("#log-when").value).toISOString() : new Date().toISOString();
     const note = $("#log-note").value.trim();
     const minutes = Number($("#log-minutes").value) || 0;
@@ -3557,12 +3646,22 @@
     $("#btn-fetch").addEventListener("click", handleFetch);
     $("#btn-scan").addEventListener("click", openScan);
     $("#f-cover").addEventListener("input", (e) => setCoverPreview(e.target.value.trim()));
-    $("#cover-candidates").addEventListener("click", (e) => { const img = e.target.closest("[data-cover]"); if (!img) return; $$("#cover-candidates img").forEach((i) => i.classList.remove("sel")); img.classList.add("sel"); $("#f-cover").value = img.dataset.cover; setCoverPreview(img.dataset.cover); });
+    $("#cover-candidates").addEventListener("click", (e) => {
+      const card = e.target.closest("[data-doc-idx]");
+      if (!card) return;
+      const doc = lastSearchDocs[Number(card.dataset.docIdx)];
+      if (!doc) return;
+      $$("#cover-candidates .cand").forEach((c) => c.classList.remove("sel"));
+      card.classList.add("sel");
+      applyDoc(doc, { overwrite: true });
+      toast("✨", "Details filled in", doc.title || "Book selected");
+    });
     $$("input[name='f-status']").forEach((r) => r.addEventListener("change", () => toggleStatusFields(r.value)));
     wireStars($("#f-stars"), (v) => (modalRating = v));
 
     // Log + finish
     $("#log-form").addEventListener("submit", saveLog);
+    $("#log-pages").addEventListener("input", updateLogPageHint);
     $("#finish-form").addEventListener("submit", saveFinish);
     $("#timer-btn").addEventListener("click", toggleTimer);
     wireStars($("#finish-stars"), (v) => (finishRating = v));
