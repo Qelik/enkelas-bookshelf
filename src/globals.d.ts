@@ -74,6 +74,7 @@ interface WindowEventMap {
 // Loosely typed during the migration; tightened as src/types.ts fills in.
 
 interface Window {
+  BarcodeDetector?: typeof BarcodeDetector;
   showOpenFilePicker?(options?: OpenFilePickerOptions): Promise<FileSystemFileHandle[]>;
   showSaveFilePicker?(options?: SaveFilePickerOptions): Promise<FileSystemFileHandle>;
 

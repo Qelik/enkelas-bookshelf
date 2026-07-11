@@ -1,4 +1,5 @@
 /* Shared data-model types for Enkela's Bookshelf.
- * Filled in during the strict-typing pass; imported with `import type` so it
- * is fully erased from the emitted JavaScript. */
+ * The runtime source of truth is normalize() in app.ts — every Book field
+ * listed there (its rebuild whitelist) must exist here, and vice versa.
+ * Imported with `import type`, so this module is erased from emitted JS. */
 export {};

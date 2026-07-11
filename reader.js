@@ -22,7 +22,7 @@ const $ = (sel) => document.querySelector(sel);
 // Tiny helpers
 // ---------------------------------------------------------------------------
 function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]));
 }
 function toast(emoji, title, sub) {
     const stack = $("#toast-stack");
@@ -190,7 +190,7 @@ let turning = false;
 let session = null; // { seconds, chars, lastActivity, savedSeconds }
 let tickTimer = null;
 let etaMode = "chapter";
-let els = null;
+let els = null; // assigned by grabEls() before any use
 let drawerTab = "toc"; // which drawer tab is showing
 let sessionStartPct = 0; // book % when this reading session began (for the summary)
 let lastSearch = { q: "", results: null };
@@ -238,7 +238,7 @@ function renderDiag() {
         ["File size", kb],
         ["Chapters (spine)", book ? String(book.spine.length) : "—"],
         ["Position", book ? "ch " + (pos.ch + 1) + "/" + book.spine.length + " · page " + (pos.page + 1) + "/" + pag.pages : "—"],
-        ["Total characters", book ? book.totalChars.toLocaleString() : "—"],
+        ["Total characters", book ? (book.totalChars || 0).toLocaleString() : "—"],
         ["Linked book", linked],
         ["This session", session ? Math.round(session.seconds / 60) + " min · " + (session.logId ? "log " + String(session.logId).slice(0, 8) + "…" : "not logged yet") : "—"],
     ];

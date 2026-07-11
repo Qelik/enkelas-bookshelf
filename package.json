@@ -3,7 +3,7 @@
   "private": true,
   "description": "Reading tracker PWA — TypeScript sources in src/, compiled JS committed at root (served raw by GitHub Pages).",
   "scripts": {
-    "build": "tsc -p tsconfig.app.json; tsc -p tsconfig.sw.json",
+    "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.sw.json",
     "check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.sw.json --noEmit",
     "watch": "tsc -p tsconfig.app.json --watch"
   },

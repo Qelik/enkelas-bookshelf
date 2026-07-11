@@ -91,7 +91,7 @@ function nowLocalInput() {
 }
 function toLocalInput(iso) {
     const d = new Date(iso);
-    if (isNaN(d))
+    if (isNaN(d.getTime()))
         return nowLocalInput();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().slice(0, 16);
@@ -110,7 +110,7 @@ function fmtDateTime(iso) {
     return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]));
 }
 function num(n) { return Number(n || 0).toLocaleString(); }
 function unitLabel(book) { return book && book.format === "audio" ? "min" : "pages"; }
@@ -255,10 +255,10 @@ function normalize(data) {
     base.books.forEach((b) => {
         if (b.status !== "finished" || !b.finishedAt || !b.addedAt)
             return;
-        if (Math.abs(new Date(b.finishedAt) - new Date(b.addedAt)) > 60000)
+        if (Math.abs(new Date(b.finishedAt).getTime() - new Date(b.addedAt).getTime()) > 60000)
             return;
         const l = b.logs.length === 1 ? b.logs[0] : null;
-        if (!l || l.note !== "Imported from Goodreads" || Math.abs(new Date(l.date) - new Date(b.finishedAt)) > 60000)
+        if (!l || l.note !== "Imported from Goodreads" || Math.abs(new Date(l.date).getTime() - new Date(b.finishedAt).getTime()) > 60000)
             return;
         b.finishedAt = null;
         b.logs = [];
@@ -326,7 +326,7 @@ const PULL_MIN_MS = 60000; // ≥1 min between automatic pulls
 function isDirty() { return (state.updatedAt || "") > (loadSyncBase() || ""); }
 function syncEnabled() { return !!SYNC_API; }
 function loadAuth() { try {
-    return JSON.parse(localStorage.getItem(AUTH_KEY)) || null;
+    return JSON.parse(localStorage.getItem(AUTH_KEY) || "null") || null;
 }
 catch (e) {
     return null;
@@ -381,7 +381,7 @@ function markExported() {
 // Every sync conflict (two devices disagreeing) is remembered, so "wait, where
 // did that change go?" always has an answer. Capped, newest first.
 function loadConflictLog() { try {
-    return JSON.parse(localStorage.getItem(CONFLICTLOG_KEY)) || [];
+    return JSON.parse(localStorage.getItem(CONFLICTLOG_KEY) || "null") || [];
 }
 catch (e) {
     return [];
@@ -434,7 +434,7 @@ function relTimeLong(iso) {
 }
 async function apiFetch(path, opts) {
     opts = opts || {};
-    const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    const headers = Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {});
     if (auth && auth.token)
         headers["Authorization"] = "Bearer " + auth.token;
     const res = await fetch(SYNC_API.replace(/\/$/, "") + path, Object.assign({}, opts, { headers }));
@@ -739,7 +739,7 @@ function pagesRead(book) { return book.logs.reduce((s, l) => s + (Number(l.pages
 function pagesBefore(book, log) {
     if (!log)
         return pagesRead(book);
-    const sorted = [...book.logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const sorted = [...book.logs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     let sum = 0;
     for (const l of sorted) {
         if (l.id === log.id)
@@ -756,19 +756,19 @@ function booksFinishedInYear(year) {
 }
 function pagesReadInYear(year) {
     let s = 0;
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d) && d.getFullYear() === year)
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()) && d.getFullYear() === year)
         s += Number(l.pages) || 0; }));
     return s;
 }
 function pagesOnDay(t) {
     let s = 0;
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d) && startOfDay(d) === t)
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()) && startOfDay(d) === t)
         s += Number(l.pages) || 0; }));
     return s;
 }
 function perDayMap() {
     const m = {};
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d)) {
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) {
         const k = startOfDay(d);
         m[k] = (m[k] || 0) + (Number(l.pages) || 0);
     } }));
@@ -776,7 +776,7 @@ function perDayMap() {
 }
 function readingDaySet() {
     const days = new Set();
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d))
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()))
         days.add(startOfDay(d)); }));
     return days;
 }
@@ -875,7 +875,7 @@ function computeChallenges() {
     const monthsRead = new Set();
     finishedYr.forEach((b) => monthsRead.add(new Date(b.finishedAt).getMonth()));
     const fiveStar = state.books.some((b) => b.status === "finished" && b.rating === 5);
-    const speed = state.books.some((b) => b.status === "finished" && b.startedAt && b.finishedAt && (() => { const d = (new Date(b.finishedAt) - new Date(b.startedAt)) / DAY; return d >= 0 && d <= 7; })());
+    const speed = state.books.some((b) => b.status === "finished" && b.startedAt && b.finishedAt && (() => { const d = (new Date(b.finishedAt).getTime() - new Date(b.startedAt).getTime()) / DAY; return d >= 0 && d <= 7; })());
     const monthTarget = new Date().getFullYear() === year ? new Date().getMonth() + 1 : 12;
     const list = [
         { id: "genres5", emoji: "🌈", title: "Well-Rounded", desc: "Read 5 genres in " + year, value: genresYr.size, target: 5 },
@@ -892,7 +892,7 @@ function computeChallenges() {
 // Confetti 🎉
 // ---------------------------------------------------------------------------
 function confetti() {
-    if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)
+    if (typeof window.matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches)
         return;
     const colors = ["#9c5b3a", "#c98a4b", "#4f7d56", "#c0392b", "#e0a960", "#6a8caf"];
     for (let i = 0; i < 90; i++) {
@@ -1115,7 +1115,7 @@ function sessionInsights() {
     logs.forEach((l) => {
         const d = new Date(l.date);
         const weight = l.pages || 1;
-        if (!isNaN(d)) {
+        if (!isNaN(d.getTime())) {
             buckets[bucketOf(d.getHours())] += weight;
             dow[d.getDay()] += weight;
         }
@@ -1166,9 +1166,9 @@ function coachNudges() {
     const unreadOwned = state.books.filter((b) => b.owned && b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0);
     if (unreadOwned.length >= 3)
         nudges.push(`You already own <strong>${unreadOwned.length}</strong> unread books — a ready-made shelf, no shopping needed. 📚`);
-    const tbr = state.books.filter((b) => b.status === "want").slice().sort((a, b) => new Date(a.addedAt || 0) - new Date(b.addedAt || 0))[0];
+    const tbr = state.books.filter((b) => b.status === "want").slice().sort((a, b) => new Date(a.addedAt || 0).getTime() - new Date(b.addedAt || 0).getTime())[0];
     if (tbr) {
-        const days = Math.floor((Date.now() - new Date(tbr.addedAt)) / DAY);
+        const days = Math.floor((Date.now() - new Date(tbr.addedAt).getTime()) / DAY);
         if (days >= 120)
             nudges.push(`“${esc(tbr.title)}” has waited <strong>${days} days</strong> on your list. Read it soon, or let it go — both are fine. 🕊️`);
     }
@@ -1191,7 +1191,7 @@ function shelfInsightLines() {
     const lines = [];
     const unread = unreadOwnedBooks();
     if (unread.length) {
-        const oldest = unread.slice().sort((a, b) => new Date(a.addedAt || 0) - new Date(b.addedAt || 0))[0];
+        const oldest = unread.slice().sort((a, b) => new Date(a.addedAt || 0).getTime() - new Date(b.addedAt || 0).getTime())[0];
         const months = Math.floor((Date.now() - new Date(oldest.addedAt || Date.now()).getTime()) / (30.44 * DAY));
         lines.push(`<strong>${unread.length}</strong> owned book${unread.length === 1 ? "" : "s"} still unread${months >= 3 ? ` — <strong>${esc(oldest.title)}</strong> has waited longest (${months} months)` : ""}`);
     }
@@ -1333,7 +1333,7 @@ function loanBadgeHTML(b) {
     return `<span class="loan-badge${cls}" title="Borrowed copy — due back ${fmtDate(new Date(due).toISOString())}">📅 ${label}</span>`;
 }
 function tbrAgeHTML(b) {
-    const months = Math.floor((Date.now() - new Date(b.addedAt)) / (DAY * 30.44));
+    const months = Math.floor((Date.now() - new Date(b.addedAt).getTime()) / (DAY * 30.44));
     if (!(months >= 6))
         return "";
     return `<span class="tbr-badge" title="On your list since ${fmtDate(b.addedAt)}">🕰 ${months} months on your list</span>`;
@@ -1346,7 +1346,7 @@ function bookmarkHTML(b) {
 }
 function renderReading() {
     const all = state.books.filter((b) => b.status === "reading");
-    const list = all.filter((b) => bookMatches(b, readingQuery)).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+    const list = all.filter((b) => bookMatches(b, readingQuery)).sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
     const empty = $("#reading-empty");
     empty.hidden = list.length > 0;
     empty.textContent = all.length === 0 ? "You're not reading anything yet. Add a book to start logging your pages." : "No books match your search.";
@@ -1505,7 +1505,7 @@ function renderReadNext() {
 function renderWant() {
     renderReadNext();
     const all = state.books.filter((b) => b.status === "want");
-    const list = all.filter((b) => bookMatches(b, wantQuery)).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+    const list = all.filter((b) => bookMatches(b, wantQuery)).sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
     const empty = $("#want-empty");
     empty.hidden = list.length > 0;
     empty.textContent = all.length === 0 ? "Nothing on your list yet. Add books you'd like to read next." : "No books match your search.";
@@ -1556,14 +1556,14 @@ function renderLibrary() {
     const sort = $("#library-sort").value;
     list.sort((a, b) => {
         if (sort === "finished-asc")
-            return new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0);
+            return new Date(a.finishedAt || 0).getTime() - new Date(b.finishedAt || 0).getTime();
         if (sort === "rating-desc")
             return (b.rating || 0) - (a.rating || 0);
         if (sort === "pages-desc")
             return (b.totalPages || 0) - (a.totalPages || 0);
         if (sort === "title-asc")
             return a.title.localeCompare(b.title);
-        return new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0);
+        return new Date(b.finishedAt || 0).getTime() - new Date(a.finishedAt || 0).getTime();
     });
     const empty = $("#library-empty");
     empty.hidden = list.length > 0;
@@ -1771,16 +1771,16 @@ function renderGoal() {
     const fg = $("#goal-ring-fg");
     fg.style.strokeDasharray = circ.toFixed(1);
     fg.style.strokeDashoffset = (circ * (1 - pct / 100)).toFixed(1);
-    $("#goal-count").textContent = done;
+    $("#goal-count").textContent = String(done);
     $("#goal-of").textContent = "of " + target;
     if (document.activeElement !== $("#goal-year"))
-        $("#goal-year").value = goal.year;
+        $("#goal-year").value = String(goal.year);
     if (document.activeElement !== $("#goal-target"))
-        $("#goal-target").value = target;
+        $("#goal-target").value = String(target);
     if (document.activeElement !== $("#goal-pages"))
-        $("#goal-pages").value = goal.pagesTarget || "";
+        $("#goal-pages").value = String(goal.pagesTarget || "");
     if (document.activeElement !== $("#goal-daily"))
-        $("#goal-daily").value = goal.dailyPages || "";
+        $("#goal-daily").value = String(goal.dailyPages || "");
     const hint = $("#goal-hint");
     if (target && done >= target)
         hint.textContent = `🎉 Goal smashed! ${done} books in ${goal.year}.`;
@@ -1810,7 +1810,7 @@ function renderGoalExtra() {
     if (isThisYear && g.target > 0) {
         const done = booksFinishedInYear(g.year);
         const now = new Date();
-        const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / DAY);
+        const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / DAY);
         const expected = g.target * (dayOfYear / 365);
         const diff = done - expected;
         const rounded = Math.abs(Math.round(diff * 10) / 10);
@@ -1839,7 +1839,7 @@ function renderChallenges() {
 // ---------------------------------------------------------------------------
 function renderStatsView() {
     const logs = [];
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d))
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()))
         logs.push({ d, pages: Number(l.pages) || 0 }); }));
     const empty = logs.length === 0;
     $("#stats-empty").hidden = !empty;
@@ -1977,7 +1977,7 @@ function openBookPage(book, opts) {
     currentDetailId = book.id;
     const read = pagesRead(book);
     const pct = book.totalPages ? Math.min(100, Math.round((read / book.totalPages) * 100)) : 0;
-    const logs = book.logs.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+    const logs = book.logs.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const statusLabels = { want: "Want to read", reading: "Currently reading", finished: "Finished", dnf: "Did not finish" };
     const dates = book.status === "finished" ? (book.finishedAt ? "Finished " + fmtDate(book.finishedAt) : "")
         : book.status === "reading" ? (book.startedAt ? "Started " + fmtDate(book.startedAt) : "") : "";
@@ -2008,7 +2008,7 @@ function openBookPage(book, opts) {
     if (book.bookmark)
         meta.push(`🔖 ${book.bookmark.page ? "p." + book.bookmark.page : "Bookmark"}${book.bookmark.note ? " — “" + esc(book.bookmark.note) + "”" : ""}`);
     const quotes = book.quotes || [];
-    const journal = (book.journal || []).slice().sort((a, b2) => new Date(b2.date) - new Date(a.date));
+    const journal = (book.journal || []).slice().sort((a, b2) => new Date(b2.date).getTime() - new Date(a.date).getTime());
     const chars = book.characters || [];
     const vocab = book.vocab || [];
     const history = (book.finishHistory || []).filter((f) => f.date);
@@ -2170,7 +2170,7 @@ function progressMeter(book, logs) {
     const pct = total ? Math.max(0, Math.min(100, Math.round((read / total) * 100))) : 0;
     const left = total ? Math.max(0, total - read) : 0;
     const startedISO = book.startedAt || logs[0].date;
-    const started = !isNaN(new Date(startedISO)) ? "started " + fmtDate(startedISO) : "";
+    const started = !isNaN(new Date(startedISO).getTime()) ? "started " + fmtDate(startedISO) : "";
     const head = total
         ? `<span>${num(read)} / ${num(total)} ${unit}</span><span>${pct}%</span>`
         : `<span>${num(read)} ${unit} read</span><span></span>`;
@@ -2186,7 +2186,7 @@ function progressMeter(book, logs) {
     </div>`;
 }
 function svgProgress(book) {
-    const logs = book.logs.slice().filter((l) => !isNaN(new Date(l.date))).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const logs = book.logs.slice().filter((l) => !isNaN(new Date(l.date).getTime())).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     if (!logs.length)
         return `<p class="muted">No reading sessions yet — log some pages to see your progress.</p>`;
     const distinctDays = new Set(logs.map((l) => startOfDay(new Date(l.date)))).size;
@@ -2224,7 +2224,7 @@ function openYearReview(year) {
     const pages = pagesReadInYear(year);
     const rated = finished.filter((b) => b.rating);
     const avg = rated.length ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length) : 0;
-    const fav = rated.slice().sort((a, b) => (b.rating - a.rating) || (new Date(b.finishedAt) - new Date(a.finishedAt)))[0];
+    const fav = rated.slice().sort((a, b) => (b.rating - a.rating) || (new Date(b.finishedAt).getTime() - new Date(a.finishedAt).getTime()))[0];
     const longest = finished.slice().sort((a, b) => (b.totalPages || 0) - (a.totalPages || 0))[0];
     const genres = {};
     finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
@@ -2302,7 +2302,7 @@ function bookMarkdown(b) {
         lines.push(`## Why I set it aside`, "", b.dnfReason, "");
     if ((b.journal || []).length) {
         lines.push(`## Journal`, "");
-        b.journal.slice().sort((x, y) => new Date(x.date) - new Date(y.date))
+        b.journal.slice().sort((x, y) => new Date(x.date).getTime() - new Date(y.date).getTime())
             .forEach((j) => lines.push(`- **${fmtDate(j.date)}**${j.page ? ` (p.${j.page})` : ""} — ${j.text}`));
         lines.push("");
     }
@@ -2322,7 +2322,7 @@ function bookMarkdown(b) {
     }
     if (b.logs.length) {
         lines.push(`## Reading sessions`, "");
-        b.logs.slice().sort((x, y) => new Date(x.date) - new Date(y.date))
+        b.logs.slice().sort((x, y) => new Date(x.date).getTime() - new Date(y.date).getTime())
             .forEach((l) => lines.push(`- ${fmtDateTime(l.date)}: ${num(l.pages)} ${unitLabel(b)}${l.minutes ? `, ${l.minutes} min` : ""}${l.mood ? " " + l.mood : ""}${l.note ? ` — “${l.note}”` : ""}`));
         lines.push("");
     }
@@ -2331,7 +2331,7 @@ function bookMarkdown(b) {
 }
 function yearMarkdown(year) {
     const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year)
-        .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+        .sort((a, b) => new Date(a.finishedAt).getTime() - new Date(b.finishedAt).getTime());
     const lines = [`# My ${year} in books`, "", `${finished.length} books · ${num(pagesReadInYear(year))} pages`, ""];
     finished.forEach((b) => {
         lines.push(`## ${b.title}${b.author ? ` — ${b.author}` : ""}`, "");
@@ -2630,7 +2630,7 @@ function monthLogs(y, m) {
     const logs = [];
     state.books.forEach((b) => b.logs.forEach((l) => {
         const d = new Date(l.date);
-        if (!isNaN(d) && d.getFullYear() === y && d.getMonth() === m)
+        if (!isNaN(d.getTime()) && d.getFullYear() === y && d.getMonth() === m)
             logs.push({ d, pages: Number(l.pages) || 0, minutes: Number(l.minutes) || 0 });
     }));
     return logs;
@@ -2718,7 +2718,7 @@ function journeyEvents() {
         if (b.status === "dnf" && b.finishedAt)
             ev.push({ t: b.finishedAt, icon: "🚧", title: `Set aside “${b.title}”`, sub: b.dnfReason ? "“" + b.dnfReason + "”" : "", id: b.id });
     });
-    return ev.filter((e) => e.t && !isNaN(new Date(e.t))).sort((a, b) => new Date(b.t) - new Date(a.t));
+    return ev.filter((e) => e.t && !isNaN(new Date(e.t).getTime())).sort((a, b) => new Date(b.t).getTime() - new Date(a.t).getTime());
 }
 function ownedCardHTML(b) {
     const statusLabels = { want: "📌 Want to read", reading: "📖 Reading now", finished: "✓ Read", dnf: "✕ Set aside" };
@@ -2775,7 +2775,7 @@ function renderOwned() {
     $("#owned-count").textContent = owned.length
         ? `You own ${num(owned.length)} book${owned.length === 1 ? "" : "s"}${parts.length ? " · " + parts.join(" · ") : ""}`
         : "";
-    const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0) - new Date(b.lentAt || 0));
+    const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0).getTime() - new Date(b.lentAt || 0).getTime());
     $("#owned-lent-wrap").hidden = !(lent.length && !q);
     $("#owned-lent").innerHTML = lent.map(ownedCardHTML).join("");
     const filtering = q || ownedLocation || ownedUnreadOnly;
@@ -2806,7 +2806,7 @@ function renderJourney() {
     let lastDay = "", lastMonth = "";
     el.innerHTML = ev.slice(0, MAX).map((e) => {
         const d = new Date(e.t);
-        const month = isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+        const month = isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
         const monthHead = month && month !== lastMonth ? `<div class="j-month">${month}</div>` : "";
         lastMonth = month;
         const day = fmtDate(e.t);
@@ -3045,7 +3045,7 @@ async function fetchGenresForBook(book) {
             docs = m;
     }
     const doc = docs.find((d) => Array.isArray(d.subject) && d.subject.length) || docs[0];
-    let picks = cleanSubjects(doc && doc.subject);
+    let picks = cleanSubjects((doc && doc.subject) || []);
     if (picks.length < 3 && doc && doc.key) {
         try {
             const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json();
@@ -3061,7 +3061,7 @@ function mergeDuplicateGroup(group) {
     const title = group[0].title;
     if (!confirm(`Merge ${group.length} copies of “${title}” into one?\n\nReading logs, quotes, journal, tags and shelves are combined; the extra copies are removed. This can't be undone.`))
         return;
-    const primary = group.slice().sort((a, b) => (b.logs.length - a.logs.length) || (new Date(a.addedAt) - new Date(b.addedAt)))[0];
+    const primary = group.slice().sort((a, b) => (b.logs.length - a.logs.length) || (new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime()))[0];
     const others = group.filter((b) => b !== primary);
     others.forEach((o) => {
         primary.logs = primary.logs.concat(o.logs || []);
@@ -3155,7 +3155,7 @@ function openClubWs(clubId) {
 }
 // Per-club "last seen" (unread dots), stored locally.
 function loadClubSeen() { try {
-    return JSON.parse(localStorage.getItem("enkelas-club-seen")) || {};
+    return JSON.parse(localStorage.getItem("enkelas-club-seen") || "null") || {};
 }
 catch (e) {
     return {};
@@ -3737,12 +3737,12 @@ function openBookModal(opts) {
     $("#f-id").value = book ? book.id : "";
     $("#f-title").value = book ? book.title : "";
     $("#f-author").value = book ? book.author : "";
-    $("#f-pages").value = book && book.totalPages ? book.totalPages : "";
+    $("#f-pages").value = book && book.totalPages ? String(book.totalPages) : "";
     $("#f-isbn").value = book ? book.isbn : "";
     $("#f-format").value = book ? book.format : "physical";
-    $("#f-year").value = book && book.publishedYear ? book.publishedYear : "";
+    $("#f-year").value = book && book.publishedYear ? String(book.publishedYear) : "";
     $("#f-series").value = book ? book.seriesName : "";
-    $("#f-series-num").value = book && book.seriesNumber != null ? book.seriesNumber : "";
+    $("#f-series-num").value = book && book.seriesNumber != null ? String(book.seriesNumber) : "";
     $("#f-cover").value = book ? book.coverUrl : "";
     $("#f-owned").checked = book ? !!book.owned : false;
     $("#f-location").value = book ? (book.location || "") : "";
@@ -3842,7 +3842,7 @@ async function fetchGenresForForm(opts) {
                 docs = m;
         }
         const doc = docs.find((d) => Array.isArray(d.subject) && d.subject.length) || docs[0];
-        let picks = cleanSubjects(doc && doc.subject);
+        let picks = cleanSubjects((doc && doc.subject) || []);
         // The work record usually carries a richer subject list than search docs.
         if (picks.length < 3 && doc && doc.key) {
             try {
@@ -3917,7 +3917,7 @@ async function handleFetch() {
         }
         // Show the matches as a pickable list and pre-fill from the best one,
         // leaving anything the user already typed untouched.
-        renderCandidates(docs, 0);
+        renderCandidates(docs);
         applyDoc(docs[0], { overwrite: false });
         toast("✨", "Found it!", docs.length > 1 ? "Not the one? Pick another below." : "Wrong cover or genres? Tweak them below.");
     }
@@ -3946,7 +3946,7 @@ async function applyDoc(doc, opts) {
     const myToken = ++applyDocToken;
     const put = (sel, val) => { if (val == null || val === "")
         return; if (overwrite || !$(sel).value)
-        $(sel).value = val; };
+        $(sel).value = String(val); };
     put("#f-title", doc.title);
     put("#f-author", doc.author_name && doc.author_name[0]);
     put("#f-pages", doc.number_of_pages_median);
@@ -3957,7 +3957,7 @@ async function applyDoc(doc, opts) {
         $("#f-cover").value = cover;
         setCoverPreview(cover);
     }
-    const picks = cleanSubjects(doc.subject);
+    const picks = cleanSubjects(doc.subject || []);
     if (picks.length && (overwrite || !$("#f-tags").value.trim())) {
         $("#f-tags").value = picks.join(", ");
         renderTagHelpers();
@@ -4002,7 +4002,7 @@ function renderCandidates(docs, selIdx) {
             : `<span class="cand-noimg">📕</span>`;
         const bits = [d.author_name && d.author_name[0] ? esc(d.author_name[0]) : "Unknown author"];
         if (d.first_publish_year)
-            bits.push(d.first_publish_year);
+            bits.push(String(d.first_publish_year));
         if (d.number_of_pages_median)
             bits.push(d.number_of_pages_median + "p");
         return `<button type="button" class="cand${i === selIdx ? " sel" : ""}" data-doc-idx="${i}" title="Use this book's details">
@@ -4085,15 +4085,15 @@ function openLogModal(book, log) {
     const baseline = pagesBefore(book, log);
     $("#log-book-id").value = book.id;
     $("#log-id").value = log ? log.id : "";
-    $("#log-baseline").value = baseline;
+    $("#log-baseline").value = String(baseline);
     $("#log-book-name").textContent = book.title;
     $("#log-modal-title").textContent = log ? "Edit reading session" : "Log a reading session";
     // Audio books track minutes as a running total per session; page-based books
     // ask for the page you've reached and we work out the delta ourselves.
     $("#log-pages-label").textContent = isAudio ? "Minutes read this session *" : "Current page *";
-    $("#log-pages").min = isAudio ? 1 : baseline + 1;
-    $("#log-pages").value = log ? (isAudio ? log.pages : baseline + log.pages) : "";
-    $("#log-minutes").value = log && log.minutes ? log.minutes : "";
+    $("#log-pages").min = String(isAudio ? 1 : baseline + 1);
+    $("#log-pages").value = log ? String(isAudio ? log.pages : baseline + log.pages) : "";
+    $("#log-minutes").value = log && log.minutes ? String(log.minutes) : "";
     $("#log-note").value = log ? log.note : "";
     $("#log-when").value = log ? toLocalInput(log.date) : nowLocalInput();
     paintMood(log ? log.mood : "");
@@ -4254,7 +4254,7 @@ function rateBook(book) {
 function openBookmarkModal(book) {
     $("#bm-book-id").value = book.id;
     $("#bm-book-name").textContent = book.title;
-    $("#bm-page").value = book.bookmark && book.bookmark.page ? book.bookmark.page : "";
+    $("#bm-page").value = book.bookmark && book.bookmark.page ? String(book.bookmark.page) : "";
     $("#bm-note").value = book.bookmark ? book.bookmark.note : "";
     $("#bm-clear").hidden = !book.bookmark;
     showModal("bookmark-modal");
@@ -4347,7 +4347,7 @@ function resetTimer() {
 function toggleTimer() {
     if (timerStart) {
         const mins = Math.max(0, Math.round((Date.now() - timerStart) / 60000));
-        $("#log-minutes").value = (Number($("#log-minutes").value) || 0) + mins;
+        $("#log-minutes").value = String((Number($("#log-minutes").value) || 0) + mins);
         resetTimer();
     }
     else {
@@ -4718,7 +4718,7 @@ function paintStarSpans(container, v) {
     });
 }
 function paintStars(container, rating) {
-    container.dataset.rating = rating;
+    container.dataset.rating = String(rating);
     paintStarSpans(container, Number(rating));
 }
 // Click the left half of a star for a half-star rating (e.g. 3.5★).
@@ -4990,7 +4990,7 @@ function importGoodreads(file) {
                     owned: cOwned >= 0 ? (parseFloat(clean(row[cOwned]) || "0") || 0) > 0 : false,
                 };
                 if (status === "finished" && pages > 0 && finishedAt)
-                    book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, note: "Imported from Goodreads" });
+                    book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, mood: "", note: "Imported from Goodreads" });
                 state.books.push(book);
                 added++;
             }
@@ -5781,7 +5781,7 @@ export const BookshelfAPI = {
         }
         let lg = logId ? b.logs.find((x) => x.id === logId) : null;
         if (!lg) {
-            lg = { id: uid(), mood: "", note: "" };
+            lg = { id: uid(), date: new Date().toISOString(), pages: 0, minutes: 0, mood: "", note: "" };
             b.logs.push(lg);
         }
         lg.date = new Date().toISOString();
@@ -5799,7 +5799,7 @@ export const BookshelfAPI = {
         if (!b || !t)
             return false;
         b.quotes = b.quotes || [];
-        b.quotes.push({ id: uid(), text: t.slice(0, 2000), page: null });
+        b.quotes.push({ id: uid(), text: t.slice(0, 2000), page: null, at: null });
         commit();
         return true;
     },

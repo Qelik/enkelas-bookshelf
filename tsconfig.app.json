@@ -10,9 +10,7 @@
     "rootDir": "src",
     "outDir": ".",
     "strict": true,
-    // Emit continues while the strict burn-down is in progress; flipped to
-    // true once the codebase is diagnostic-clean.
-    "noEmitOnError": false,
+    "noEmitOnError": true,
     "types": [],
     "skipLibCheck": true
   },

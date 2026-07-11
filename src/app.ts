@@ -4,6 +4,7 @@
  */
 
 import { EReader, initReader } from "./reader.js";
+import type { AppState, Auth, Book, BookStatus, ChartItem, Club, ClubComment, ClubMember, OLDoc, ReadingLog, RecRow, SyncStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,7 +23,7 @@ const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
 let SYNC_API = "https://enkelas-bookshelf-sync.enkela.workers.dev";
-try { SYNC_API = localStorage.getItem("enkelas-sync-api") || SYNC_API; } catch (e) { /* ignore */ }
+try { SYNC_API = localStorage.getItem("enkelas-sync-api") || SYNC_API; } catch (e: any) { /* ignore */ }
 const FORMAT_ICON = { physical: "📖", ebook: "📱", audio: "🎧" };
 
 const PAGE_MILESTONES = [
@@ -51,32 +52,32 @@ const BOOK_MILESTONES = [
 // NOTE: must be declared before `state = loadState()` below (normalize uses it).
 const JUNK_TAG = /^(to-read|currently-reading|read|did-not-finish|dnf|abandoned|why-did-i(-.*)?)$/i;
 const SERIES_TAG = /^series?[-_: ]+(.+)$/i;
-function isJunkTag(tag) { return JUNK_TAG.test(tag) || SERIES_TAG.test(tag); }
+function isJunkTag(tag: string) { return JUNK_TAG.test(tag) || SERIES_TAG.test(tag); }
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let state = loadState();
-let fileHandle = null;
-let knownBadges = new Set();
+let state: AppState = loadState();
+let fileHandle: FileSystemFileHandle | null = null;
+let knownBadges = new Set<string>();
 let activeView = "reading";
 let storagePersisted = false;
 let readingQuery = "", wantQuery = "", libraryQuery = "", ownedQuery = "";
 let ownedLocation = "", ownedUnreadOnly = false;
 let libraryTag = "", libraryCollection = "", libraryView = "grid";
 let libraryFormat = "", libraryRating = 0;
-let currentDetailId = null;
+let currentDetailId: string | null = null;
 let yearReviewYear = new Date().getFullYear();
 
 const supportsFS = "showSaveFilePicker" in window && "showOpenFilePicker" in window;
 // Dev-mode perf logging: run `localStorage.setItem("enkelas-perf","1")` then reload.
-const PERF = (() => { try { return localStorage.getItem("enkelas-perf") === "1"; } catch (e) { return false; } })();
+const PERF = (() => { try { return localStorage.getItem("enkelas-perf") === "1"; } catch (e: any) { return false; } })();
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
+const $$ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => Array.from(root.querySelectorAll(sel)) as T[];
 
 function uid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -88,34 +89,34 @@ function nowLocalInput() {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
-function toLocalInput(iso) {
-  const d = new Date(iso);
-  if (isNaN(d)) return nowLocalInput();
+function toLocalInput(iso: string | null | undefined) {
+  const d = new Date(iso as any);
+  if (isNaN(d.getTime())) return nowLocalInput();
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
-function startOfDay(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); return d.getTime(); }
-function fmtDate(iso) {
+function startOfDay(date: string | number | Date) { const d = new Date(date); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function fmtDate(iso: string | null | undefined) {
   if (!iso) return "";
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
-function fmtDateTime(iso) {
+function fmtDateTime(iso: string | null | undefined) {
   if (!iso) return "";
   const d = new Date(iso);
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
-function esc(s) {
+function esc(s: unknown) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    ((({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c]));
 }
-function num(n) { return Number(n || 0).toLocaleString(); }
-function unitLabel(book) { return book && book.format === "audio" ? "min" : "pages"; }
-function unitShort(book) { return book && book.format === "audio" ? "m" : "p"; }
-function hashHue(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0; return h % 360; }
+function num(n: unknown) { return Number(n || 0).toLocaleString(); }
+function unitLabel(book: Book) { return book && book.format === "audio" ? "min" : "pages"; }
+function unitShort(book: Book) { return book && book.format === "audio" ? "m" : "p"; }
+function hashHue(str: string) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0; return h % 360; }
 
-function parseList(str) {
-  const seen = new Set(), out = [];
+function parseList(str: string) {
+  const seen = new Set<string>(), out: string[] = [];
   String(str || "").split(",").forEach((t) => {
     const v = t.trim(), key = v.toLowerCase();
     if (v && !seen.has(key)) { seen.add(key); out.push(v); }
@@ -123,7 +124,7 @@ function parseList(str) {
   return out;
 }
 const parseTags = parseList;
-function uniqueValues(getter) {
+function uniqueValues(getter: (b: Book) => string[]) {
   const seen = new Map();
   state.books.forEach((b) => (getter(b) || []).forEach((t) => {
     const key = String(t).toLowerCase();
@@ -139,7 +140,7 @@ function allLocations() {
   return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
 }
 
-function bookMatches(book, q) {
+function bookMatches(book: Book, q: string) {
   if (!q) return true;
   q = q.toLowerCase();
   return book.title.toLowerCase().includes(q)
@@ -151,9 +152,9 @@ function bookMatches(book, q) {
     || (book.tags || []).some((t) => t.toLowerCase().includes(q))
     || (book.collections || []).some((t) => t.toLowerCase().includes(q));
 }
-function fmtIcon(b) { return `<span class="fmt" title="${b.format || "physical"}">${FORMAT_ICON[b.format] || FORMAT_ICON.physical}</span> `; }
-function seriesLabel(b) { return b.seriesName ? ` · <span class="series">${esc(b.seriesName)}${b.seriesNumber ? " #" + b.seriesNumber : ""}</span>` : ""; }
-function chipsHTML(book, clickable) {
+function fmtIcon(b: Book) { return `<span class="fmt" title="${b.format || "physical"}">${FORMAT_ICON[b.format] || FORMAT_ICON.physical}</span> `; }
+function seriesLabel(b: Book) { return b.seriesName ? ` · <span class="series">${esc(b.seriesName)}${b.seriesNumber ? " #" + b.seriesNumber : ""}</span>` : ""; }
+function chipsHTML(book: Book, clickable: boolean) {
   const t = (book.tags || []).map((x) =>
     `<span class="tag${clickable ? " clickable" : ""}"${clickable ? ` data-tag="${esc(x)}"` : ""}>${esc(x)}</span>`);
   const c = (book.collections || []).map((x) =>
@@ -165,7 +166,7 @@ function chipsHTML(book, clickable) {
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
-function defaultState() {
+function defaultState(): AppState {
   return {
     version: SCHEMA_VERSION,
     updatedAt: new Date().toISOString(),
@@ -179,19 +180,19 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
     return normalize(JSON.parse(raw));
-  } catch (e) {
+  } catch (e: any) {
     console.warn("Could not load saved data, starting fresh.", e);
     return defaultState();
   }
 }
-function normalize(data) {
+function normalize(data: any): AppState {
   const base = defaultState();
   if (!data || typeof data !== "object") return base;
   if (data.updatedAt) base.updatedAt = data.updatedAt;
   base.settings.goal = Object.assign(base.settings.goal, (data.settings && data.settings.goal) || {});
   base.shelfOrder = Array.isArray(data.shelfOrder) ? data.shelfOrder.map(String) : [];
   const STATUSES = ["want", "reading", "finished", "dnf"];
-  base.books = Array.isArray(data.books) ? data.books.map((b) => ({
+  base.books = Array.isArray(data.books) ? data.books.map((b: any) => ({
     id: b.id || uid(),
     title: b.title || "Untitled",
     author: b.author || "",
@@ -200,19 +201,19 @@ function normalize(data) {
     isbn: b.isbn || "",
     review: b.review || "",
     description: b.description || "",
-    tags: Array.isArray(b.tags) ? b.tags.map((t) => String(t).trim()).filter((t) => t && !isJunkTag(t)) : [],
-    collections: Array.isArray(b.collections) ? b.collections.map((t) => String(t).trim()).filter(Boolean) : [],
+    tags: Array.isArray(b.tags) ? b.tags.map((t: any) => String(t).trim()).filter((t: any) => t && !isJunkTag(t)) : [],
+    collections: Array.isArray(b.collections) ? b.collections.map((t: any) => String(t).trim()).filter(Boolean) : [],
     format: ["physical", "ebook", "audio"].indexOf(b.format) >= 0 ? b.format : "physical",
     seriesName: b.seriesName || "",
     seriesNumber: b.seriesNumber != null && b.seriesNumber !== "" ? Number(b.seriesNumber) : null,
     publishedYear: b.publishedYear ? Number(b.publishedYear) : null,
-    quotes: Array.isArray(b.quotes) ? b.quotes.map((q) => ({ id: q.id || uid(), text: q.text || "", page: q.page != null ? Number(q.page) : null, at: q.at || null })) : [],
+    quotes: Array.isArray(b.quotes) ? b.quotes.map((q: any) => ({ id: q.id || uid(), text: q.text || "", page: q.page != null ? Number(q.page) : null, at: q.at || null })) : [],
     readCount: Number(b.readCount) || 1,
-    finishHistory: Array.isArray(b.finishHistory) ? b.finishHistory.map((f) =>
+    finishHistory: Array.isArray(b.finishHistory) ? b.finishHistory.map((f: any) =>
       typeof f === "string" ? { date: f, rating: null } : { date: f.date || null, rating: f.rating ? Number(f.rating) : null }) : [],
-    journal: Array.isArray(b.journal) ? b.journal.map((j) => ({ id: j.id || uid(), date: j.date || new Date().toISOString(), page: j.page != null && j.page !== "" ? Number(j.page) : null, text: j.text || "" })) : [],
-    characters: Array.isArray(b.characters) ? b.characters.map((c) => ({ id: c.id || uid(), name: c.name || "", desc: c.desc || "" })) : [],
-    vocab: Array.isArray(b.vocab) ? b.vocab.map((v) => ({ id: v.id || uid(), word: v.word || "", def: v.def || "", page: v.page != null && v.page !== "" ? Number(v.page) : null })) : [],
+    journal: Array.isArray(b.journal) ? b.journal.map((j: any) => ({ id: j.id || uid(), date: j.date || new Date().toISOString(), page: j.page != null && j.page !== "" ? Number(j.page) : null, text: j.text || "" })) : [],
+    characters: Array.isArray(b.characters) ? b.characters.map((c: any) => ({ id: c.id || uid(), name: c.name || "", desc: c.desc || "" })) : [],
+    vocab: Array.isArray(b.vocab) ? b.vocab.map((v: any) => ({ id: v.id || uid(), word: v.word || "", def: v.def || "", page: v.page != null && v.page !== "" ? Number(v.page) : null })) : [],
     bookmark: b.bookmark && (b.bookmark.note || b.bookmark.page != null) ? { page: b.bookmark.page != null && b.bookmark.page !== "" ? Number(b.bookmark.page) : null, note: String(b.bookmark.note || ""), date: b.bookmark.date || null } : null,
     dnfReason: b.dnfReason || "",
     pickReason: b.pickReason || "",
@@ -228,7 +229,7 @@ function normalize(data) {
     startedAt: b.startedAt || null,
     finishedAt: b.finishedAt || null,
     addedAt: b.addedAt || new Date().toISOString(),
-    logs: Array.isArray(b.logs) ? b.logs.map((l) => ({
+    logs: Array.isArray(b.logs) ? b.logs.map((l: any) => ({
       id: l.id || uid(),
       date: l.date || new Date().toISOString(),
       pages: Number(l.pages) || 0,
@@ -243,9 +244,9 @@ function normalize(data) {
   // exactly one "Imported from Goodreads" log at that same moment.
   base.books.forEach((b) => {
     if (b.status !== "finished" || !b.finishedAt || !b.addedAt) return;
-    if (Math.abs(new Date(b.finishedAt) - new Date(b.addedAt)) > 60000) return;
+    if (Math.abs(new Date(b.finishedAt!).getTime() - new Date(b.addedAt).getTime()) > 60000) return;
     const l = b.logs.length === 1 ? b.logs[0] : null;
-    if (!l || l.note !== "Imported from Goodreads" || Math.abs(new Date(l.date) - new Date(b.finishedAt)) > 60000) return;
+    if (!l || l.note !== "Imported from Goodreads" || Math.abs(new Date(l.date).getTime() - new Date(b.finishedAt!).getTime()) > 60000) return;
     b.finishedAt = null;
     b.logs = [];
   });
@@ -253,13 +254,13 @@ function normalize(data) {
 }
 
 async function persist() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { console.warn(e); }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e: any) { console.warn(e); }
   if (fileHandle) {
     try {
       const writable = await fileHandle.createWritable();
       await writable.write(JSON.stringify(state, null, 2));
       await writable.close();
-    } catch (e) {
+    } catch (e: any) {
       console.warn("File write failed:", e);
       toast("⚠️", "Couldn't write file", "Falling back to in-browser storage.");
       fileHandle = null;
@@ -272,24 +273,24 @@ function commit() { state.updatedAt = new Date().toISOString(); render(); persis
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
-function loadTheme() { try { return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light"; } catch (e) { return "light"; } }
-function applyTheme(theme) {
+function loadTheme() { try { return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light"; } catch (e: any) { return "light"; } }
+function applyTheme(theme: string) {
   document.documentElement.setAttribute("data-theme", theme);
-  const btn = $("#btn-theme");
+  const btn = $<HTMLButtonElement>("#btn-theme");
   if (btn) { btn.textContent = theme === "dark" ? "☀️" : "🌙"; btn.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode"; }
 }
 function toggleTheme() {
   const next = loadTheme() === "dark" ? "light" : "dark";
-  try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(THEME_KEY, next); } catch (e: any) { /* ignore */ }
   applyTheme(next);
 }
 
 // ---------------------------------------------------------------------------
 // Accounts + cross-device sync (optional; active only when SYNC_API is set)
 // ---------------------------------------------------------------------------
-let auth = loadAuth();
-let pushTimer = null;
-let authMode = "login";
+let auth: Auth | null = loadAuth();
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+let authMode: "login" | "register" = "login";
 let lastPushAt = 0, lastPullAt = 0;
 // Free Workers KV tier is tight on writes (~1k/day). Coalesce cloud writes so
 // the eReader's per-minute session logging + rapid edits don't each cost a write.
@@ -298,37 +299,37 @@ const PULL_MIN_MS = 60000;  // ≥1 min between automatic pulls
 function isDirty() { return (state.updatedAt || "") > (loadSyncBase() || ""); }
 
 function syncEnabled() { return !!SYNC_API; }
-function loadAuth() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)) || null; } catch (e) { return null; } }
-function saveAuth(a) { auth = a; try { a ? localStorage.setItem(AUTH_KEY, JSON.stringify(a)) : localStorage.removeItem(AUTH_KEY); } catch (e) { /* ignore */ } }
-function loadSyncBase() { try { return localStorage.getItem(SYNCBASE_KEY) || null; } catch (e) { return null; } }
-function saveSyncBase(v) { try { v ? localStorage.setItem(SYNCBASE_KEY, v) : localStorage.removeItem(SYNCBASE_KEY); } catch (e) { /* ignore */ } }
+function loadAuth(): Auth | null { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || "null") || null; } catch (e: any) { return null; } }
+function saveAuth(a: Auth | null) { auth = a; try { a ? localStorage.setItem(AUTH_KEY, JSON.stringify(a)) : localStorage.removeItem(AUTH_KEY); } catch (e: any) { /* ignore */ } }
+function loadSyncBase() { try { return localStorage.getItem(SYNCBASE_KEY) || null; } catch (e: any) { return null; } }
+function saveSyncBase(v: string | null) { try { v ? localStorage.setItem(SYNCBASE_KEY, v) : localStorage.removeItem(SYNCBASE_KEY); } catch (e: any) { /* ignore */ } }
 
 // Sync status surfaced in the header + Settings: idle | syncing | offline | error | needslogin
-let syncStatus = (typeof navigator !== "undefined" && navigator.onLine === false) ? "offline" : "idle";
-function setSyncStatus(s) {
+let syncStatus: SyncStatus = (typeof navigator !== "undefined" && navigator.onLine === false) ? "offline" : "idle";
+function setSyncStatus(s: SyncStatus) {
   syncStatus = s;
   renderStorageStatus();
   const sm = $("#settings-modal");
   if (sm && !sm.hidden) renderSettings();
 }
-function loadLastSync() { try { return localStorage.getItem(LASTSYNC_KEY) || null; } catch (e) { return null; } }
-function markSynced() { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch (e) { /* ignore */ } }
-function loadLastExport() { try { return localStorage.getItem(LASTEXPORT_KEY) || null; } catch (e) { return null; } }
+function loadLastSync() { try { return localStorage.getItem(LASTSYNC_KEY) || null; } catch (e: any) { return null; } }
+function markSynced() { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch (e: any) { /* ignore */ } }
+function loadLastExport() { try { return localStorage.getItem(LASTEXPORT_KEY) || null; } catch (e: any) { return null; } }
 function markExported() {
-  try { localStorage.setItem(LASTEXPORT_KEY, new Date().toISOString()); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(LASTEXPORT_KEY, new Date().toISOString()); } catch (e: any) { /* ignore */ }
   if (!$("#settings-modal").hidden) renderSettings();
 }
 // Every sync conflict (two devices disagreeing) is remembered, so "wait, where
 // did that change go?" always has an answer. Capped, newest first.
-function loadConflictLog() { try { return JSON.parse(localStorage.getItem(CONFLICTLOG_KEY)) || []; } catch (e) { return []; } }
-function logConflict(where, choice) {
+function loadConflictLog() { try { return JSON.parse(localStorage.getItem(CONFLICTLOG_KEY) || "null") || []; } catch (e: any) { return []; } }
+function logConflict(where: string, choice: string) {
   try {
     const log = loadConflictLog();
     log.unshift({ at: new Date().toISOString(), where, choice, books: state.books.length });
     localStorage.setItem(CONFLICTLOG_KEY, JSON.stringify(log.slice(0, 20)));
-  } catch (e) { /* ignore */ }
+  } catch (e: any) { /* ignore */ }
 }
-function relTimeShort(iso) {
+function relTimeShort(iso: string | null | undefined) {
   if (!iso) return "";
   const diff = Date.now() - new Date(iso).getTime();
   if (isNaN(diff) || diff < 0) return "";
@@ -338,7 +339,7 @@ function relTimeShort(iso) {
   const d = Math.round(diff / 86400000); if (d < 7) return d + "d ago";
   return fmtDate(iso);
 }
-function relTimeLong(iso) {
+function relTimeLong(iso: string | null | undefined) {
   if (!iso) return "";
   const diff = Date.now() - new Date(iso).getTime();
   if (isNaN(diff) || diff < 0) return "";
@@ -349,16 +350,16 @@ function relTimeLong(iso) {
   return "on " + fmtDate(iso);
 }
 
-async function apiFetch(path, opts) {
+async function apiFetch(path: string, opts?: RequestInit): Promise<{ res: Response; data: any }> {
   opts = opts || {};
-  const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+  const headers = Object.assign({ "Content-Type": "application/json" } as Record<string, string>, (opts && opts.headers) || {});
   if (auth && auth.token) headers["Authorization"] = "Bearer " + auth.token;
   const res = await fetch(SYNC_API.replace(/\/$/, "") + path, Object.assign({}, opts, { headers }));
-  let data = null; try { data = await res.json(); } catch (e) { /* ignore */ }
+  let data = null; try { data = await res.json(); } catch (e: any) { /* ignore */ }
   return { res, data };
 }
 
-async function doAuth(mode, creds) {
+async function doAuth(mode: string, creds: { email: string; fullName?: string; password: string }) {
   const path = mode === "register" ? "/api/register" : "/api/login";
   const body = mode === "register"
     ? { email: creds.email, fullName: creds.fullName, password: creds.password }
@@ -371,7 +372,7 @@ async function doAuth(mode, creds) {
 }
 
 // Replace local state with the account's copy.
-function adoptServer(blob, updatedAt) {
+function adoptServer(blob: any, updatedAt?: string | null) {
   state = normalize(blob);
   if (updatedAt) state.updatedAt = updatedAt;
   saveSyncBase(updatedAt || null);
@@ -381,7 +382,7 @@ function adoptServer(blob, updatedAt) {
 }
 
 // After sign-in, reconcile this device's data with the account.
-async function afterSignIn(mode) {
+async function afterSignIn(mode: string) {
   try {
     const { data } = await apiFetch("/api/data", { method: "GET" });
     const serverBlob = data && data.blob;
@@ -397,7 +398,7 @@ async function afterSignIn(mode) {
     } else {
       await pushData(true);
     }
-  } catch (e) { /* offline; will sync on next change/load */ }
+  } catch (e: any) { /* offline; will sync on next change/load */ }
   renderAccount();
   renderStorageStatus();
   maybePendingClubJoin(); // an invite link may have been waiting on this sign-in
@@ -405,17 +406,17 @@ async function afterSignIn(mode) {
 
 function schedulePush() {
   if (!syncEnabled() || !auth) return;
-  clearTimeout(pushTimer);
+  clearTimeout(pushTimer!);
   const since = Date.now() - lastPushAt;
   pushTimer = setTimeout(() => pushData(false), since >= PUSH_MIN_MS ? 1200 : (PUSH_MIN_MS - since));
 }
 // Resolves true when the account now holds this device's latest data
 // (or a consciously chosen version) — logout uses this before wiping.
-async function pushData(force) {
+async function pushData(force: boolean) {
   if (!syncEnabled() || !auth) return false;
   setSyncStatus("syncing");
   lastPushAt = Date.now();
-  const body = { blob: state, updatedAt: state.updatedAt };
+  const body: { blob: AppState; updatedAt: string; force?: boolean; baseUpdatedAt?: string | null } = { blob: state, updatedAt: state.updatedAt };
   if (force) body.force = true; else body.baseUpdatedAt = loadSyncBase();
   try {
     const { res, data } = await apiFetch("/api/data", { method: "PUT", body: JSON.stringify(body) });
@@ -429,7 +430,7 @@ async function pushData(force) {
     if (res.ok && data) { saveSyncBase(data.updatedAt); markSynced(); setSyncStatus("idle"); return true; }
     setSyncStatus("error");
     return false;
-  } catch (e) { setSyncStatus(navigator.onLine === false ? "offline" : "error"); return false; /* saved locally; retries on next change */ }
+  } catch (e: any) { setSyncStatus(navigator.onLine === false ? "offline" : "error"); return false; /* saved locally; retries on next change */ }
 }
 async function pullData() {
   if (!syncEnabled() || !auth) return;
@@ -449,7 +450,7 @@ async function pullData() {
     }
     markSynced();
     setSyncStatus("idle");
-  } catch (e) { setSyncStatus(navigator.onLine === false ? "offline" : "error"); }
+  } catch (e: any) { setSyncStatus(navigator.onLine === false ? "offline" : "error"); }
 }
 
 // Autosync. Every commit already pushes (debounced 1.2s). On top of that:
@@ -462,7 +463,7 @@ function setupAutoSync() {
     if (!syncEnabled() || !auth) return;
     // Only flush on background when there's actually something new — avoids a
     // wasted KV write every time the app is switched away with nothing changed.
-    if (document.hidden) { clearTimeout(pushTimer); if (isDirty()) pushData(false); }
+    if (document.hidden) { clearTimeout(pushTimer!); if (isDirty()) pushData(false); }
     else maybePull();
   });
   window.addEventListener("online", () => { if (syncEnabled() && auth) pullData(); });
@@ -476,12 +477,12 @@ function handleAuthExpired() { saveAuth(null); saveSyncBase(null); renderAccount
 async function logout() {
   closeAccountMenu();
   if (!confirm("Sign out on this device?\n\nYour books stay safely in your account, but they'll be removed from this device until you sign in again.")) return;
-  clearTimeout(pushTimer);
+  clearTimeout(pushTimer!);
   const backedUp = await pushData(false);
   if (!backedUp && !confirm("Couldn't back up your latest changes — are you offline?\n\nSign out anyway? Changes made since the last sync will be lost.")) return;
   saveAuth(null);
   saveSyncBase(null);
-  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e: any) { /* ignore */ }
   state = loadState(); // fresh, empty shelf
   fileHandle = null;
   knownBadges = new Set();
@@ -495,32 +496,32 @@ async function logout() {
   toast("👋", "Signed out", "This device is a blank shelf now — sign in to bring your books back.");
 }
 
-function openAuthModal(mode) {
+function openAuthModal(mode: "login" | "register") {
   setAuthMode(mode || "login");
-  $("#auth-name").value = ""; $("#auth-email").value = ""; $("#auth-password").value = ""; $("#auth-error").textContent = "";
+  $<HTMLInputElement>("#auth-name").value = ""; $<HTMLInputElement>("#auth-email").value = ""; $<HTMLInputElement>("#auth-password").value = ""; $("#auth-error").textContent = "";
   showModal("auth-modal");
-  setTimeout(() => $("#auth-email").focus(), 50);
+  setTimeout(() => $<HTMLInputElement>("#auth-email").focus(), 50);
 }
-function setAuthMode(mode) {
+function setAuthMode(mode: "login" | "register") {
   authMode = mode;
-  $("#tab-login").classList.toggle("active", mode === "login");
-  $("#tab-register").classList.toggle("active", mode === "register");
+  $<HTMLButtonElement>("#tab-login").classList.toggle("active", mode === "login");
+  $<HTMLButtonElement>("#tab-register").classList.toggle("active", mode === "register");
   $("#auth-name-row").hidden = mode !== "register";
   $("#auth-title").textContent = mode === "register" ? "Create your account" : "Log in";
-  $("#auth-submit").textContent = mode === "register" ? "Create account" : "Log in";
+  $<HTMLButtonElement>("#auth-submit").textContent = mode === "register" ? "Create account" : "Log in";
   $("#auth-error").textContent = "";
 }
-async function onAuthSubmit(e) {
+async function onAuthSubmit(e: SubmitEvent) {
   e.preventDefault();
-  const creds = { email: $("#auth-email").value.trim(), password: $("#auth-password").value, fullName: $("#auth-name").value.trim() };
+  const creds = { email: $<HTMLInputElement>("#auth-email").value.trim(), password: $<HTMLInputElement>("#auth-password").value, fullName: $<HTMLInputElement>("#auth-name").value.trim() };
   $("#auth-error").textContent = "";
-  const submit = $("#auth-submit"); submit.disabled = true;
+  const submit = $<HTMLButtonElement>("#auth-submit"); submit.disabled = true;
   try {
     const user = await doAuth(authMode, creds);
     closeModals();
     await afterSignIn(authMode);
     toast("✅", authMode === "register" ? "Account created" : "Signed in", user.fullName);
-  } catch (err) {
+  } catch (err: any) {
     $("#auth-error").textContent = err.message || "Something went wrong.";
   } finally { submit.disabled = false; }
 }
@@ -539,7 +540,7 @@ function renderAccount() {
   if (!wrap) return;
   if (!syncEnabled()) { wrap.style.display = "none"; return; }
   wrap.style.display = "";
-  const btn = $("#btn-account");
+  const btn = $<HTMLButtonElement>("#btn-account");
   if (auth && auth.user) {
     const first = (auth.user.fullName || "").split(" ")[0] || "Account";
     btn.textContent = "☁️ " + first;
@@ -557,13 +558,13 @@ function renderAccount() {
 // ---------------------------------------------------------------------------
 async function setupOfflineAndPersistence() {
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
-    try { await navigator.serviceWorker.register("sw.js"); } catch (e) { /* ignore */ }
+    try { await navigator.serviceWorker.register("sw.js"); } catch (e: any) { /* ignore */ }
   }
   if (navigator.storage && navigator.storage.persist) {
     try {
       storagePersisted = await navigator.storage.persisted();
       if (!storagePersisted) storagePersisted = await navigator.storage.persist();
-    } catch (e) { /* ignore */ }
+    } catch (e: any) { /* ignore */ }
   }
   renderStorageStatus();
 }
@@ -571,13 +572,13 @@ async function setupOfflineAndPersistence() {
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
-function pagesRead(book) { return book.logs.reduce((s, l) => s + (Number(l.pages) || 0), 0); }
+function pagesRead(book: Book) { return book.logs.reduce((s, l) => s + (Number(l.pages) || 0), 0); }
 // Cumulative pages read *before* a given session — i.e. the page you were on
 // when that session began. For a brand-new log (log == null) that's everything
 // read so far. For an edit, it's the sum of every earlier session by date.
-function pagesBefore(book, log) {
+function pagesBefore(book: Book, log?: ReadingLog | null) {
   if (!log) return pagesRead(book);
-  const sorted = [...book.logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = [...book.logs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   let sum = 0;
   for (const l of sorted) { if (l.id === log.id) break; sum += Number(l.pages) || 0; }
   return sum;
@@ -585,27 +586,27 @@ function pagesBefore(book, log) {
 function totalPagesRead() { return state.books.reduce((s, b) => s + pagesRead(b), 0); }
 function booksFinished() { return state.books.filter((b) => b.status === "finished"); }
 function libraryBooks() { return state.books.filter((b) => b.status === "finished" || b.status === "dnf"); }
-function booksFinishedInYear(year) {
-  return booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year).length;
+function booksFinishedInYear(year: number) {
+  return booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt!).getFullYear() === year).length;
 }
-function pagesReadInYear(year) {
+function pagesReadInYear(year: number) {
   let s = 0;
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d) && d.getFullYear() === year) s += Number(l.pages) || 0; }));
+  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()) && d.getFullYear() === year) s += Number(l.pages) || 0; }));
   return s;
 }
-function pagesOnDay(t) {
+function pagesOnDay(t: number) {
   let s = 0;
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d) && startOfDay(d) === t) s += Number(l.pages) || 0; }));
+  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()) && startOfDay(d) === t) s += Number(l.pages) || 0; }));
   return s;
 }
-function perDayMap() {
-  const m = {};
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d)) { const k = startOfDay(d); m[k] = (m[k] || 0) + (Number(l.pages) || 0); } }));
+function perDayMap(): Record<number, number> {
+  const m: Record<number, number> = {};
+  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) { const k = startOfDay(d); m[k] = (m[k] || 0) + (Number(l.pages) || 0); } }));
   return m;
 }
 function readingDaySet() {
-  const days = new Set();
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d)) days.add(startOfDay(d)); }));
+  const days = new Set<number>();
+  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) days.add(startOfDay(d)); }));
   return days;
 }
 function readingStreak() {
@@ -626,7 +627,7 @@ function readingStreak() {
   return { current, longest };
 }
 // Estimated finish date for a book being read, based on recent pace.
-function estimateFinish(book) {
+function estimateFinish(book: Book) {
   if (book.status !== "reading" || !book.totalPages) return null;
   const read = pagesRead(book);
   const remaining = book.totalPages - read;
@@ -676,14 +677,14 @@ function checkNewBadges() {
 // Reading challenges (computed, like badges).
 function computeChallenges() {
   const year = state.settings.goal.year || new Date().getFullYear();
-  const finishedYr = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year);
+  const finishedYr = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt!).getFullYear() === year);
   const genresYr = new Set(); finishedYr.forEach((b) => (b.tags || []).forEach((t) => genresYr.add(t.toLowerCase())));
   const chunky = state.books.some((b) => b.status === "finished" && b.totalPages >= 500);
-  const decades = new Set(); state.books.filter((b) => b.status === "finished" && b.publishedYear).forEach((b) => decades.add(Math.floor(b.publishedYear / 10)));
+  const decades = new Set(); state.books.filter((b) => b.status === "finished" && b.publishedYear).forEach((b) => decades.add(Math.floor(b.publishedYear! / 10)));
   const reviews = state.books.filter((b) => b.status === "finished" && b.review && b.review.trim()).length;
-  const monthsRead = new Set(); finishedYr.forEach((b) => monthsRead.add(new Date(b.finishedAt).getMonth()));
+  const monthsRead = new Set(); finishedYr.forEach((b) => monthsRead.add(new Date(b.finishedAt!).getMonth()));
   const fiveStar = state.books.some((b) => b.status === "finished" && b.rating === 5);
-  const speed = state.books.some((b) => b.status === "finished" && b.startedAt && b.finishedAt && (() => { const d = (new Date(b.finishedAt) - new Date(b.startedAt)) / DAY; return d >= 0 && d <= 7; })());
+  const speed = state.books.some((b) => b.status === "finished" && b.startedAt && b.finishedAt && (() => { const d = (new Date(b.finishedAt!).getTime() - new Date(b.startedAt).getTime()) / DAY; return d >= 0 && d <= 7; })());
   const monthTarget = new Date().getFullYear() === year ? new Date().getMonth() + 1 : 12;
   const list = [
     { id: "genres5", emoji: "🌈", title: "Well-Rounded", desc: "Read 5 genres in " + year, value: genresYr.size, target: 5 },
@@ -701,7 +702,7 @@ function computeChallenges() {
 // Confetti 🎉
 // ---------------------------------------------------------------------------
 function confetti() {
-  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (typeof window.matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const colors = ["#9c5b3a", "#c98a4b", "#4f7d56", "#c0392b", "#e0a960", "#6a8caf"];
   for (let i = 0; i < 90; i++) {
     const p = document.createElement("div");
@@ -721,16 +722,16 @@ function confetti() {
 // ---------------------------------------------------------------------------
 // Open Library
 // ---------------------------------------------------------------------------
-function coverFromId(id, size) { return `https://covers.openlibrary.org/b/id/${id}-${size || "L"}.jpg`; }
+function coverFromId(id: number | string, size?: string) { return `https://covers.openlibrary.org/b/id/${id}-${size || "L"}.jpg`; }
 // default=false makes unknown ISBNs 404 (so <img onerror> shows the title tile)
 // instead of silently serving a blank 1×1 GIF.
-function coverFromIsbn(isbn, size) { return `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-${size || "L"}.jpg?default=false`; }
+function coverFromIsbn(isbn: string, size?: string) { return `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-${size || "L"}.jpg?default=false`; }
 // Does an Open Library doc's author agree with what the user typed? Used to
 // stop a same-title book by a DIFFERENT author winning the lookup. Matches on
 // whole-string containment or a shared surname (last name token, ≥3 chars).
-function normName(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
-function lastNameTok(s) { const p = normName(s).split(" ").filter(Boolean); return p.length ? p[p.length - 1] : ""; }
-function authorMatches(query, names) {
+function normName(s: unknown) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+function lastNameTok(s: unknown) { const p = normName(s).split(" ").filter(Boolean); return p.length ? p[p.length - 1] : ""; }
+function authorMatches(query: string, names?: string[]) {
   const q = normName(query);
   if (!q) return true; // no author given → nothing to disagree with
   const qTok = new Set(q.split(" ").filter((w) => w.length >= 3));
@@ -747,7 +748,7 @@ function authorMatches(query, names) {
   });
 }
 window.__authorMatches = authorMatches; // test hook (no network needed)
-async function searchOpenLibrary(title, author, isbn) {
+async function searchOpenLibrary(title: string, author: string, isbn: string) {
   const params = new URLSearchParams();
   if (isbn) params.set("isbn", isbn.replace(/[^0-9Xx]/g, ""));
   if (title) params.set("title", title);
@@ -757,7 +758,7 @@ async function searchOpenLibrary(title, author, isbn) {
   const res = await fetch("https://openlibrary.org/search.json?" + params.toString());
   if (!res.ok) throw new Error("Search failed");
   const data = await res.json();
-  let docs = (data.docs || []).filter((d) => d.cover_i || (d.isbn && d.isbn.length));
+  let docs: OLDoc[] = (data.docs || []).filter((d: OLDoc) => d.cover_i || (d.isbn && d.isbn.length));
   // Float author matches to the top so downstream callers pick the right one.
   if (author) docs = docs.slice().sort((a, b) => (authorMatches(author, b.author_name) ? 1 : 0) - (authorMatches(author, a.author_name) ? 1 : 0));
   return docs;
@@ -768,9 +769,9 @@ async function searchOpenLibrary(title, author, isbn) {
 // with a chunk of coverless books. Quietly re-find those in the background:
 // OL title/author search first (best coverage), then the ISBN image
 // (validated), then Google Books (unauthenticated → rate-limited → last).
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function imgOk(url) {
-  return new Promise((resolve) => {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function imgOk(url: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
     const im = new Image();
     im.onload = () => resolve(im.naturalWidth > 10); // OL's "missing" image is 1×1
     im.onerror = () => resolve(false);
@@ -779,15 +780,15 @@ function imgOk(url) {
 }
 // Goodreads titles carry "(Series, #1)" / "[Series]" suffixes and long
 // ": subtitle" tails that break OL search — search progressively barer forms.
-function bareTitle(b) { return (b.title || "").replace(/\s*\[.*?\]\s*$/, "").replace(/\s*\(.*?\)\s*$/, "").trim(); }
-function coreTitle(b) { const t = bareTitle(b), i = t.indexOf(":"); return i > 0 ? t.slice(0, i).trim() : ""; }
-async function findCoverFor(book) {
+function bareTitle(b: Book) { return (b.title || "").replace(/\s*\[.*?\]\s*$/, "").replace(/\s*\(.*?\)\s*$/, "").trim(); }
+function coreTitle(b: Book) { const t = bareTitle(b), i = t.indexOf(":"); return i > 0 ? t.slice(0, i).trim() : ""; }
+async function findCoverFor(book: Book) {
   for (const t of new Set([bareTitle(book), coreTitle(book)].filter(Boolean))) {
     try {
       const docs = await searchOpenLibrary(t, book.author, "");
       const hit = docs.find((d) => d.cover_i);
-      if (hit) return coverFromId(hit.cover_i);
-    } catch (e) { /* offline or OL hiccup — try the next form/source */ }
+      if (hit) return coverFromId(hit.cover_i!);
+    } catch (e: any) { /* offline or OL hiccup — try the next form/source */ }
   }
   if (book.isbn && (await imgOk(coverFromIsbn(book.isbn)))) return coverFromIsbn(book.isbn);
   // Fuzzy OL search: translated books are indexed under their original-
@@ -795,30 +796,30 @@ async function findCoverFor(book) {
   // strict title= search misses. Guard with an author match so a fuzzy hit
   // can't attach a random wrong cover.
   try {
-    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const norm = (s: unknown) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     const params = new URLSearchParams({ q: (coreTitle(book) || bareTitle(book)) + " " + (book.author || ""), limit: "5", fields: "cover_i,author_name" });
     const res = await fetch("https://openlibrary.org/search.json?" + params.toString());
     if (res.ok) {
       const data = await res.json();
       const a = norm(book.author);
-      const hit = (data.docs || []).find((d) => d.cover_i && (!a || (d.author_name || []).some((x) => norm(x).includes(a) || a.includes(norm(x)))));
-      if (hit) return coverFromId(hit.cover_i);
+      const hit = (data.docs || []).find((d: OLDoc) => d.cover_i && (!a || (d.author_name || []).some((x) => norm(x).includes(a) || a.includes(norm(x)))));
+      if (hit) return coverFromId(hit.cover_i!);
     }
-  } catch (e) { /* fall through */ }
+  } catch (e: any) { /* fall through */ }
   try {
     const q = book.isbn ? "isbn:" + book.isbn.replace(/[^0-9Xx]/g, "")
       : "intitle:" + bareTitle(book) + (book.author ? " inauthor:" + book.author : "");
     const res = await fetch("https://www.googleapis.com/books/v1/volumes?q=" + encodeURIComponent(q) + "&maxResults=3&fields=items(volumeInfo(imageLinks))");
     if (res.ok) {
       const data = await res.json();
-      const link = (data.items || []).map((it) => (it.volumeInfo || {}).imageLinks || {}).map((l) => l.thumbnail || l.smallThumbnail).find(Boolean);
+      const link = (data.items || []).map((it: any) => (it.volumeInfo || {}).imageLinks || {}).map((l: any) => l.thumbnail || l.smallThumbnail).find(Boolean);
       if (link) return link.replace(/^http:/, "https:").replace("&edge=curl", "");
     }
-  } catch (e) { /* rate-limited or offline */ }
+  } catch (e: any) { /* rate-limited or offline */ }
   return "";
 }
 let coverBackfillBusy = false, coverBackfillRan = false;
-async function backfillCovers(force) {
+async function backfillCovers(force?: boolean) {
   if (coverBackfillBusy || (coverBackfillRan && !force) || navigator.onLine === false) return;
   coverBackfillBusy = true;
   coverBackfillRan = true;
@@ -884,17 +885,17 @@ function renderStats() {
 
 // --- Insights: reading rhythm (#9), taste profile (#6), gentle coach (#3) ---
 function sessionInsights() {
-  const logs = [];
+  const logs: { date: string; pages: number; minutes: number; format: string }[] = [];
   state.books.forEach((b) => (b.logs || []).forEach((l) => { if (l.date) logs.push({ date: l.date, pages: l.pages || 0, minutes: l.minutes || 0, format: b.format }); }));
   if (!logs.length) return null;
-  const buckets = { Morning: 0, Afternoon: 0, Evening: 0, Night: 0 };
-  const bucketOf = (h) => (h < 5 ? "Night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : h < 22 ? "Evening" : "Night");
+  const buckets: Record<string, number> = { Morning: 0, Afternoon: 0, Evening: 0, Night: 0 };
+  const bucketOf = (h: number): "Morning" | "Afternoon" | "Evening" | "Night" => (h < 5 ? "Night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : h < 22 ? "Evening" : "Night");
   const dow = [0, 0, 0, 0, 0, 0, 0];
   let totalMin = 0, sessWithMin = 0, audioPages = 0, totalPages = 0;
   logs.forEach((l) => {
     const d = new Date(l.date);
     const weight = l.pages || 1;
-    if (!isNaN(d)) { buckets[bucketOf(d.getHours())] += weight; dow[d.getDay()] += weight; }
+    if (!isNaN(d.getTime())) { buckets[bucketOf(d.getHours())] += weight; dow[d.getDay()] += weight; }
     if (l.minutes > 0) { totalMin += l.minutes; sessWithMin++; }
     totalPages += l.pages || 0;
     if (l.format === "audio") audioPages += l.pages || 0;
@@ -913,10 +914,10 @@ function sessionInsights() {
 function tasteProfile() {
   const finished = state.books.filter((b) => b.status === "finished");
   if (finished.length < 2) return null;
-  const genre = {};
+  const genre: Record<string, number> = {};
   finished.forEach((b) => (b.tags || []).forEach((t) => { genre[t] = (genre[t] || 0) + 1; }));
   const topGenres = Object.keys(genre).sort((a, b) => genre[b] - genre[a]).slice(0, 3);
-  const byAuthor = {};
+  const byAuthor: Record<string, number[]> = {};
   finished.forEach((b) => { if (b.rating && b.author) (byAuthor[b.author] = byAuthor[b.author] || []).push(b.rating); });
   let bestAuthor = null, bestAvg = 0;
   Object.keys(byAuthor).forEach((a) => { if (byAuthor[a].length >= 2) { const avg = byAuthor[a].reduce((s, r) => s + r, 0) / byAuthor[a].length; if (avg > bestAvg) { bestAvg = avg; bestAuthor = a; } } });
@@ -929,13 +930,13 @@ function coachNudges() {
   const nudges = [];
   const unreadOwned = state.books.filter((b) => b.owned && b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0);
   if (unreadOwned.length >= 3) nudges.push(`You already own <strong>${unreadOwned.length}</strong> unread books — a ready-made shelf, no shopping needed. 📚`);
-  const tbr = state.books.filter((b) => b.status === "want").slice().sort((a, b) => new Date(a.addedAt || 0) - new Date(b.addedAt || 0))[0];
-  if (tbr) { const days = Math.floor((Date.now() - new Date(tbr.addedAt)) / DAY); if (days >= 120) nudges.push(`“${esc(tbr.title)}” has waited <strong>${days} days</strong> on your list. Read it soon, or let it go — both are fine. 🕊️`); }
+  const tbr = state.books.filter((b) => b.status === "want").slice().sort((a, b) => new Date(a.addedAt || 0).getTime() - new Date(b.addedAt || 0).getTime())[0];
+  if (tbr) { const days = Math.floor((Date.now() - new Date(tbr.addedAt).getTime()) / DAY); if (days >= 120) nudges.push(`“${esc(tbr.title)}” has waited <strong>${days} days</strong> on your list. Read it soon, or let it go — both are fine. 🕊️`); }
   const dnf = state.books.filter((b) => b.status === "dnf");
   if (dnf.length >= 2) nudges.push(`You set aside <strong>${dnf.length}</strong> books this year — that's time saved for books you'll love, not something to feel bad about. ✨`);
   return nudges;
 }
-function insightCard(emoji, title, lines) {
+function insightCard(emoji: string, title: string, lines: string[]) {
   const items = lines.filter(Boolean).map((l) => `<p>${l}</p>`).join("");
   if (!items) return "";
   return `<div class="insight-card"><div class="insight-emoji">${emoji}</div><div><h4>${esc(title)}</h4>${items}</div></div>`;
@@ -948,34 +949,34 @@ function shelfInsightLines() {
   const lines = [];
   const unread = unreadOwnedBooks();
   if (unread.length) {
-    const oldest = unread.slice().sort((a, b) => new Date(a.addedAt || 0) - new Date(b.addedAt || 0))[0];
+    const oldest = unread.slice().sort((a, b) => new Date(a.addedAt || 0).getTime() - new Date(b.addedAt || 0).getTime())[0];
     const months = Math.floor((Date.now() - new Date(oldest.addedAt || Date.now()).getTime()) / (30.44 * DAY));
     lines.push(`<strong>${unread.length}</strong> owned book${unread.length === 1 ? "" : "s"} still unread${months >= 3 ? ` — <strong>${esc(oldest.title)}</strong> has waited longest (${months} months)` : ""}`);
   }
   // Series started but not finished — with the concrete next step.
-  const bySeries = {};
+  const bySeries: Record<string, Book[]> = {};
   state.books.forEach((b) => { if (b.seriesName) { const k = b.seriesName.toLowerCase(); (bySeries[k] = bySeries[k] || []).push(b); } });
-  let openSeries = 0, ex = null;
+  let openSeries = 0, ex: Book | null = null;
   Object.values(bySeries).forEach((list) => {
     if (!list.some((b) => b.status === "finished")) return;
     const next = list.filter((b) => b.status !== "finished" && b.status !== "dnf")
       .sort((a, b) => (a.seriesNumber == null ? 999 : a.seriesNumber) - (b.seriesNumber == null ? 999 : b.seriesNumber))[0];
     if (next) { openSeries++; if (!ex) ex = next; }
   });
-  if (openSeries) lines.push(`<strong>${openSeries}</strong> series waiting to be continued${ex ? ` — next up: <strong>${esc(ex.title)}</strong>` : ""}`);
+  if (openSeries) lines.push(`<strong>${openSeries}</strong> series waiting to be continued${ex ? ` — next up: <strong>${esc((ex as Book).title)}</strong>` : ""}`);
   const dupes = duplicateGroups();
   if (dupes.length) lines.push(`<strong>${dupes.length}</strong> possible duplicate edition${dupes.length === 1 ? "" : "s"} — Shelf Doctor can merge them`);
   // Genre gap: a favourite genre with nothing waiting on the TBR/shelf.
   const finished = state.books.filter((b) => b.status === "finished");
   if (finished.length >= 3) {
-    const tally = {};
+    const tally: Record<string, number> = {};
     finished.forEach((b) => (b.tags || []).forEach((t) => { tally[t] = (tally[t] || 0) + 1; }));
     const waiting = new Set();
     state.books.filter((b) => b.status === "want").concat(unread).forEach((b) => (b.tags || []).forEach((t) => waiting.add(t.toLowerCase())));
     const gap = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 3).find(([t]) => !waiting.has(t.toLowerCase()));
     if (gap) lines.push(`You've finished <strong>${gap[1]} ${esc(gap[0])}</strong> books but have none waiting — a gap on your shelf`);
     // Author gap: someone you rate highly with nothing of theirs queued.
-    const byAuthor = {};
+    const byAuthor: Record<string, number[]> = {};
     finished.forEach((b) => { const k = (b.author || "").trim(); if (k && b.rating) { (byAuthor[k] = byAuthor[k] || []).push(Number(b.rating)); } });
     const tbrAuthors = new Set(state.books.filter((b) => b.status === "want").concat(unread).map((b) => (b.author || "").trim().toLowerCase()));
     const fav = Object.entries(byAuthor)
@@ -990,7 +991,7 @@ function shelfInsightLines() {
 // with the mood of recent sessions as colour.
 function moodMatchLine() {
   const cutoff = Date.now() - 21 * DAY;
-  const recent = [];
+  const recent: ReadingLog[] = [];
   state.books.forEach((b) => (b.logs || []).forEach((l) => { if (new Date(l.date).getTime() >= cutoff && l.pages > 0) recent.push(l); }));
   if (recent.length < 3) return "";
   const avg = recent.reduce((a, l) => a + l.pages, 0) / recent.length;
@@ -1028,14 +1029,14 @@ function renderInsights() {
   el.innerHTML = cards.length ? `<h3 class="insights-h">Your reading, understood</h3><div class="insights-grid">${cards.join("")}</div>` : "";
 }
 
-function coverHTML(book, cls) {
+function coverHTML(book: Book, cls?: string) {
   if (book.coverUrl) {
     return `<img class="cover ${cls || ""}" src="${esc(book.coverUrl)}" alt="Cover of ${esc(book.title)}" loading="lazy" decoding="async"
               onerror="this.outerHTML='<div class=\\'cover ${cls || ""}\\'>${esc(book.title)}</div>'" />`;
   }
   return `<div class="cover ${cls || ""}">${esc(book.title)}</div>`;
 }
-function starsHTML(rating) {
+function starsHTML(rating: number | null | undefined) {
   const r = Number(rating) || 0;
   let out = "";
   for (let i = 1; i <= 5; i++) {
@@ -1045,16 +1046,16 @@ function starsHTML(rating) {
   }
   return `<span class="stars">${out}</span>`;
 }
-function fmtRating(r) { return r == null ? "" : (r % 1 === 0 ? String(r) : r.toFixed(1)); }
+function fmtRating(r: number | null | undefined) { return r == null ? "" : (r % 1 === 0 ? String(r) : r.toFixed(1)); }
 
 // Small per-book badges used across cards
-function lentBadgeHTML(b) {
+function lentBadgeHTML(b: Book) {
   if (!b.lentTo) return "";
   const days = b.lentAt ? Math.floor((Date.now() - new Date(b.lentAt).getTime()) / DAY) : 0;
   const long = days >= 45; // gentle nudge once it's been out ~6 weeks
   return `<span class="lent-badge${long ? " overdue" : ""}" title="Lent out${b.lentAt ? " " + fmtDate(b.lentAt) : ""}${long ? " — maybe ask for it back?" : ""}">📤 ${esc(b.lentTo)}${days > 0 ? " · " + days + "d" : ""}</span>`;
 }
-function loanBadgeHTML(b) {
+function loanBadgeHTML(b: Book) {
   if (!b.loanDue) return "";
   const due = startOfDay(new Date(b.loanDue + "T12:00:00"));
   if (isNaN(due)) return "";
@@ -1063,20 +1064,20 @@ function loanBadgeHTML(b) {
   const label = days < 0 ? `overdue by ${Math.abs(days)}d` : days === 0 ? "due back today" : days <= 14 ? `due back in ${days}d` : `due ${fmtDate(new Date(due).toISOString())}`;
   return `<span class="loan-badge${cls}" title="Borrowed copy — due back ${fmtDate(new Date(due).toISOString())}">📅 ${label}</span>`;
 }
-function tbrAgeHTML(b) {
-  const months = Math.floor((Date.now() - new Date(b.addedAt)) / (DAY * 30.44));
+function tbrAgeHTML(b: Book) {
+  const months = Math.floor((Date.now() - new Date(b.addedAt).getTime()) / (DAY * 30.44));
   if (!(months >= 6)) return "";
   return `<span class="tbr-badge" title="On your list since ${fmtDate(b.addedAt)}">🕰 ${months} months on your list</span>`;
 }
-function ownFlag(b) { return b.owned ? `<span class="own-flag" title="On your home shelf">🏠</span>` : ""; }
-function bookmarkHTML(b) {
+function ownFlag(b: Book) { return b.owned ? `<span class="own-flag" title="On your home shelf">🏠</span>` : ""; }
+function bookmarkHTML(b: Book) {
   if (!b.bookmark) return "";
   return `<p class="bookmark-line" title="Bookmark saved ${fmtDate(b.bookmark.date)}">🔖 ${b.bookmark.page ? "p." + b.bookmark.page : "Where I left off"}${b.bookmark.note ? " — “" + esc(b.bookmark.note) + "”" : ""}</p>`;
 }
 
 function renderReading() {
   const all = state.books.filter((b) => b.status === "reading");
-  const list = all.filter((b) => bookMatches(b, readingQuery)).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+  const list = all.filter((b) => bookMatches(b, readingQuery)).sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
   const empty = $("#reading-empty");
   empty.hidden = list.length > 0;
   empty.textContent = all.length === 0 ? "You're not reading anything yet. Add a book to start logging your pages." : "No books match your search.";
@@ -1112,7 +1113,7 @@ function renderReading() {
 // Scores every want-list book against the reader's own history (ratings,
 // genres, authors, series position, DNFs, ownership, expectations, TBR age).
 // Nothing leaves the device; with too little history it stays quiet.
-function readNextPicks(books) {
+function readNextPicks(books?: Book[]) {
   const src = books || state.books;
   const finished = src.filter((b) => b.status === "finished");
   const dnf = src.filter((b) => b.status === "dnf");
@@ -1120,9 +1121,9 @@ function readNextPicks(books) {
   if (want.length < 2 || finished.length < 2) return [];
 
   // Taste weights: loved = +2 … hated = -2; an unrated finish is a mild +.
-  const tasteOf = (b) => (b.rating ? Number(b.rating) - 3 : 0.5);
-  const genre = {}; // tag -> {sum, n}
-  const author = {}; // author -> {sum, n, dnf}
+  const tasteOf = (b: Book) => (b.rating ? Number(b.rating) - 3 : 0.5);
+  const genre: Record<string, { sum: number; n: number }> = {}; // tag -> {sum, n}
+  const author: Record<string, { sum: number; n: number; dnf: number }> = {}; // author -> {sum, n, dnf}
   finished.forEach((b) => {
     const w = tasteOf(b);
     (b.tags || []).forEach((t) => { const k = t.toLowerCase(); const e = genre[k] = genre[k] || { sum: 0, n: 0 }; e.sum += w; e.n++; });
@@ -1135,7 +1136,7 @@ function readNextPicks(books) {
     if (ak) { const e = author[ak] = author[ak] || { sum: 0, n: 0, dnf: 0 }; e.dnf++; }
   });
   // Furthest finished installment per series, for continuation boosts.
-  const seriesDone = {};
+  const seriesDone: Record<string, number> = {};
   src.forEach((b) => {
     if (b.status === "finished" && b.seriesName) {
       const k = b.seriesName.toLowerCase();
@@ -1205,7 +1206,7 @@ function renderReadNext() {
 function renderWant() {
   renderReadNext();
   const all = state.books.filter((b) => b.status === "want");
-  const list = all.filter((b) => bookMatches(b, wantQuery)).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+  const list = all.filter((b) => bookMatches(b, wantQuery)).sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
   const empty = $("#want-empty");
   empty.hidden = list.length > 0;
   empty.textContent = all.length === 0 ? "Nothing on your list yet. Add books you'd like to read next." : "No books match your search.";
@@ -1228,26 +1229,26 @@ function renderWant() {
       </article>`).join("");
 }
 
-function libDate(b) {
+function libDate(b: Book) {
   if (b.status === "dnf") return `<span class="dnf-badge" title="${b.dnfReason ? esc(b.dnfReason) : "Did not finish"}">Did not finish${b.dnfReason ? " · " + esc(b.dnfReason.length > 40 ? b.dnfReason.slice(0, 38) + "…" : b.dnfReason) : ""}</span>`;
   return `Finished${b.finishedAt ? " " + fmtDate(b.finishedAt) : ""}${b.readCount > 1 ? " · " + b.readCount + "× read" : ""} · ${num(pagesRead(b) || b.totalPages)}${unitShort(b)}${b.loanDue ? " " + loanBadgeHTML(b) : ""}`;
 }
 
 function renderLibrary() {
-  const tagSel = $("#library-tag"), tags = allTags();
+  const tagSel = $<HTMLSelectElement>("#library-tag"), tags = allTags();
   if (libraryTag && !tags.some((t) => t.toLowerCase() === libraryTag.toLowerCase())) libraryTag = "";
   tagSel.innerHTML = `<option value="">All genres</option>` + tags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   tagSel.value = libraryTag;
 
-  const colSel = $("#library-collection"), cols = allCollections();
+  const colSel = $<HTMLSelectElement>("#library-collection"), cols = allCollections();
   if (libraryCollection && !cols.some((t) => t.toLowerCase() === libraryCollection.toLowerCase())) libraryCollection = "";
   colSel.innerHTML = `<option value="">All shelves</option>` + cols.map((t) => `<option value="${esc(t)}">📁 ${esc(t)}</option>`).join("");
   colSel.value = libraryCollection;
 
   $$("#library-view-toggle button").forEach((btn) => btn.classList.toggle("active", btn.dataset.libview === libraryView));
 
-  $("#library-format").value = libraryFormat;
-  $("#library-rating").value = libraryRating ? String(libraryRating) : "";
+  $<HTMLSelectElement>("#library-format").value = libraryFormat;
+  $<HTMLSelectElement>("#library-rating").value = libraryRating ? String(libraryRating) : "";
 
   const done = libraryBooks();
   let list = done
@@ -1256,13 +1257,13 @@ function renderLibrary() {
     .filter((b) => !libraryCollection || (b.collections || []).some((t) => t.toLowerCase() === libraryCollection.toLowerCase()))
     .filter((b) => !libraryFormat || (b.format || "physical") === libraryFormat)
     .filter((b) => !libraryRating || (b.rating || 0) >= libraryRating);
-  const sort = $("#library-sort").value;
+  const sort = $<HTMLSelectElement>("#library-sort").value;
   list.sort((a, b) => {
-    if (sort === "finished-asc") return new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0);
+    if (sort === "finished-asc") return new Date(a.finishedAt || 0).getTime() - new Date(b.finishedAt || 0).getTime();
     if (sort === "rating-desc") return (b.rating || 0) - (a.rating || 0);
     if (sort === "pages-desc") return (b.totalPages || 0) - (a.totalPages || 0);
     if (sort === "title-asc") return a.title.localeCompare(b.title);
-    return new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0);
+    return new Date(b.finishedAt || 0).getTime() - new Date(a.finishedAt || 0).getTime();
   });
 
   const empty = $("#library-empty");
@@ -1276,7 +1277,7 @@ function renderLibrary() {
   else wrap.innerHTML = `<div class="card-grid library">${list.map(libraryCardHTML).join("")}</div>`;
 }
 
-function libraryCardHTML(b) {
+function libraryCardHTML(b: Book) {
   return `<article class="book-card lib-card ${b.status === "dnf" ? "is-dnf" : ""}" data-id="${b.id}">
       ${coverHTML(b)}
       <h3 class="book-title">${fmtIcon(b)}${esc(b.title)}${ownFlag(b)}</h3>
@@ -1293,10 +1294,10 @@ function libraryCardHTML(b) {
       ${b.review ? `<details class="review"><summary>My review</summary><p class="review-text">${esc(b.review)}</p></details>` : ""}
     </article>`;
 }
-function shelfHTML(list) {
+function shelfHTML(list: Book[]) {
   if (!list.length) return "";
   // Custom order: the user arranges their own shelf by dragging.
-  const idx = {};
+  const idx: Record<string, number> = {};
   (state.shelfOrder || []).forEach((id, i) => (idx[id] = i));
   const ordered = list.slice().sort((a, b) => (idx[a.id] != null ? idx[a.id] : 1e9) - (idx[b.id] != null ? idx[b.id] : 1e9));
   const slots = ordered.map((b, i) => {
@@ -1312,24 +1313,24 @@ function shelfHTML(list) {
 }
 
 // Drag & drop shelf rearranging (mouse via HTML5 DnD, touch via long-press).
-function saveShelfOrderFromDOM(shelf) {
-  state.shelfOrder = $$(".shelf-slot", shelf).map((s) => s.dataset.shelfId);
+function saveShelfOrderFromDOM(shelf: HTMLElement) {
+  state.shelfOrder = $$(".shelf-slot", shelf).map((s) => s.dataset.shelfId as string);
   commit();
 }
-function setupShelfDnD(root) {
-  let dragEl = null;
+function setupShelfDnD(root: HTMLElement) {
+  let dragEl: HTMLElement | null = null;
   root.addEventListener("dragstart", (e) => {
-    const slot = e.target.closest(".shelf-slot");
+    const slot = (e.target as HTMLElement).closest<HTMLElement>(".shelf-slot");
     if (!slot) return;
     dragEl = slot;
     slot.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    try { e.dataTransfer.setData("text/plain", slot.dataset.shelfId); } catch (err) { /* old browsers */ }
+    e.dataTransfer!.effectAllowed = "move";
+    try { e.dataTransfer!.setData("text/plain", slot.dataset.shelfId!); } catch (err: any) { /* old browsers */ }
   });
   root.addEventListener("dragover", (e) => {
     if (!dragEl) return;
     e.preventDefault();
-    const over = e.target.closest(".shelf-slot");
+    const over = (e.target as HTMLElement).closest<HTMLElement>(".shelf-slot");
     if (!over || over === dragEl || !over.parentNode) return;
     const r = over.getBoundingClientRect();
     over.parentNode.insertBefore(dragEl, e.clientX < r.left + r.width / 2 ? over : over.nextSibling);
@@ -1338,31 +1339,31 @@ function setupShelfDnD(root) {
   root.addEventListener("dragend", () => {
     if (!dragEl) return;
     dragEl.classList.remove("dragging");
-    const shelf = dragEl.closest(".bookshelf");
+    const shelf = dragEl.closest<HTMLElement>(".bookshelf");
     dragEl = null;
     if (shelf) saveShelfOrderFromDOM(shelf);
   });
   // Touch: hold a book for a moment, then drag it along the shelf.
-  let touchDrag = null, holdTimer = null, suppressClick = false;
+  let touchDrag: HTMLElement | null = null, holdTimer: ReturnType<typeof setTimeout> | null = null, suppressClick = false;
   root.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse") return;
-    const slot = e.target.closest(".shelf-slot");
+    const slot = (e.target as HTMLElement).closest<HTMLElement>(".shelf-slot");
     if (!slot) return;
     holdTimer = setTimeout(() => { touchDrag = slot; slot.classList.add("dragging"); }, 350);
   });
   root.addEventListener("pointermove", (e) => {
-    if (!touchDrag) { clearTimeout(holdTimer); return; }
+    if (!touchDrag) { clearTimeout(holdTimer!); return; }
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const over = el && el.closest(".shelf-slot");
+    const over = el && el.closest<HTMLElement>(".shelf-slot");
     if (!over || over === touchDrag || !over.parentNode) return;
     const r = over.getBoundingClientRect();
     over.parentNode.insertBefore(touchDrag, e.clientX < r.left + r.width / 2 ? over : over.nextSibling);
   });
   const endTouch = () => {
-    clearTimeout(holdTimer);
+    clearTimeout(holdTimer!);
     if (!touchDrag) return;
     touchDrag.classList.remove("dragging");
-    const shelf = touchDrag.closest(".bookshelf");
+    const shelf = touchDrag.closest<HTMLElement>(".bookshelf");
     touchDrag = null;
     suppressClick = true;
     setTimeout(() => (suppressClick = false), 350);
@@ -1375,7 +1376,7 @@ function setupShelfDnD(root) {
 
 // Series progress: every series you've touched, how far you are, what's next.
 function seriesHTML() {
-  const groups = {};
+  const groups: Record<string, Book[]> = {};
   state.books.forEach((b) => { if (b.seriesName) (groups[b.seriesName] = groups[b.seriesName] || []).push(b); });
   const names = Object.keys(groups).sort((a, b) => a.localeCompare(b));
   if (!names.length) return `<p class="empty">No series yet — set “Series” on a book and your progress will show up here.</p>`;
@@ -1387,24 +1388,24 @@ function seriesHTML() {
     const next = books.find((b) => b.status !== "finished" && b.status !== "dnf");
     const pct = Math.round((read / books.length) * 100);
     // Gaps in the numbering you hold, e.g. you have #1, #2, #4 → #3 is missing.
-    const nums = books.map((b) => b.seriesNumber).filter((n) => n != null && Number.isInteger(n)).sort((a, b) => a - b);
+    const nums = books.map((b) => b.seriesNumber).filter((n): n is number => n != null && Number.isInteger(n)).sort((a, b) => a - b);
     const missing = [];
     if (nums.length) for (let n = nums[0]; n < nums[nums.length - 1]; n++) if (nums.indexOf(n) === -1) missing.push(n);
     // Own a later book but haven't read the one right before it.
-    const gapWarn = books.find((b) => b.owned && b.status !== "finished" && b.seriesNumber != null && books.some((p) => p.seriesNumber === b.seriesNumber - 1 && p.status !== "finished"));
+    const gapWarn = books.find((b) => b.owned && b.status !== "finished" && b.seriesNumber != null && books.some((p) => p.seriesNumber === b.seriesNumber! - 1 && p.status !== "finished"));
     return `<div class="series-group">
         <h3 class="series-head">${esc(name)} <span class="muted">· ${read} of ${books.length} read${owned ? " · " + owned + " owned" : ""}</span></h3>
         <div class="progress series-progress"><span style="width:${pct}%"></span></div>
         ${next ? `<p class="series-next">👉 Next up: ${next.seriesNumber ? "#" + next.seriesNumber + " · " : ""}${esc(next.title)}${next.owned ? " 🏠" : ` <span class="series-flag">· you don't own this yet</span>`}</p>` : `<p class="series-next done">🎉 Series complete!</p>`}
         ${missing.length ? `<p class="series-flag">🧩 Missing from your shelf: ${missing.map((n) => "#" + n).join(", ")}</p>` : ""}
-        ${gapWarn ? `<p class="series-flag">⚠️ You own #${gapWarn.seriesNumber} but haven't read #${gapWarn.seriesNumber - 1} yet.</p>` : ""}
+        ${gapWarn ? `<p class="series-flag">⚠️ You own #${gapWarn.seriesNumber} but haven't read #${gapWarn.seriesNumber! - 1} yet.</p>` : ""}
         <div class="author-books">${books.map((b) => `
           <button class="author-book" data-action="detail" data-id="${b.id}">${coverHTML(b)}<span class="ab-title">${STATUS_ICON[b.status] || ""} ${b.seriesNumber ? "#" + b.seriesNumber + " · " : ""}${esc(b.title)}${b.owned ? " 🏠" : ""}</span></button>`).join("")}</div>
       </div>`;
   }).join("") + `</div>`;
 }
-function authorHTML(list) {
-  const groups = {};
+function authorHTML(list: Book[]) {
+  const groups: Record<string, Book[]> = {};
   list.forEach((b) => { const a = b.author || "Unknown author"; (groups[a] = groups[a] || []).push(b); });
   return Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((a) => `
       <div class="author-group">
@@ -1416,7 +1417,7 @@ function authorHTML(list) {
 
 function renderAchievements() {
   const badges = computeBadges();
-  const groups = { pages: $("#badges-pages"), books: $("#badges-books"), special: $("#badges-special") };
+  const groups: Record<string, HTMLElement> = { pages: $("#badges-pages"), books: $("#badges-books"), special: $("#badges-special") };
   Object.values(groups).forEach((el) => (el.innerHTML = ""));
   badges.forEach((b) => {
     const next = b.unlocked ? "" : `<div class="b-prog">${num(b.value)} / ${num(b.target)}</div>`;
@@ -1442,12 +1443,12 @@ function renderGoal() {
   const fg = $("#goal-ring-fg");
   fg.style.strokeDasharray = circ.toFixed(1);
   fg.style.strokeDashoffset = (circ * (1 - pct / 100)).toFixed(1);
-  $("#goal-count").textContent = done;
+  $("#goal-count").textContent = String(done);
   $("#goal-of").textContent = "of " + target;
-  if (document.activeElement !== $("#goal-year")) $("#goal-year").value = goal.year;
-  if (document.activeElement !== $("#goal-target")) $("#goal-target").value = target;
-  if (document.activeElement !== $("#goal-pages")) $("#goal-pages").value = goal.pagesTarget || "";
-  if (document.activeElement !== $("#goal-daily")) $("#goal-daily").value = goal.dailyPages || "";
+  if (document.activeElement !== $<HTMLInputElement>("#goal-year")) $<HTMLInputElement>("#goal-year").value = String(goal.year);
+  if (document.activeElement !== $<HTMLInputElement>("#goal-target")) $<HTMLInputElement>("#goal-target").value = String(target);
+  if (document.activeElement !== $<HTMLInputElement>("#goal-pages")) $<HTMLInputElement>("#goal-pages").value = String(goal.pagesTarget || "");
+  if (document.activeElement !== $<HTMLInputElement>("#goal-daily")) $<HTMLInputElement>("#goal-daily").value = String(goal.dailyPages || "");
   const hint = $("#goal-hint");
   if (target && done >= target) hint.textContent = `🎉 Goal smashed! ${done} books in ${goal.year}.`;
   else if (target) hint.textContent = `${target - done} to go in ${goal.year}.`;
@@ -1455,7 +1456,7 @@ function renderGoal() {
   renderGoalExtra();
   renderChallenges();
 }
-function metricHTML(label, valTxt, pct, extra) {
+function metricHTML(label: string, valTxt: string, pct: number, extra?: string) {
   return `<div class="goal-metric"><div class="gm-head"><span>${label}</span><span>${valTxt}</span></div>
       <div class="progress"><span style="width:${Math.min(100, pct)}%"></span></div>${extra ? `<p class="gm-sub">${extra}</p>` : ""}</div>`;
 }
@@ -1476,7 +1477,7 @@ function renderGoalExtra() {
   if (isThisYear && g.target > 0) {
     const done = booksFinishedInYear(g.year);
     const now = new Date();
-    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / DAY);
+    const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / DAY);
     const expected = g.target * (dayOfYear / 365);
     const diff = done - expected;
     const rounded = Math.abs(Math.round(diff * 10) / 10);
@@ -1502,8 +1503,8 @@ function renderChallenges() {
 // Stats view
 // ---------------------------------------------------------------------------
 function renderStatsView() {
-  const logs = [];
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d)) logs.push({ d, pages: Number(l.pages) || 0 }); }));
+  const logs: { d: Date; pages: number }[] = [];
+  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) logs.push({ d, pages: Number(l.pages) || 0 }); }));
   const empty = logs.length === 0;
   $("#stats-empty").hidden = !empty;
 
@@ -1529,7 +1530,7 @@ function renderStatsView() {
   const ri = ratingItems();
   $("#chart-ratings").innerHTML = ri.some((r) => r.value) ? svgBars(ri, "books") : `<p class="muted">Rate some books to see this.</p>`;
 }
-function dailyItems(perDay) {
+function dailyItems(perDay: Record<number, number>): ChartItem[] {
   const today = startOfDay(new Date()), items = [];
   for (let i = 29; i >= 0; i--) {
     const t = today - i * DAY, d = new Date(t);
@@ -1537,15 +1538,15 @@ function dailyItems(perDay) {
   }
   return items;
 }
-function monthlyItems(logs) {
+function monthlyItems(logs: { d: Date; pages: number }[]): ChartItem[] {
   const NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const now = new Date(), buckets = [];
+  const now = new Date(), buckets: { y: number; m: number; value: number }[] = [];
   for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); buckets.push({ y: d.getFullYear(), m: d.getMonth(), value: 0 }); }
   logs.forEach((x) => { const b = buckets.find((bk) => bk.y === x.d.getFullYear() && bk.m === x.d.getMonth()); if (b) b.value += x.pages; });
   return buckets.map((b) => ({ full: NAMES[b.m] + " " + b.y, value: b.value, tick: NAMES[b.m] }));
 }
 function genreItems() {
-  const counts = {};
+  const counts: Record<string, number> = {};
   state.books.forEach((b) => (b.tags || []).forEach((t) => { counts[t] = (counts[t] || 0) + 1; }));
   return Object.keys(counts).map((k) => ({ full: k, value: counts[k], tick: k.length > 14 ? k.slice(0, 13) + "…" : k }))
     .sort((a, b) => b.value - a.value).slice(0, 8);
@@ -1555,7 +1556,7 @@ function ratingItems() {
   state.books.forEach((b) => { const r = Math.round(b.rating || 0); if (r >= 1 && r <= 5) counts[r - 1]++; });
   return counts.map((v, i) => ({ full: (i + 1) + " star", value: v, tick: (i + 1) + "★" }));
 }
-function svgBars(items, unit) {
+function svgBars(items: ChartItem[], unit: string) {
   const slot = 26, padT = 16;
   // Long tick labels (genre names) overlap when drawn flat at 26px slots —
   // angle them instead, and budget bottom/left space for the slanted text.
@@ -1583,7 +1584,7 @@ function svgBars(items, unit) {
   });
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMinYMid meet" role="img" aria-label="bar chart">${out}</svg>`;
 }
-function svgCalendar(perDay) {
+function svgCalendar(perDay: Record<number, number>) {
   const cell = 13, gap = 3, padT = 4, padL = 4, weeks = 26;
   const today = startOfDay(new Date());
   let start = today - (weeks * 7 - 1) * DAY;
@@ -1611,19 +1612,19 @@ function svgCalendar(perDay) {
 // History calls are wrapped: they can throw in sandboxed/file:// contexts,
 // and the page must still work without them (back button falls back).
 let bookReturnView = "reading", bookReturnScroll = 0;
-function histPushBook(id) {
-  try { history.pushState({ bookId: id, fromApp: true }, "", "#book/" + id); return true; } catch (e) { return false; }
+function histPushBook(id: string) {
+  try { history.pushState({ bookId: id, fromApp: true }, "", "#book/" + id); return true; } catch (e: any) { return false; }
 }
-function histState() { try { return history.state; } catch (e) { return null; } }
+function histState() { try { return history.state; } catch (e: any) { return null; } }
 function histCleanHash() {
-  try { if (location.hash) history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* sandboxed */ }
+  try { if (location.hash) history.replaceState(null, "", location.pathname + location.search); } catch (e: any) { /* sandboxed */ }
 }
-function openBookPage(book, opts) {
+function openBookPage(book: Book, opts?: { returnView?: string; returnScroll?: number; push?: boolean; keepScroll?: boolean }) {
   opts = opts || {};
   currentDetailId = book.id;
   const read = pagesRead(book);
   const pct = book.totalPages ? Math.min(100, Math.round((read / book.totalPages) * 100)) : 0;
-  const logs = book.logs.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  const logs = book.logs.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const statusLabels = { want: "Want to read", reading: "Currently reading", finished: "Finished", dnf: "Did not finish" };
   const dates = book.status === "finished" ? (book.finishedAt ? "Finished " + fmtDate(book.finishedAt) : "")
     : book.status === "reading" ? (book.startedAt ? "Started " + fmtDate(book.startedAt) : "") : "";
@@ -1646,7 +1647,7 @@ function openBookPage(book, opts) {
   if (book.bookmark) meta.push(`🔖 ${book.bookmark.page ? "p." + book.bookmark.page : "Bookmark"}${book.bookmark.note ? " — “" + esc(book.bookmark.note) + "”" : ""}`);
 
   const quotes = book.quotes || [];
-  const journal = (book.journal || []).slice().sort((a, b2) => new Date(b2.date) - new Date(a.date));
+  const journal = (book.journal || []).slice().sort((a, b2) => new Date(b2.date).getTime() - new Date(a.date).getTime());
   const chars = book.characters || [];
   const vocab = book.vocab || [];
   const history = (book.finishHistory || []).filter((f) => f.date);
@@ -1788,14 +1789,14 @@ function refreshDetail() {
 // A cumulative pages-over-time line only tells a story once there are a couple
 // of days to plot; on day one it's a flat sliver pinned to the bottom of the
 // box. Until then, show a clean progress meter toward the goal instead.
-function progressMeter(book, logs) {
+function progressMeter(book: Book, logs: ReadingLog[]) {
   const read = logs.reduce((s, l) => s + (Number(l.pages) || 0), 0);
   const total = book.totalPages || 0;
   const unit = unitLabel(book);
   const pct = total ? Math.max(0, Math.min(100, Math.round((read / total) * 100))) : 0;
   const left = total ? Math.max(0, total - read) : 0;
   const startedISO = book.startedAt || logs[0].date;
-  const started = !isNaN(new Date(startedISO)) ? "started " + fmtDate(startedISO) : "";
+  const started = !isNaN(new Date(startedISO).getTime()) ? "started " + fmtDate(startedISO) : "";
   const head = total
     ? `<span>${num(read)} / ${num(total)} ${unit}</span><span>${pct}%</span>`
     : `<span>${num(read)} ${unit} read</span><span></span>`;
@@ -1810,8 +1811,8 @@ function progressMeter(book, logs) {
       <p class="pm-note">Log a session on another day to chart your pace and a finish estimate.</p>
     </div>`;
 }
-function svgProgress(book) {
-  const logs = book.logs.slice().filter((l) => !isNaN(new Date(l.date))).sort((a, b) => new Date(a.date) - new Date(b.date));
+function svgProgress(book: Book) {
+  const logs = book.logs.slice().filter((l) => !isNaN(new Date(l.date).getTime())).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   if (!logs.length) return `<p class="muted">No reading sessions yet — log some pages to see your progress.</p>`;
   const distinctDays = new Set(logs.map((l) => startOfDay(new Date(l.date)))).size;
   if (distinctDays < 2) return progressMeter(book, logs);
@@ -1821,8 +1822,8 @@ function svgProgress(book) {
   const pts = logs.map((l) => { cum += Number(l.pages) || 0; return { t: new Date(l.date).getTime(), y: cum, date: l.date }; });
   const total = book.totalPages || cum, maxY = Math.max(total, cum, 1);
   const t0 = pts[0].t, t1 = pts[pts.length - 1].t, span = t1 - t0;
-  const xOf = (t, i) => span > 0 ? padL + ((t - t0) / span) * aw : padL + (pts.length === 1 ? aw : (i / (pts.length - 1)) * aw);
-  const yOf = (v) => padT + ah - (v / maxY) * ah, baseY = padT + ah;
+  const xOf = (t: number, i: number) => span > 0 ? padL + ((t - t0) / span) * aw : padL + (pts.length === 1 ? aw : (i / (pts.length - 1)) * aw);
+  const yOf = (v: number) => padT + ah - (v / maxY) * ah, baseY = padT + ah;
   const linePath = pts.map((p, i) => (i ? "L" : "M") + xOf(p.t, i).toFixed(1) + " " + yOf(p.y).toFixed(1)).join(" ");
   const areaPath = `M${xOf(pts[0].t, 0).toFixed(1)} ${baseY.toFixed(1)} ` + pts.map((p, i) => "L" + xOf(p.t, i).toFixed(1) + " " + yOf(p.y).toFixed(1)).join(" ") + ` L${xOf(t1, pts.length - 1).toFixed(1)} ${baseY.toFixed(1)} Z`;
   const dots = pts.map((p, i) => `<circle class="prog-dot" cx="${xOf(p.t, i).toFixed(1)}" cy="${yOf(p.y).toFixed(1)}" r="3.5"><title>${fmtDate(p.date)}: ${num(p.y)}${book.totalPages ? " / " + num(book.totalPages) : ""} ${unitLabel(book)}</title></circle>`).join("");
@@ -1842,22 +1843,22 @@ function svgProgress(book) {
 // ---------------------------------------------------------------------------
 // Year in Review
 // ---------------------------------------------------------------------------
-function openYearReview(year) {
+function openYearReview(year: number) {
   yearReviewYear = year;
-  const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year);
+  const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt!).getFullYear() === year);
   const pages = pagesReadInYear(year);
   const rated = finished.filter((b) => b.rating);
-  const avg = rated.length ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length) : 0;
-  const fav = rated.slice().sort((a, b) => (b.rating - a.rating) || (new Date(b.finishedAt) - new Date(a.finishedAt)))[0];
+  const avg = rated.length ? (rated.reduce((s, b) => s + b.rating!, 0) / rated.length) : 0;
+  const fav = rated.slice().sort((a, b) => (b.rating! - a.rating!) || (new Date(b.finishedAt!).getTime() - new Date(a.finishedAt!).getTime()))[0];
   const longest = finished.slice().sort((a, b) => (b.totalPages || 0) - (a.totalPages || 0))[0];
-  const genres = {}; finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
+  const genres: Record<string, number> = {}; finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
   const topGenre = Object.keys(genres).sort((a, b) => genres[b] - genres[a])[0];
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  const monthCounts = new Array(12).fill(0); finished.forEach((b) => monthCounts[new Date(b.finishedAt).getMonth()]++);
+  const monthCounts = new Array(12).fill(0); finished.forEach((b) => monthCounts[new Date(b.finishedAt!).getMonth()]++);
   const bestMonthIdx = monthCounts.indexOf(Math.max(...monthCounts));
   const daysThisYear = Array.from(readingDaySet()).filter((t) => new Date(t).getFullYear() === year).length;
 
-  const tile = (n, l) => `<div class="yr-tile"><div class="yr-num">${n}</div><div class="yr-lbl">${l}</div></div>`;
+  const tile = (n: number | string, l: string) => `<div class="yr-tile"><div class="yr-num">${n}</div><div class="yr-lbl">${l}</div></div>`;
   const hasData = finished.length || pages;
   $("#year-title").textContent = "🎉 " + year + " in Review";
   $("#year-body").innerHTML = `
@@ -1888,17 +1889,17 @@ function openYearReview(year) {
 // ---------------------------------------------------------------------------
 // Keepsakes: downloads, markdown journals, shareable cards, monthly recap
 // ---------------------------------------------------------------------------
-function downloadFileBlob(name, blob) {
+function downloadFileBlob(name: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = name; a.click();
   URL.revokeObjectURL(url);
 }
-function downloadText(name, text) { downloadFileBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" })); }
-function slugify(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "book"; }
+function downloadText(name: string, text: string) { downloadFileBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" })); }
+function slugify(s: unknown) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "book"; }
 function appTitle() { return $("#app-title") ? $("#app-title").textContent : "Enkela's Bookshelf"; }
 
-function bookMarkdown(b) {
+function bookMarkdown(b: Book) {
   const lines = [`# ${b.title}`, ""];
   if (b.author) lines.push(`*by ${b.author}*`, "");
   const meta = [];
@@ -1914,7 +1915,7 @@ function bookMarkdown(b) {
   if (b.dnfReason) lines.push(`## Why I set it aside`, "", b.dnfReason, "");
   if ((b.journal || []).length) {
     lines.push(`## Journal`, "");
-    b.journal.slice().sort((x, y) => new Date(x.date) - new Date(y.date))
+    b.journal.slice().sort((x, y) => new Date(x.date).getTime() - new Date(y.date).getTime())
       .forEach((j) => lines.push(`- **${fmtDate(j.date)}**${j.page ? ` (p.${j.page})` : ""} — ${j.text}`));
     lines.push("");
   }
@@ -1934,16 +1935,16 @@ function bookMarkdown(b) {
   }
   if (b.logs.length) {
     lines.push(`## Reading sessions`, "");
-    b.logs.slice().sort((x, y) => new Date(x.date) - new Date(y.date))
+    b.logs.slice().sort((x, y) => new Date(x.date).getTime() - new Date(y.date).getTime())
       .forEach((l) => lines.push(`- ${fmtDateTime(l.date)}: ${num(l.pages)} ${unitLabel(b)}${l.minutes ? `, ${l.minutes} min` : ""}${l.mood ? " " + l.mood : ""}${l.note ? ` — “${l.note}”` : ""}`));
     lines.push("");
   }
   lines.push("---", `*Exported from ${appTitle()} on ${fmtDate(new Date().toISOString())}*`);
   return lines.join("\n");
 }
-function yearMarkdown(year) {
-  const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year)
-    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+function yearMarkdown(year: number) {
+  const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt!).getFullYear() === year)
+    .sort((a, b) => new Date(a.finishedAt!).getTime() - new Date(b.finishedAt!).getTime());
   const lines = [`# My ${year} in books`, "", `${finished.length} books · ${num(pagesReadInYear(year))} pages`, ""];
   finished.forEach((b) => {
     lines.push(`## ${b.title}${b.author ? ` — ${b.author}` : ""}`, "");
@@ -1958,7 +1959,7 @@ function yearMarkdown(year) {
 }
 
 // --- Shareable card images (canvas → PNG download) ---
-function loadImage(url) {
+function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -1967,7 +1968,7 @@ function loadImage(url) {
     img.src = url;
   });
 }
-function wrapText(ctx, text, x, y, maxW, lh, maxLines) {
+function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, lh: number, maxLines: number) {
   const words = String(text).split(/\s+/);
   let line = "", lines = 0;
   for (let i = 0; i < words.length; i++) {
@@ -1980,7 +1981,7 @@ function wrapText(ctx, text, x, y, maxW, lh, maxLines) {
   if (line) { ctx.fillText(line, x, y); y += lh; }
   return y;
 }
-function drawStars(ctx, rating, x, y, size) {
+function drawStars(ctx: CanvasRenderingContext2D, rating: number, x: number, y: number, size: number) {
   ctx.font = `${size}px serif`;
   for (let i = 1; i <= 5; i++) {
     const sx = x + (i - 1) * (size + 6);
@@ -1998,11 +1999,11 @@ function drawStars(ctx, rating, x, y, size) {
     }
   }
 }
-async function shareBookCard(b) {
+async function shareBookCard(b: Book) {
   const W = 1000, H = 1400;
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = H;
-  const ctx = cv.getContext("2d");
+  const ctx = cv.getContext("2d")!;
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, "#fbf7ef"); g.addColorStop(1, "#efe2ca");
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -2018,7 +2019,7 @@ async function shareBookCard(b) {
       ctx.drawImage(img, cx, cy, cw, ch);
       ctx.restore();
       drewCover = true;
-    } catch (e) { /* CORS or broken cover — fall back */ }
+    } catch (e: any) { /* CORS or broken cover — fall back */ }
   }
   if (!drewCover) {
     const hue = hashHue(b.title + b.author);
@@ -2075,7 +2076,7 @@ async function shareBookCard(b) {
       downloadFileBlob(slugify(b.title) + "-card.png", blob);
       toast("🖼", "Book card saved", "A shareable image of “" + b.title + "”");
     }, "image/png");
-  } catch (e) {
+  } catch (e: any) {
     toast("⚠️", "Couldn't create the card", "The cover image blocked export.");
   }
 }
@@ -2083,7 +2084,7 @@ async function shareBookCard(b) {
 async function shareSnapshotCard() {
   const W = 1000, H = 1000;
   const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
-  const ctx = cv.getContext("2d");
+  const ctx = cv.getContext("2d")!;
   const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#fbf7ef"); g.addColorStop(1, "#efe2ca");
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = "#c98a4b"; ctx.lineWidth = 5; ctx.strokeRect(42, 42, W - 84, H - 84);
@@ -2106,7 +2107,7 @@ async function shareSnapshotCard() {
     ctx.fillStyle = "#9c5b3a"; ctx.font = "700 76px Georgia, serif"; ctx.fillText(s[0], cxp, cyp);
     ctx.fillStyle = "#6b6258"; ctx.font = "26px Georgia, serif"; ctx.fillText(s[1], cxp, cyp + 42);
   });
-  const genre = {}; booksFinished().forEach((b) => (b.tags || []).forEach((t) => { genre[t] = (genre[t] || 0) + 1; }));
+  const genre: Record<string, number> = {}; booksFinished().forEach((b) => (b.tags || []).forEach((t) => { genre[t] = (genre[t] || 0) + 1; }));
   const top = Object.keys(genre).sort((a, b) => genre[b] - genre[a])[0];
   if (top) { ctx.fillStyle = "#4a4238"; ctx.font = "italic 30px Georgia, serif"; ctx.fillText("Favourite genre: " + top, W / 2, H - 135); }
   ctx.fillStyle = "#9c5b3a"; ctx.font = "600 24px Georgia, serif"; ctx.fillText(new Date().toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }), W / 2, H - 85);
@@ -2117,21 +2118,21 @@ async function shareSnapshotCard() {
       downloadFileBlob("my-reading-snapshot.png", blob);
       toast("📸", "Snapshot saved", "A shareable picture of your reading right now");
     }, "image/png");
-  } catch (e) { toast("⚠️", "Couldn't create the card", ""); }
+  } catch (e: any) { toast("⚠️", "Couldn't create the card", ""); }
 }
-async function shareYearCard(year) {
-  const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year);
+async function shareYearCard(year: number) {
+  const finished = booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt!).getFullYear() === year);
   const pages = pagesReadInYear(year);
   const rated = finished.filter((b) => b.rating);
-  const avg = rated.length ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length) : 0;
-  const genres = {};
+  const avg = rated.length ? (rated.reduce((s, b) => s + b.rating!, 0) / rated.length) : 0;
+  const genres: Record<string, number> = {};
   finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
   const topGenre = Object.keys(genres).sort((a, b) => genres[b] - genres[a])[0];
   const daysThisYear = Array.from(readingDaySet()).filter((t) => new Date(t).getFullYear() === year).length;
   const W = 1080, H = 1080;
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = H;
-  const ctx = cv.getContext("2d");
+  const ctx = cv.getContext("2d")!;
   const g = ctx.createLinearGradient(0, 0, W, H);
   g.addColorStop(0, "#9c5b3a"); g.addColorStop(1, "#c98a4b");
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -2169,31 +2170,31 @@ async function shareYearCard(year) {
 }
 
 // --- Monthly wrap-up ---
-function monthLogs(y, m) {
-  const logs = [];
+function monthLogs(y: number, m: number) {
+  const logs: { d: Date; pages: number; minutes: number }[] = [];
   state.books.forEach((b) => b.logs.forEach((l) => {
     const d = new Date(l.date);
-    if (!isNaN(d) && d.getFullYear() === y && d.getMonth() === m) logs.push({ d, pages: Number(l.pages) || 0, minutes: Number(l.minutes) || 0 });
+    if (!isNaN(d.getTime()) && d.getFullYear() === y && d.getMonth() === m) logs.push({ d, pages: Number(l.pages) || 0, minutes: Number(l.minutes) || 0 });
   }));
   return logs;
 }
-function openMonthlyRecap(y, m) {
+function openMonthlyRecap(y: number, m: number) {
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const logs = monthLogs(y, m);
-  const finished = booksFinished().filter((b) => { const d = new Date(b.finishedAt); return b.finishedAt && d.getFullYear() === y && d.getMonth() === m; });
+  const finished = booksFinished().filter((b) => { const d = new Date(b.finishedAt!); return b.finishedAt && d.getFullYear() === y && d.getMonth() === m; });
   const pages = logs.reduce((s, l) => s + l.pages, 0);
   const minutes = logs.reduce((s, l) => s + l.minutes, 0);
   const days = new Set(logs.map((l) => startOfDay(l.d))).size;
-  const perDay = {};
+  const perDay: Record<number, number> = {};
   logs.forEach((l) => { const k = startOfDay(l.d); perDay[k] = (perDay[k] || 0) + l.pages; });
   const best = Object.values(perDay).reduce((mx, v) => Math.max(mx, v), 0);
-  const genres = {};
+  const genres: Record<string, number> = {};
   finished.forEach((b) => (b.tags || []).forEach((t) => genres[t] = (genres[t] || 0) + 1));
   const topGenre = Object.keys(genres).sort((a, b) => genres[b] - genres[a])[0];
   const now = new Date();
   const isCurrent = y === now.getFullYear() && m === now.getMonth();
   const prev = new Date(y, m - 1, 1), next = new Date(y, m + 1, 1);
-  const tile = (n, l) => `<div class="yr-tile"><div class="yr-num">${n}</div><div class="yr-lbl">${l}</div></div>`;
+  const tile = (n: number | string, l: string) => `<div class="yr-tile"><div class="yr-num">${n}</div><div class="yr-lbl">${l}</div></div>`;
   $("#month-title").textContent = "📅 " + MONTHS[m] + " " + y;
   $("#month-body").innerHTML = `
       <div class="yr-nav">
@@ -2217,8 +2218,8 @@ function openMonthlyRecap(y, m) {
 function maybeShowMonthlyRecap() {
   const curMonth = new Date().toISOString().slice(0, 7);
   let lastSeen = null;
-  try { lastSeen = localStorage.getItem("enkelas-last-recap"); } catch (e) { /* ignore */ }
-  try { localStorage.setItem("enkelas-last-recap", curMonth); } catch (e) { /* ignore */ }
+  try { lastSeen = localStorage.getItem("enkelas-last-recap"); } catch (e: any) { /* ignore */ }
+  try { localStorage.setItem("enkelas-last-recap", curMonth); } catch (e: any) { /* ignore */ }
   if (!lastSeen || lastSeen === curMonth) return;
   const prev = new Date(); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
   if (monthLogs(prev.getFullYear(), prev.getMonth()).length) {
@@ -2230,7 +2231,7 @@ function maybeShowMonthlyRecap() {
 // Journey timeline — your whole reading life as one scrolling story
 // ---------------------------------------------------------------------------
 function journeyEvents() {
-  const ev = [];
+  const ev: { t: string | null; icon: string; title: string; sub: string; id: string }[] = [];
   state.books.forEach((b) => {
     if (b.addedAt) ev.push({ t: b.addedAt, icon: "➕", title: `Added “${b.title}”`, sub: b.pickReason ? "💭 " + b.pickReason : "", id: b.id });
     if (b.startedAt && b.status !== "want") ev.push({ t: b.startedAt, icon: "▶️", title: `Started “${b.title}”`, sub: "", id: b.id });
@@ -2247,9 +2248,9 @@ function journeyEvents() {
     if (b.status === "finished" && b.finishedAt && !history.length) ev.push({ t: b.finishedAt, icon: "🏁", title: `Finished “${b.title}”`, sub: b.rating ? "Rated " + fmtRating(b.rating) + "★" : "", id: b.id });
     if (b.status === "dnf" && b.finishedAt) ev.push({ t: b.finishedAt, icon: "🚧", title: `Set aside “${b.title}”`, sub: b.dnfReason ? "“" + b.dnfReason + "”" : "", id: b.id });
   });
-  return ev.filter((e) => e.t && !isNaN(new Date(e.t))).sort((a, b) => new Date(b.t) - new Date(a.t));
+  return ev.filter((e) => e.t && !isNaN(new Date(e.t!).getTime())).sort((a, b) => new Date(b.t!).getTime() - new Date(a.t!).getTime());
 }
-function ownedCardHTML(b) {
+function ownedCardHTML(b: Book) {
   const statusLabels = { want: "📌 Want to read", reading: "📖 Reading now", finished: "✓ Read", dnf: "✕ Set aside" };
   return `<article class="book-card lib-card" data-id="${b.id}">
       ${coverHTML(b)}
@@ -2264,7 +2265,7 @@ function renderOwned() {
   const q = ownedQuery;
   // Personal library map: filter by where the book physically lives.
   const locs = allLocations();
-  const locSel = $("#owned-location");
+  const locSel = $<HTMLSelectElement>("#owned-location");
   if (locSel) {
     locSel.hidden = locs.length === 0;
     if (ownedLocation && !locs.some((l) => l.toLowerCase() === ownedLocation.toLowerCase())) ownedLocation = "";
@@ -2272,9 +2273,9 @@ function renderOwned() {
     locSel.value = ownedLocation;
   }
   // "Bought but haven't touched" — owned, not started, nothing logged.
-  const isUnread = (b) => b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0;
+  const isUnread = (b: Book) => b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0;
   const unreadCount = owned.filter(isUnread).length;
-  const ub = $("#owned-unread-btn");
+  const ub = $<HTMLButtonElement>("#owned-unread-btn");
   if (ub) {
     ub.hidden = owned.length === 0;
     ub.setAttribute("aria-pressed", ownedUnreadOnly ? "true" : "false");
@@ -2299,7 +2300,7 @@ function renderOwned() {
   $("#owned-count").textContent = owned.length
     ? `You own ${num(owned.length)} book${owned.length === 1 ? "" : "s"}${parts.length ? " · " + parts.join(" · ") : ""}`
     : "";
-  const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0) - new Date(b.lentAt || 0));
+  const lent = state.books.filter((b) => b.lentTo).sort((a, b) => new Date(a.lentAt || 0).getTime() - new Date(b.lentAt || 0).getTime());
   $("#owned-lent-wrap").hidden = !(lent.length && !q);
   $("#owned-lent").innerHTML = lent.map(ownedCardHTML).join("");
   const filtering = q || ownedLocation || ownedUnreadOnly;
@@ -2325,8 +2326,8 @@ function renderJourney() {
   const MAX = 200;
   let lastDay = "", lastMonth = "";
   el.innerHTML = ev.slice(0, MAX).map((e) => {
-    const d = new Date(e.t);
-    const month = isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const d = new Date(e.t!);
+    const month = isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
     const monthHead = month && month !== lastMonth ? `<div class="j-month">${month}</div>` : "";
     lastMonth = month;
     const day = fmtDate(e.t);
@@ -2336,7 +2337,7 @@ function renderJourney() {
 
         <span class="j-icon">${e.icon}</span>
         <span class="j-body"><span class="j-title">${esc(e.title)}</span>${e.sub ? `<span class="j-sub">${esc(e.sub)}</span>` : ""}</span>
-        <span class="j-time">${new Date(e.t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+        <span class="j-time">${new Date(e.t!).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
       </button>`;
   }).join("") + (ev.length > MAX ? `<p class="muted j-more">Showing the latest ${MAX} of ${num(ev.length)} moments.</p>` : "");
 }
@@ -2410,7 +2411,7 @@ function renderBackupHealth() {
   const logs = state.books.reduce((n, b) => n + (b.logs || []).length, 0);
   const lastX = loadLastExport();
   const days = lastX ? Math.floor((Date.now() - new Date(lastX).getTime()) / DAY) : null;
-  const stale = lastX === null || days > 30;
+  const stale = lastX === null || days! > 30;
   const rows = [
     `<div class="bh-row"><span>📚</span><span>${state.books.length} book${state.books.length === 1 ? "" : "s"} · ${num(logs)} reading session${logs === 1 ? "" : "s"} on this device</span></div>`,
     `<div class="bh-row${stale ? " warn" : ""}"><span>🛟</span><span>Last backup export: <strong>${lastX ? relTimeLong(lastX) : "never"}</strong>${stale ? " — a fresh one wouldn't hurt" : ""}</span></div>`,
@@ -2431,7 +2432,7 @@ function renderBackupHealth() {
       const bytes = recs.reduce((n, r) => n + ((r.data && r.data.byteLength) || 0), 0);
       const size = bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(1) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB";
       el.hidden = false;
-      el.lastElementChild.textContent = recs.length + " ePub" + (recs.length === 1 ? "" : "s") + " in the eReader (" + size + ") — only “Export everything” includes these.";
+      el.lastElementChild!.textContent = recs.length + " ePub" + (recs.length === 1 ? "" : "s") + " in the eReader (" + size + ") — only “Export everything” includes these.";
     }).catch(() => { /* ignore */ });
   }
 }
@@ -2440,7 +2441,7 @@ function openConflicts() {
   const log = loadConflictLog();
   body.innerHTML = log.length
     ? `<p class="muted">When two devices change the bookshelf at the same time, you pick a winner. Every time that happened is listed here.</p>`
-      + log.map((c) => `<div class="conflict-row"><strong>${esc(relTimeLong(c.at))}</strong> · during ${esc(c.where)} → ${esc(c.choice)} <span class="muted">(${c.books} books after)</span></div>`).join("")
+      + log.map((c: any) => `<div class="conflict-row"><strong>${esc(relTimeLong(c.at))}</strong> · during ${esc(c.where)} → ${esc(c.choice)} <span class="muted">(${c.books} books after)</span></div>`).join("")
     : `<p class="empty">No sync conflicts so far — every change has merged cleanly. 🎉</p>`;
   showModal("conflicts-modal");
 }
@@ -2459,7 +2460,7 @@ function maybeBackupReminder() {
     toast("🛟", "Backup reminder", lastX
       ? "It's been " + Math.round(ageDays) + " days since your last export — Settings → ⬇ Export backup."
       : "You've never exported a backup — Settings → ⬇ Export backup takes two taps.");
-  } catch (e) { /* ignore */ }
+  } catch (e: any) { /* ignore */ }
 }
 function openSettings() { closeAccountMenu(); renderSettings(); showModal("settings-modal"); }
 function clearLocalData() {
@@ -2467,7 +2468,7 @@ function clearLocalData() {
     ? "Clear this device's copy of your bookshelf?\n\nYour books stay safe in your account and download again on the next sign-in/sync. To erase everything, sign out or delete your account."
     : "Erase all bookshelf data on this device?\n\nThis cannot be undone. Export a backup first if you're not sure.";
   if (!confirm(msg)) return;
-  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e: any) { /* ignore */ }
   state = defaultState();
   knownBadges = new Set();
   currentDetailId = null;
@@ -2482,7 +2483,7 @@ async function refreshAppFiles() {
   try {
     if (window.caches) { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); }
     if (navigator.serviceWorker) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map((r) => r.unregister())); }
-  } catch (e) { /* ignore */ }
+  } catch (e: any) { /* ignore */ }
   location.reload();
 }
 
@@ -2490,7 +2491,7 @@ async function refreshAppFiles() {
 // Shelf Doctor — data-quality dashboard (find & fix messy library entries)
 // ---------------------------------------------------------------------------
 function duplicateGroups() {
-  const by = {};
+  const by: Record<string, Book[]> = {};
   state.books.forEach((b) => { const k = (b.title + "|" + (b.author || "")).toLowerCase(); (by[k] = by[k] || []).push(b); });
   return Object.keys(by).map((k) => ({ key: k, books: by[k] })).filter((g) => g.books.length > 1);
 }
@@ -2507,22 +2508,22 @@ function shelfDoctorIssues() {
   ].filter((g) => (g.books ? g.books.length : g.groups.length) > 0);
 }
 function shelfDoctorCount() { return shelfDoctorIssues().reduce((s, g) => s + (g.books ? g.books.length : g.groups.length), 0); }
-function fixLabel(fix) { return fix === "cover" ? "🔍 Find cover" : fix === "genres" ? "✨ Fetch genres" : "✎ Edit"; }
-async function fetchGenresForBook(book) {
+function fixLabel(fix: string) { return fix === "cover" ? "🔍 Find cover" : fix === "genres" ? "✨ Fetch genres" : "✎ Edit"; }
+async function fetchGenresForBook(book: Book) {
   let docs = await searchOpenLibrary(book.title, book.author, book.isbn);
-  if (book.author && !book.isbn) { const m = docs.filter((d) => authorMatches(book.author, d.author_name)); if (m.length) docs = m; }
-  const doc = docs.find((d) => Array.isArray(d.subject) && d.subject.length) || docs[0];
-  let picks = cleanSubjects(doc && doc.subject);
+  if (book.author && !book.isbn) { const m = docs.filter((d: OLDoc) => authorMatches(book.author, d.author_name)); if (m.length) docs = m; }
+  const doc = docs.find((d: OLDoc) => Array.isArray(d.subject) && d.subject.length) || docs[0];
+  let picks = cleanSubjects((doc && doc.subject) || []);
   if (picks.length < 3 && doc && doc.key) {
-    try { const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json(); picks = cleanSubjects((w.subjects || []).concat(doc.subject || [])); } catch (e) { /* keep what we have */ }
+    try { const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json(); picks = cleanSubjects((w.subjects || []).concat(doc.subject || [])); } catch (e: any) { /* keep what we have */ }
   }
   return picks;
 }
-function mergeDuplicateGroup(group) {
+function mergeDuplicateGroup(group: Book[]) {
   if (!group || group.length < 2) return;
   const title = group[0].title;
   if (!confirm(`Merge ${group.length} copies of “${title}” into one?\n\nReading logs, quotes, journal, tags and shelves are combined; the extra copies are removed. This can't be undone.`)) return;
-  const primary = group.slice().sort((a, b) => (b.logs.length - a.logs.length) || (new Date(a.addedAt) - new Date(b.addedAt)))[0];
+  const primary = group.slice().sort((a, b) => (b.logs.length - a.logs.length) || (new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime()))[0];
   const others = group.filter((b) => b !== primary);
   others.forEach((o) => {
     primary.logs = primary.logs.concat(o.logs || []);
@@ -2535,7 +2536,7 @@ function mergeDuplicateGroup(group) {
     primary.collections = parseList((primary.collections || []).concat(o.collections || []).join(","));
     primary.owned = primary.owned || o.owned;
     primary.readCount = Math.max(primary.readCount || 1, o.readCount || 1);
-    ["coverUrl", "author", "isbn", "description", "review", "seriesName", "dnfReason", "pickReason", "lentTo"].forEach((f) => { if (!primary[f] && o[f]) primary[f] = o[f]; });
+    (["coverUrl", "author", "isbn", "description", "review", "seriesName", "dnfReason", "pickReason", "lentTo"] as const).forEach((f) => { if (!primary[f] && o[f]) (primary as any)[f] = o[f]; });
     if (!primary.totalPages && o.totalPages) primary.totalPages = o.totalPages;
     if (primary.seriesNumber == null && o.seriesNumber != null) primary.seriesNumber = o.seriesNumber;
     if (!primary.rating && o.rating) primary.rating = o.rating;
@@ -2560,9 +2561,9 @@ function renderShelfDoctor() {
       const count = g.books ? g.books.length : g.groups.length;
       let rows;
       if (g.key === "dup") {
-        rows = g.groups.map((grp) => `<div class="doctor-row"><div class="doctor-book"><span class="doctor-title">${esc(grp.books[0].title)}</span><span class="muted"> · ${grp.books.length} copies${grp.books[0].author ? " · " + esc(grp.books[0].author) : ""}</span></div><button class="mini" data-doctor-merge="${esc(grp.key)}">🔗 Merge</button></div>`).join("");
+        rows = g.groups!.map((grp) => `<div class="doctor-row"><div class="doctor-book"><span class="doctor-title">${esc(grp.books[0].title)}</span><span class="muted"> · ${grp.books.length} copies${grp.books[0].author ? " · " + esc(grp.books[0].author) : ""}</span></div><button class="mini" data-doctor-merge="${esc(grp.key)}">🔗 Merge</button></div>`).join("");
       } else {
-        rows = g.books.map((b) => `<div class="doctor-row"><div class="doctor-book"><span class="doctor-title">${esc(b.title)}</span>${b.author ? `<span class="muted"> · ${esc(b.author)}</span>` : ""}</div><button class="mini" data-doctor-fix="${g.fix}" data-id="${esc(b.id)}">${fixLabel(g.fix)}</button></div>`).join("");
+        rows = g.books!.map((b) => `<div class="doctor-row"><div class="doctor-book"><span class="doctor-title">${esc(b.title)}</span>${b.author ? `<span class="muted"> · ${esc(b.author)}</span>` : ""}</div><button class="mini" data-doctor-fix="${g.fix}" data-id="${esc(b.id)}">${fixLabel(g.fix)}</button></div>`).join("");
       }
       return `<details class="doctor-group"${count <= 6 ? " open" : ""}><summary>${g.icon} ${g.label} <span class="doctor-count">${count}</span></summary>${rows}</details>`;
     }).join("");
@@ -2572,13 +2573,13 @@ function openShelfDoctor() { closeAccountMenu(); renderShelfDoctor(); showModal(
 // ---------------------------------------------------------------------------
 // Reading Clubs (spoiler-safe, account-backed; needs the sync worker + D1)
 // ---------------------------------------------------------------------------
-let currentClubId = null, clubPollTimer = null, clubSocket = null;
-function clubApi(path, opts) { return apiFetch("/api/clubs" + path, opts || {}); }
-function firstName(n) { return String(n || "?").trim().split(/\s+/)[0] || "?"; }
+let currentClubId: string | null = null, clubPollTimer: ReturnType<typeof setInterval> | null = null, clubSocket: WebSocket | null = null;
+function clubApi(path: string, opts?: RequestInit) { return apiFetch("/api/clubs" + path, opts || {}); }
+function firstName(n: unknown) { return String(n || "?").trim().split(/\s+/)[0] || "?"; }
 // Realtime: a WebSocket to the club's Durable Object. On any nudge we re-fetch
 // from D1 (so the spoiler gate stays server-side). Polling remains a fallback.
-function closeClubWs() { if (clubSocket) { try { clubSocket.onclose = null; clubSocket.close(); } catch (e) { /* already closed */ } clubSocket = null; } }
-function openClubWs(clubId) {
+function closeClubWs() { if (clubSocket) { try { clubSocket.onclose = null; clubSocket.close(); } catch (e: any) { /* already closed */ } clubSocket = null; } }
+function openClubWs(clubId: string) {
   closeClubWs();
   if (!("WebSocket" in window) || !SYNC_API || !auth) return;
   try {
@@ -2588,11 +2589,11 @@ function openClubWs(clubId) {
     ws.onmessage = () => { if (currentClubId === clubId && !$("#clubs-modal").hidden) refreshClub(true); };
     ws.onclose = () => { if (clubSocket === ws) clubSocket = null; };
     ws.onerror = () => { /* fall back to polling */ };
-  } catch (e) { /* fall back to polling */ }
+  } catch (e: any) { /* fall back to polling */ }
 }
 // Per-club "last seen" (unread dots), stored locally.
-function loadClubSeen() { try { return JSON.parse(localStorage.getItem("enkelas-club-seen")) || {}; } catch (e) { return {}; } }
-function markClubSeen(clubId) { try { const s = loadClubSeen(); s[clubId] = new Date().toISOString(); localStorage.setItem("enkelas-club-seen", JSON.stringify(s)); } catch (e) { /* ignore */ } }
+function loadClubSeen() { try { return JSON.parse(localStorage.getItem("enkelas-club-seen") || "null") || {}; } catch (e: any) { return {}; } }
+function markClubSeen(clubId: string) { try { const s = loadClubSeen(); s[clubId] = new Date().toISOString(); localStorage.setItem("enkelas-club-seen", JSON.stringify(s)); } catch (e: any) { /* ignore */ } }
 // Shows the clubs modal (auth-gated) without loading anything into it yet.
 // Returns false when the user still needs to sign in first.
 function openClubsShell() {
@@ -2608,43 +2609,43 @@ function openClubs() {
   renderClubsListScreen();
 }
 function clubDisplayName() { return (auth && auth.user && auth.user.fullName) || "You"; }
-async function joinClubByCode(code) {
+async function joinClubByCode(code: string) {
   const body = $("#clubs-body");
   if (body) body.innerHTML = `<p class="muted">Joining club…</p>`;
   try {
     const { res, data } = await clubApi("/join", { method: "POST", body: JSON.stringify({ joinCode: code, displayName: clubDisplayName() }) });
     if (res.ok && data.clubId) { toast("👥", "Joined the club!", ""); openClub(data.clubId); return; }
     toast("⚠️", "Couldn't join", (data && data.error) || "Check the code and try again.");
-  } catch (e) {
+  } catch (e: any) {
     toast("📴", "Couldn't reach the club server", "Check your connection and try the code again.");
   }
   renderClubsListScreen();
 }
 // Invite links: <app URL>#join/CODE — opening one joins (or prompts sign-in first).
 const PENDING_JOIN_KEY = "enkelas-club-pendingjoin";
-function clubInviteUrl(code) {
+function clubInviteUrl(code: string) {
   if (!/^https?:/.test(location.protocol)) return ""; // file:// has no shareable origin
   return location.origin + location.pathname + "#join/" + encodeURIComponent(code);
 }
-async function shareClubInvite(code, bookTitle) {
+async function shareClubInvite(code: string, bookTitle: string) {
   const url = clubInviteUrl(code);
   const text = `Join my reading club${bookTitle ? ` for “${bookTitle}”` : ""} — invite code ${code}`;
   if (navigator.share) {
     try { await navigator.share(url ? { title: "Reading club invite", text, url } : { title: "Reading club invite", text }); return; }
-    catch (e) { if (e && e.name === "AbortError") return; /* fall through to clipboard */ }
+    catch (e: any) { if (e && e.name === "AbortError") return; /* fall through to clipboard */ }
   }
   try { await navigator.clipboard.writeText(url ? text + "\n" + url : text); toast("📋", "Invite copied", "Send it to a friend."); }
-  catch (e) { toast("ℹ️", "Invite code " + code, url); }
+  catch (e: any) { toast("ℹ️", "Invite code " + code, url); }
 }
 function maybePendingClubJoin() {
   let code = null;
-  try { code = localStorage.getItem(PENDING_JOIN_KEY); } catch (e) { /* ignore */ }
+  try { code = localStorage.getItem(PENDING_JOIN_KEY); } catch (e: any) { /* ignore */ }
   if (!code || !auth || !syncEnabled()) return;
-  try { localStorage.removeItem(PENDING_JOIN_KEY); } catch (e) { /* ignore */ }
+  try { localStorage.removeItem(PENDING_JOIN_KEY); } catch (e: any) { /* ignore */ }
   closeModals();
   if (openClubsShell()) joinClubByCode(code);
 }
-function stopClubPoll() { clearTimeout(clubPollTimer); clubPollTimer = null; closeClubWs(); }
+function stopClubPoll() { clearTimeout(clubPollTimer!); clubPollTimer = null; closeClubWs(); }
 async function renderClubsListScreen() {
   currentClubId = null; stopClubPoll();
   const body = $("#clubs-body");
@@ -2655,7 +2656,7 @@ async function renderClubsListScreen() {
   const clubs = (data && data.clubs) || [];
   const seen = loadClubSeen();
   body.innerHTML =
-    (clubs.length ? `<div class="club-list">${clubs.map((c) => clubRowHTML(c, seen)).join("")}</div>` : `<p class="empty">No clubs yet. Start one for a book you're reading, or join a friend's with their code.</p>`) +
+    (clubs.length ? `<div class="club-list">${clubs.map((c: Club) => clubRowHTML(c, seen)).join("")}</div>` : `<p class="empty">No clubs yet. Start one for a book you're reading, or join a friend's with their code.</p>`) +
     `<div class="club-forms">
         <form id="club-create-form" class="club-form">
           <h4>Start a club</h4>
@@ -2670,7 +2671,7 @@ async function renderClubsListScreen() {
         </form>
       </div>`;
 }
-function clubRowHTML(c, seen) {
+function clubRowHTML(c: Club, seen: Record<string, string>) {
   const members = c.members || [];
   const me = c.me || {};
   const unread = c.last_activity && (!(seen || {})[c.id] || c.last_activity > seen[c.id]);
@@ -2679,7 +2680,7 @@ function clubRowHTML(c, seen) {
       <span class="club-row-meta">${members.length} member${members.length === 1 ? "" : "s"} · you're ${me.progress_pct || 0}%</span>
     </button>`;
 }
-async function openClub(clubId) {
+async function openClub(clubId: string) {
   currentClubId = clubId;
   $("#clubs-body").innerHTML = `<p class="muted">Loading…</p>`;
   await refreshClub(false);
@@ -2690,7 +2691,7 @@ async function openClub(clubId) {
   const loop = () => { clubPollTimer = setTimeout(async () => { if (currentClubId === clubId && !$("#clubs-modal").hidden) { if (!clubSocket) await refreshClub(true); loop(); } }, 20000); };
   loop();
 }
-async function refreshClub(quiet) {
+async function refreshClub(quiet?: boolean) {
   const clubId = currentClubId;
   if (!clubId) return;
   const [detailR, commentsR] = await Promise.all([clubApi("/" + clubId), clubApi("/" + clubId + "/comments")]);
@@ -2699,7 +2700,7 @@ async function refreshClub(quiet) {
   if (quiet && document.activeElement && document.activeElement.id === "club-comment-body") return;
   renderClubScreen(detailR.data, commentsR.data || {});
 }
-function renderClubScreen(d, cm) {
+function renderClubScreen(d: any, cm: any) {
   const body = $("#clubs-body");
   if (!body || !d.club || currentClubId !== d.club.id) return;
   const me = d.me || {};
@@ -2711,7 +2712,7 @@ function renderClubScreen(d, cm) {
       <button class="mini" data-club-back>← All clubs</button>
       <h3 class="club-title">${esc(d.club.book_title)}</h3>
       ${d.club.book_author ? `<p class="muted club-sub">${esc(d.club.book_author)}</p>` : ""}
-      <div class="club-members">${members.map((m) => clubMemberHTML(m, me.uid)).join("")}</div>
+      <div class="club-members">${members.map((m: ClubMember) => clubMemberHTML(m, me.uid)).join("")}</div>
       <div class="club-progress">
         <label for="club-progress-range">You're <strong id="club-my-pct">${myPct}</strong>% through</label>
         <input type="range" id="club-progress-range" min="0" max="100" value="${myPct}" />
@@ -2732,7 +2733,7 @@ function renderClubScreen(d, cm) {
       </div>`;
 }
 // One row per member: name (host gets a crown) + progress bar + %.
-function clubMemberHTML(m, meUid) {
+function clubMemberHTML(m: ClubMember, meUid: string) {
   const pct = Math.max(0, Math.min(100, Number(m.progress_pct) || 0));
   return `<div class="club-member${m.uid === meUid ? " me" : ""}" title="${esc(m.display_name || "")}${m.role === "host" ? " · host" : ""}">
       <span class="cm-name">${esc(firstName(m.display_name))}${m.role === "host" ? " 👑" : ""}</span>
@@ -2741,7 +2742,7 @@ function clubMemberHTML(m, meUid) {
     </div>`;
 }
 const CLUB_REACTS = ["❤️", "🤯", "😂", "😢", "👀"];
-function clubCommentHTML(c) {
+function clubCommentHTML(c: ClubComment) {
   const rx = c.reactions || { counts: {}, mine: [] };
   const bar = CLUB_REACTS.map((e) => {
     const n = rx.counts[e] || 0;
@@ -2754,21 +2755,21 @@ function clubCommentHTML(c) {
       <div class="cc-reacts">${bar}</div>
     </div>`;
 }
-async function toggleReaction(commentId, emoji) {
+async function toggleReaction(commentId: string, emoji: string) {
   if (!currentClubId || !commentId || !emoji) return;
   const { res } = await clubApi("/" + currentClubId + "/reactions", { method: "POST", body: JSON.stringify({ commentId, emoji }) });
   if (res.ok) await refreshClub(false);
 }
-async function setClubProgress(pct) {
+async function setClubProgress(pct: number) {
   if (!currentClubId) return;
   await clubApi("/" + currentClubId + "/progress", { method: "PUT", body: JSON.stringify({ progressPct: pct }) });
   await refreshClub(false); // server is forward-only; re-read reveals newly-unlocked comments
 }
 async function postClubComment() {
-  const el = $("#club-comment-body");
+  const el = $<HTMLTextAreaElement>("#club-comment-body");
   const bodyText = el ? el.value.trim() : "";
   if (!bodyText || !currentClubId) return;
-  const pct = Number($("#club-progress-range") ? $("#club-progress-range").value : 0) || 0;
+  const pct = Number($("#club-progress-range") ? $<HTMLInputElement>("#club-progress-range").value : 0) || 0;
   if (el) el.value = "";
   const { res } = await clubApi("/" + currentClubId + "/comments", { method: "POST", body: JSON.stringify({ body: bodyText, posPct: pct }) });
   if (!res.ok) { toast("⚠️", "Couldn't post", "Try again in a moment."); if (el) el.value = bodyText; return; }
@@ -2781,20 +2782,20 @@ async function postClubComment() {
 // recommend). Books the current reader has already finished are hidden by
 // default, filtered client-side against their own synced library.
 // ---------------------------------------------------------------------------
-let communityCategory = "", communitySort = "top", communityHideRead = true, lastRecs = null, recsSignedIn = false;
-function recsApi(path, opts) { return apiFetch("/api/recs" + path, opts || {}); }
-function normStr(s) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
-function isbnDigits(s) { return String(s || "").replace(/\D/g, ""); }
+let communityCategory = "", communitySort = "top", communityHideRead = true, lastRecs: RecRow[] | null = null, recsSignedIn = false;
+function recsApi(path: string, opts?: RequestInit) { return apiFetch("/api/recs" + path, opts || {}); }
+function normStr(s: unknown) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+function isbnDigits(s: unknown) { return String(s || "").replace(/\D/g, ""); }
 // Normalized keys of everything the reader has finished, for the "hide read" filter.
-function readMatchers() {
-  const titles = new Set(), pairs = new Set(), isbns = new Set();
+function readMatchers(): { titles: Set<string>; pairs: Set<string>; isbns: Set<string> } {
+  const titles = new Set<string>(), pairs = new Set<string>(), isbns = new Set<string>();
   booksFinished().forEach((b) => {
     const t = normStr(b.title); if (t) { titles.add(t); pairs.add(t + "|" + normStr(b.author)); }
     const i = isbnDigits(b.isbn); if (i.length >= 10) isbns.add(i);
   });
   return { titles, pairs, isbns };
 }
-function recIsRead(r, m) {
+function recIsRead(r: Pick<RecRow, "book_title" | "book_author" | "book_isbn">, m: { isbns: Set<string>; pairs: Set<string>; titles: Set<string> }) {
   const i = isbnDigits(r.book_isbn); if (i.length >= 10 && m.isbns.has(i)) return true;
   const t = normStr(r.book_title); if (!t) return false;
   const a = normStr(r.book_author);
@@ -2826,8 +2827,8 @@ function drawCommunity() {
     return true;
   });
   const sortFn = communitySort === "new"
-    ? (a, b) => (b.created_at || "").localeCompare(a.created_at || "")
-    : (a, b) => (b.score - a.score) || (b.up - a.up) || (b.created_at || "").localeCompare(a.created_at || "");
+    ? (a: RecRow, b: RecRow) => (b.created_at || "").localeCompare(a.created_at || "")
+    : (a: RecRow, b: RecRow) => (b.score! - a.score!) || (b.up - a.up) || (b.created_at || "").localeCompare(a.created_at || "");
   recs.sort(sortFn);
 
   const signInBanner = !recsSignedIn
@@ -2847,14 +2848,14 @@ function drawCommunity() {
     html += `<div class="rec-group">${recs.map(recCardHTML).join("")}</div>`;
   } else {
     // Group by category, categories ordered by how many picks they hold.
-    const groups = {};
+    const groups: Record<string, RecRow[]> = {};
     recs.forEach((r) => { const k = r.category || "General"; (groups[k] = groups[k] || []).push(r); });
     const cats = Object.keys(groups).sort((a, b) => (groups[b].length - groups[a].length) || a.toLowerCase().localeCompare(b.toLowerCase()));
     html += cats.map((c) => `<div class="rec-cat"><h3 class="rec-cat-title">${esc(c)} <span class="muted">· ${groups[c].length}</span></h3><div class="rec-group">${groups[c].map(recCardHTML).join("")}</div></div>`).join("");
   }
   body.innerHTML = html + readNote;
 }
-function recCardHTML(r) {
+function recCardHTML(r: RecRow) {
   const up = r.up || 0, down = r.down || 0, mine = r.myVote || 0;
   const cover = r.cover_url
     ? `<img class="rec-cover" src="${esc(r.cover_url)}" alt="" loading="lazy" />`
@@ -2878,15 +2879,15 @@ function recCardHTML(r) {
       </div>
     </article>`;
 }
-function populateCommunityCategoryFilter(recs) {
-  const sel = $("#community-category");
+function populateCommunityCategoryFilter(recs: RecRow[]) {
+  const sel = $<HTMLSelectElement>("#community-category");
   if (!sel) return;
   const cur = communityCategory;
   const cats = Array.from(new Set((recs || []).map((r) => r.category || "General"))).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   sel.innerHTML = `<option value="">All categories</option>` + cats.map((c) => `<option value="${esc(c)}"${normStr(c) === normStr(cur) ? " selected" : ""}>${esc(c)}</option>`).join("");
   if (cur && !cats.some((c) => normStr(c) === normStr(cur))) { communityCategory = ""; sel.value = ""; }
 }
-async function voteRec(id, vote) {
+async function voteRec(id: string, vote: number) {
   if (!id) return;
   if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in to vote", "Voting is tied to your account so everyone votes once."); return; }
   // Optimistic: flip the local vote + tallies, redraw, then reconcile with the server.
@@ -2903,7 +2904,7 @@ async function voteRec(id, vote) {
   if (!res.ok) { toast("⚠️", "Couldn't record your vote", "Try again in a moment."); await renderCommunity(); return; }
   if (r && data && typeof data.myVote === "number") { r.myVote = data.myVote; r.score = r.up - r.down; }
 }
-async function deleteRec(id) {
+async function deleteRec(id: string) {
   if (!id || !confirm("Remove your recommendation from the community board?")) return;
   const { res } = await recsApi("/" + id + "/delete", { method: "POST", body: "{}" });
   if (!res.ok) { toast("⚠️", "Couldn't remove it", "Try again in a moment."); return; }
@@ -2912,32 +2913,32 @@ async function deleteRec(id) {
   toast("🗑", "Recommendation removed", "");
 }
 function populateRecCategoryDatalist() {
-  const dl = $("#rec-category-list");
+  const dl = $<HTMLDataListElement>("#rec-category-list");
   if (!dl) return;
   const fromLib = allTags();
   const fromBoard = (lastRecs || []).map((r) => r.category).filter(Boolean);
   const cats = Array.from(new Set([...fromLib, ...fromBoard])).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   dl.innerHTML = cats.map((c) => `<option value="${esc(c)}"></option>`).join("");
 }
-function openRecommendModal(prefill) {
+function openRecommendModal(prefill?: { title?: string; author?: string; category?: string; isbn?: string; cover?: string }) {
   if (!syncEnabled()) { toast("ℹ️", "Needs an account", "Recommendations sync through your account."); return; }
   if (!auth) { closeModals(); openAuthModal("login"); toast("👤", "Sign in first", "Recommending a book is tied to your account."); return; }
   populateRecCategoryDatalist();
-  $("#rec-title").value = (prefill && prefill.title) || "";
-  $("#rec-author").value = (prefill && prefill.author) || "";
-  $("#rec-category").value = (prefill && prefill.category) || "";
-  $("#rec-note").value = "";
+  $<HTMLInputElement>("#rec-title").value = (prefill && prefill.title) || "";
+  $<HTMLInputElement>("#rec-author").value = (prefill && prefill.author) || "";
+  $<HTMLInputElement>("#rec-category").value = (prefill && prefill.category) || "";
+  $<HTMLTextAreaElement>("#rec-note").value = "";
   $("#recommend-modal").dataset.isbn = (prefill && prefill.isbn) || "";
   $("#recommend-modal").dataset.cover = (prefill && prefill.cover) || "";
   showModal("recommend-modal");
-  setTimeout(() => { const t = $("#rec-title"); if (t) t.focus(); }, 60);
+  setTimeout(() => { const t = $<HTMLInputElement>("#rec-title"); if (t) t.focus(); }, 60);
 }
 async function submitRecommend() {
-  const title = $("#rec-title").value.trim();
-  const category = $("#rec-category").value.trim();
+  const title = $<HTMLInputElement>("#rec-title").value.trim();
+  const category = $<HTMLInputElement>("#rec-category").value.trim();
   if (!title) { toast("✍️", "Add a title", "Which book are you recommending?"); return; }
   if (!category) { toast("🏷️", "Pick a category", "Which shelf does it belong on?"); return; }
-  let author = $("#rec-author").value.trim();
+  let author = $<HTMLInputElement>("#rec-author").value.trim();
   let isbn = $("#recommend-modal").dataset.isbn || "";
   let cover = $("#recommend-modal").dataset.cover || "";
   // Borrow author/cover/ISBN from the reader's own copy if they have one.
@@ -2945,7 +2946,7 @@ async function submitRecommend() {
     const match = state.books.find((b) => normStr(b.title) === normStr(title));
     if (match) { author = author || match.author || ""; cover = cover || match.coverUrl || ""; isbn = isbn || match.isbn || ""; }
   }
-  const body = { bookTitle: title, bookAuthor: author, category, note: $("#rec-note").value.trim(), bookIsbn: isbn, coverUrl: cover, displayName: (auth && auth.user && auth.user.fullName) || "" };
+  const body = { bookTitle: title, bookAuthor: author, category, note: $<HTMLTextAreaElement>("#rec-note").value.trim(), bookIsbn: isbn, coverUrl: cover, displayName: (auth && auth.user && auth.user.fullName) || "" };
   const { res } = await recsApi("", { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) { toast("⚠️", "Couldn't share it", "Try again in a moment."); return; }
   closeModals();
@@ -2960,23 +2961,23 @@ async function submitRecommend() {
 // ---------------------------------------------------------------------------
 // PWA install prompt + first-run onboarding
 // ---------------------------------------------------------------------------
-let deferredInstallPrompt = null;
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 function updateInstallUI() {
   const has = !!deferredInstallPrompt;
-  const b1 = $("#btn-install-app"); if (b1) b1.hidden = !has;
-  const b2 = $("#onboard-install"); if (b2) b2.hidden = !has;
+  const b1 = $<HTMLButtonElement>("#btn-install-app"); if (b1) b1.hidden = !has;
+  const b2 = $<HTMLButtonElement>("#onboard-install"); if (b2) b2.hidden = !has;
 }
 async function promptInstall() {
   if (!deferredInstallPrompt) { toast("ℹ️", "Add to Home Screen", "Use your browser's Share menu → “Add to Home Screen.”"); return; }
   deferredInstallPrompt.prompt();
-  try { await deferredInstallPrompt.userChoice; } catch (e) { /* dismissed */ }
+  try { await deferredInstallPrompt.userChoice; } catch (e: any) { /* dismissed */ }
   deferredInstallPrompt = null;
   updateInstallUI();
 }
 const ONBOARD_KEY = "enkelas-onboarded";
-function finishOnboarding() { try { localStorage.setItem(ONBOARD_KEY, "1"); } catch (e) { /* ignore */ } }
+function finishOnboarding() { try { localStorage.setItem(ONBOARD_KEY, "1"); } catch (e: any) { /* ignore */ } }
 function maybeShowOnboarding() {
-  let done = false; try { done = localStorage.getItem(ONBOARD_KEY) === "1"; } catch (e) { /* ignore */ }
+  let done = false; try { done = localStorage.getItem(ONBOARD_KEY) === "1"; } catch (e: any) { /* ignore */ }
   if (done) return;
   // Existing/returning users skip it: they already have books, or they're
   // signed in and their library may still be syncing down.
@@ -2988,7 +2989,7 @@ function maybeShowOnboarding() {
 // ---------------------------------------------------------------------------
 // Toasts
 // ---------------------------------------------------------------------------
-function toast(emoji, title, sub, isBadge) {
+function toast(emoji: string, title: string, sub?: string, isBadge?: boolean) {
   const el = document.createElement("div");
   el.className = "toast" + (isBadge ? " badge-toast" : "");
   el.innerHTML = `<span class="t-emoji">${emoji}</span><div><div class="t-title">${esc(title)}</div>${sub ? `<div class="t-sub">${esc(sub)}</div>` : ""}</div>`;
@@ -3001,80 +3002,80 @@ function toast(emoji, title, sub, isBadge) {
 // Book modal (add / edit)
 // ---------------------------------------------------------------------------
 let modalRating = 0;
-function openBookModal(opts) {
+function openBookModal(opts: { book?: Book | null; status?: BookStatus }) {
   const book = opts.book || null;
   const status = book ? book.status : (opts.status || "reading");
   $("#book-modal-title").textContent = book ? "Edit book" : (status === "finished" ? "Add a read book" : status === "want" ? "Add to your list" : "Add a book");
-  $("#f-id").value = book ? book.id : "";
-  $("#f-title").value = book ? book.title : "";
-  $("#f-author").value = book ? book.author : "";
-  $("#f-pages").value = book && book.totalPages ? book.totalPages : "";
-  $("#f-isbn").value = book ? book.isbn : "";
-  $("#f-format").value = book ? book.format : "physical";
-  $("#f-year").value = book && book.publishedYear ? book.publishedYear : "";
-  $("#f-series").value = book ? book.seriesName : "";
-  $("#f-series-num").value = book && book.seriesNumber != null ? book.seriesNumber : "";
-  $("#f-cover").value = book ? book.coverUrl : "";
-  $("#f-owned").checked = book ? !!book.owned : false;
-  $("#f-location").value = book ? (book.location || "") : "";
+  $<HTMLInputElement>("#f-id").value = book ? book.id : "";
+  $<HTMLInputElement>("#f-title").value = book ? book.title : "";
+  $<HTMLInputElement>("#f-author").value = book ? book.author : "";
+  $<HTMLInputElement>("#f-pages").value = book && book.totalPages ? String(book.totalPages) : "";
+  $<HTMLInputElement>("#f-isbn").value = book ? book.isbn : "";
+  $<HTMLSelectElement>("#f-format").value = book ? book.format : "physical";
+  $<HTMLInputElement>("#f-year").value = book && book.publishedYear ? String(book.publishedYear) : "";
+  $<HTMLInputElement>("#f-series").value = book ? book.seriesName : "";
+  $<HTMLInputElement>("#f-series-num").value = book && book.seriesNumber != null ? String(book.seriesNumber) : "";
+  $<HTMLInputElement>("#f-cover").value = book ? book.coverUrl : "";
+  $<HTMLInputElement>("#f-owned").checked = book ? !!book.owned : false;
+  $<HTMLInputElement>("#f-location").value = book ? (book.location || "") : "";
   const locs = allLocations();
-  $("#locations-datalist").innerHTML = locs.map((l) => `<option value="${esc(l)}"></option>`).join("");
-  $("#f-desc").value = book ? (book.description || "") : "";
-  $("#f-review").value = book ? (book.review || "") : "";
-  $("#f-tags").value = book && book.tags ? book.tags.join(", ") : "";
-  $("#f-collections").value = book && book.collections ? book.collections.join(", ") : "";
-  $("#f-pick-reason").value = book ? (book.pickReason || "") : "";
-  $("#f-expectation").value = book && book.expectation ? String(book.expectation) : "";
-  $("#f-loan-due").value = book && book.loanDue ? book.loanDue : "";
+  $<HTMLDataListElement>("#locations-datalist").innerHTML = locs.map((l) => `<option value="${esc(l)}"></option>`).join("");
+  $<HTMLTextAreaElement>("#f-desc").value = book ? (book.description || "") : "";
+  $<HTMLTextAreaElement>("#f-review").value = book ? (book.review || "") : "";
+  $<HTMLInputElement>("#f-tags").value = book && book.tags ? book.tags.join(", ") : "";
+  $<HTMLInputElement>("#f-collections").value = book && book.collections ? book.collections.join(", ") : "";
+  $<HTMLTextAreaElement>("#f-pick-reason").value = book ? (book.pickReason || "") : "";
+  $<HTMLSelectElement>("#f-expectation").value = book && book.expectation ? String(book.expectation) : "";
+  $<HTMLInputElement>("#f-loan-due").value = book && book.loanDue ? book.loanDue : "";
   renderTagHelpers();
   $("#cover-candidates").innerHTML = "";
   setCoverPreview(book ? book.coverUrl : "");
 
-  $$("input[name='f-status']").forEach((r) => (r.checked = r.value === status));
+  $$<HTMLInputElement>("input[name='f-status']").forEach((r) => (r.checked = r.value === status));
   toggleStatusFields(status);
-  $("#f-started").value = (book && book.startedAt) ? book.startedAt.slice(0, 10) : todayISODate();
-  $("#f-finished").value = (book && book.finishedAt) ? book.finishedAt.slice(0, 10) : todayISODate();
+  $<HTMLInputElement>("#f-started").value = (book && book.startedAt) ? book.startedAt.slice(0, 10) : todayISODate();
+  $<HTMLInputElement>("#f-finished").value = (book && book.finishedAt) ? book.finishedAt.slice(0, 10) : todayISODate();
   modalRating = book && book.rating ? book.rating : 0;
   paintStars($("#f-stars"), modalRating);
   updatePagesLabel();
 
   showModal("book-modal");
-  setTimeout(() => $("#f-title").focus(), 50);
+  setTimeout(() => $<HTMLInputElement>("#f-title").focus(), 50);
   // Editing a book with no genres yet → quietly look them up and fill in.
   if (book && (!book.tags || !book.tags.length)) fetchGenresForForm({ quiet: true, onlyIfEmpty: true, forId: book.id });
 }
-function toggleStatusFields(status) {
+function toggleStatusFields(status: string) {
   $("#reading-fields").hidden = status !== "reading";
   $("#finished-fields").hidden = status !== "finished";
 }
 function updatePagesLabel() {
-  const fmt = $("#f-format").value;
-  $("#f-pages").previousElementSibling.childNodes[0].nodeValue = fmt === "audio" ? "Total minutes" : "Total pages";
+  const fmt = $<HTMLSelectElement>("#f-format").value;
+  $<HTMLInputElement>("#f-pages").previousElementSibling!.childNodes[0]!.nodeValue = fmt === "audio" ? "Total minutes" : "Total pages";
 }
-function setCoverPreview(url) {
+function setCoverPreview(url: string) {
   const box = $("#f-cover-preview");
   box.innerHTML = url ? `<img src="${esc(url)}" alt="cover" onerror="this.parentNode.innerHTML='<span class=\\'cover-ph\\'>No cover</span>'" />` : `<span class="cover-ph">No cover</span>`;
 }
 function renderTagHelpers() {
   const tags = allTags();
-  $("#tags-datalist").innerHTML = tags.map((t) => `<option value="${esc(t)}"></option>`).join("");
-  const curT = parseList($("#f-tags").value).map((t) => t.toLowerCase());
+  $<HTMLDataListElement>("#tags-datalist").innerHTML = tags.map((t) => `<option value="${esc(t)}"></option>`).join("");
+  const curT = parseList($<HTMLInputElement>("#f-tags").value).map((t) => t.toLowerCase());
   $("#tag-suggest").innerHTML = tags.filter((t) => curT.indexOf(t.toLowerCase()) < 0).slice(0, 12).map((t) => `<span class="tag" data-add-tag="${esc(t)}">+ ${esc(t)}</span>`).join("");
   const cols = allCollections();
-  $("#collections-datalist").innerHTML = cols.map((t) => `<option value="${esc(t)}"></option>`).join("");
-  const curC = parseList($("#f-collections").value).map((t) => t.toLowerCase());
+  $<HTMLDataListElement>("#collections-datalist").innerHTML = cols.map((t) => `<option value="${esc(t)}"></option>`).join("");
+  const curC = parseList($<HTMLInputElement>("#f-collections").value).map((t) => t.toLowerCase());
   $("#collection-suggest").innerHTML = cols.filter((t) => curC.indexOf(t.toLowerCase()) < 0).slice(0, 12).map((t) => `<span class="tag" data-add-collection="${esc(t)}">+ 📁 ${esc(t)}</span>`).join("");
 }
 
 // Open Library "subjects" are noisy (bestseller lists, "large type", library
 // housekeeping). Keep the ones that read like genres, title-cased and deduped.
-function cleanSubjects(subjects) {
+function cleanSubjects(subjects: string[]) {
   if (!Array.isArray(subjects)) return [];
   const BAD = /\d|fiction in|accessible|reading level|nyt|new york times|bestsell|large type|protected daisy|in library|overdrive|lending|open library|internet archive|braille|audiobook|ebook|collection|general/i;
   // Words that signal a genre rather than a plot element (OL mixes both, and
   // doesn't rank them, so "Arkenstone" and "Fantasy" sit side by side).
   const GENRE = /fiction|fantasy|romance|myster|thriller|horror|histor|biograph|memoir|science|sci-?fi|young adult|nonfiction|non-fiction|poetry|classic|adventure|literary|literature|contemporary|dystopia|paranormal|crime|detective|self-help|philosoph|humou?r|comic|graphic novel|children|juvenile|coming of age|mytholog|retelling|saga|epic|western|suspense|drama|essays|short stories|feminis|queer|lgbt|thriller|horror|western|magical realism/i;
-  const seen = new Set(), hits = [], rest = [];
+  const seen = new Set<string>(), hits: string[] = [], rest: string[] = [];
   for (let s of subjects) {
     s = String(s || "").trim();
     if (s.length < 3 || s.length > 26 || BAD.test(s)) continue;
@@ -3091,32 +3092,32 @@ function cleanSubjects(subjects) {
 // Look up genres for whatever's in the add/edit form and merge them into the
 // tags field. Used by the "✨ Fetch genres" button and auto-run when editing a
 // book that has none yet.
-async function fetchGenresForForm(opts) {
+async function fetchGenresForForm(opts?: { silent?: boolean; quiet?: boolean; onlyIfEmpty?: boolean; forId?: string }) {
   opts = opts || {};
-  const title = $("#f-title").value.trim(), author = $("#f-author").value.trim(), isbn = $("#f-isbn").value.trim();
+  const title = $<HTMLInputElement>("#f-title").value.trim(), author = $<HTMLInputElement>("#f-author").value.trim(), isbn = $<HTMLInputElement>("#f-isbn").value.trim();
   if (!title && !isbn) { if (!opts.quiet) toast("ℹ️", "Add a title first", "Then I can look up its genres."); return; }
-  const btn = $("#btn-fetch-genres");
+  const btn = $<HTMLButtonElement>("#btn-fetch-genres");
   if (btn && !opts.quiet) { btn.disabled = true; btn.textContent = "Fetching…"; }
   try {
     let docs = await searchOpenLibrary(title, author, isbn);
-    if (author && !isbn) { const m = docs.filter((d) => authorMatches(author, d.author_name)); if (m.length) docs = m; }
-    const doc = docs.find((d) => Array.isArray(d.subject) && d.subject.length) || docs[0];
-    let picks = cleanSubjects(doc && doc.subject);
+    if (author && !isbn) { const m = docs.filter((d: OLDoc) => authorMatches(author, d.author_name)); if (m.length) docs = m; }
+    const doc = docs.find((d: OLDoc) => Array.isArray(d.subject) && d.subject.length) || docs[0];
+    let picks = cleanSubjects((doc && doc.subject) || []);
     // The work record usually carries a richer subject list than search docs.
     if (picks.length < 3 && doc && doc.key) {
-      try { const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json(); picks = cleanSubjects((w.subjects || []).concat(doc.subject || [])); } catch (e) { /* keep what we have */ }
+      try { const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json(); picks = cleanSubjects((w.subjects || []).concat(doc.subject || [])); } catch (e: any) { /* keep what we have */ }
     }
-    if (opts.forId && $("#f-id").value !== opts.forId) return; // modal moved on to another book
+    if (opts.forId && $<HTMLInputElement>("#f-id").value !== opts.forId) return; // modal moved on to another book
     if (!picks.length) { if (!opts.quiet) toast("🔍", "No genres found", "Add a couple by hand below."); return; }
-    const existing = parseList($("#f-tags").value);
+    const existing = parseList($<HTMLInputElement>("#f-tags").value);
     if (opts.onlyIfEmpty && existing.length) return;
     const have = new Set(existing.map((x) => x.toLowerCase()));
     const merged = existing.slice();
     picks.forEach((pk) => { if (!have.has(pk.toLowerCase())) { have.add(pk.toLowerCase()); merged.push(pk); } });
-    $("#f-tags").value = merged.join(", ");
+    $<HTMLInputElement>("#f-tags").value = merged.join(", ");
     renderTagHelpers();
     if (!opts.quiet) toast("🏷️", "Genres added", picks.join(", "));
-  } catch (e) {
+  } catch (e: any) {
     if (!opts.quiet) toast("⚠️", "Couldn't fetch genres", "Check your connection, or add them by hand.");
   } finally {
     if (btn && !opts.quiet) { btn.disabled = false; btn.textContent = "✨ Fetch genres"; }
@@ -3124,9 +3125,9 @@ async function fetchGenresForForm(opts) {
 }
 
 async function handleFetch() {
-  const title = $("#f-title").value.trim(), author = $("#f-author").value.trim(), isbn = $("#f-isbn").value.trim();
+  const title = $<HTMLInputElement>("#f-title").value.trim(), author = $<HTMLInputElement>("#f-author").value.trim(), isbn = $<HTMLInputElement>("#f-isbn").value.trim();
   if (!title && !isbn) { toast("ℹ️", "Type a title first", "Then I can look up the cover."); return; }
-  const btn = $("#btn-fetch");
+  const btn = $<HTMLButtonElement>("#btn-fetch");
   btn.disabled = true; btn.textContent = "Searching…";
   try {
     let docs = await searchOpenLibrary(title, author, isbn);
@@ -3138,7 +3139,7 @@ async function handleFetch() {
     // With an author given, only trust same-author results — a book with the
     // same title by someone else must not fill in the cover/pages/ISBN.
     if (author && !isbn) {
-      const matched = docs.filter((d) => authorMatches(author, d.author_name));
+      const matched = docs.filter((d: OLDoc) => authorMatches(author, d.author_name));
       if (matched.length) {
         docs = matched;
       } else {
@@ -3149,10 +3150,10 @@ async function handleFetch() {
     }
     // Show the matches as a pickable list and pre-fill from the best one,
     // leaving anything the user already typed untouched.
-    renderCandidates(docs, 0);
+    renderCandidates(docs);
     applyDoc(docs[0], { overwrite: false });
     toast("✨", "Found it!", docs.length > 1 ? "Not the one? Pick another below." : "Wrong cover or genres? Tweak them below.");
-  } catch (e) {
+  } catch (e: any) {
     console.warn(e);
     toast("⚠️", "Lookup failed", "Check your connection, or paste a cover URL.");
   } finally {
@@ -3163,45 +3164,45 @@ async function handleFetch() {
 // The most recent search results, kept so the candidate click handler can look
 // a pick up by index. A token guards the async description/genre fetch so a
 // slow response from an earlier pick can't overwrite a newer one.
-let lastSearchDocs = [];
+let lastSearchDocs: OLDoc[] = [];
 let applyDocToken = 0;
 // Fill the add/edit form from one Open Library result. overwrite=true means the
 // user explicitly picked this book, so replace the catalogue fields;
 // overwrite=false auto-fills from the top match but keeps whatever was typed.
-async function applyDoc(doc, opts) {
+async function applyDoc(doc: OLDoc, opts?: { overwrite?: boolean }) {
   if (!doc) return;
   opts = opts || {};
   const overwrite = !!opts.overwrite;
   const myToken = ++applyDocToken;
-  const put = (sel, val) => { if (val == null || val === "") return; if (overwrite || !$(sel).value) $(sel).value = val; };
+  const put = (sel: string, val: unknown) => { if (val == null || val === "") return; if (overwrite || !$<HTMLInputElement>(sel).value) $<HTMLInputElement>(sel).value = String(val); };
   put("#f-title", doc.title);
   put("#f-author", doc.author_name && doc.author_name[0]);
   put("#f-pages", doc.number_of_pages_median);
   put("#f-isbn", doc.isbn && doc.isbn[0]);
   put("#f-year", doc.first_publish_year);
   const cover = doc.cover_i ? coverFromId(doc.cover_i) : (doc.isbn && doc.isbn[0] ? coverFromIsbn(doc.isbn[0]) : "");
-  if (cover && (overwrite || !$("#f-cover").value)) { $("#f-cover").value = cover; setCoverPreview(cover); }
-  const picks = cleanSubjects(doc.subject);
-  if (picks.length && (overwrite || !$("#f-tags").value.trim())) { $("#f-tags").value = picks.join(", "); renderTagHelpers(); }
+  if (cover && (overwrite || !$<HTMLInputElement>("#f-cover").value)) { $<HTMLInputElement>("#f-cover").value = cover; setCoverPreview(cover); }
+  const picks = cleanSubjects(doc.subject || []);
+  if (picks.length && (overwrite || !$<HTMLInputElement>("#f-tags").value.trim())) { $<HTMLInputElement>("#f-tags").value = picks.join(", "); renderTagHelpers(); }
   // The work record carries the description + a fuller subject list. Fetch it,
   // but drop the result if a newer pick has since superseded this one.
-  if (doc.key && (overwrite || picks.length < 3 || !$("#f-desc").value.trim())) {
+  if (doc.key && (overwrite || picks.length < 3 || !$<HTMLTextAreaElement>("#f-desc").value.trim())) {
     try {
       const w = await (await fetch("https://openlibrary.org" + doc.key + ".json")).json();
       if (myToken !== applyDocToken || !w) return;
       let d = w.description;
       if (d && typeof d === "object") d = d.value;
       d = d ? String(d).split("\n")[0].slice(0, 600) : "";
-      if (overwrite) $("#f-desc").value = d;                 // reflect the chosen book, even if blank
-      else if (d && !$("#f-desc").value.trim()) $("#f-desc").value = d;
+      if (overwrite) $<HTMLTextAreaElement>("#f-desc").value = d;                 // reflect the chosen book, even if blank
+      else if (d && !$<HTMLTextAreaElement>("#f-desc").value.trim()) $<HTMLTextAreaElement>("#f-desc").value = d;
       const richer = cleanSubjects((w.subjects || []).concat(doc.subject || []));
-      if (richer.length > picks.length && (overwrite || !$("#f-tags").value.trim())) { $("#f-tags").value = richer.join(", "); renderTagHelpers(); }
-    } catch (e) { /* offline or no work record — keep what we have */ }
+      if (richer.length > picks.length && (overwrite || !$<HTMLInputElement>("#f-tags").value.trim())) { $<HTMLInputElement>("#f-tags").value = richer.join(", "); renderTagHelpers(); }
+    } catch (e: any) { /* offline or no work record — keep what we have */ }
   }
 }
 // Render the search results as a list of pickable books (cover + title +
 // author + year), so the user chooses the right edition instead of us guessing.
-function renderCandidates(docs, selIdx) {
+function renderCandidates(docs: OLDoc[], selIdx?: number) {
   lastSearchDocs = Array.isArray(docs) ? docs : [];
   const box = $("#cover-candidates");
   if (!lastSearchDocs.length) { box.innerHTML = ""; return; }
@@ -3211,7 +3212,7 @@ function renderCandidates(docs, selIdx) {
       ? `<img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.outerHTML='<span class=\\'cand-noimg\\'>📕</span>'" />`
       : `<span class="cand-noimg">📕</span>`;
     const bits = [d.author_name && d.author_name[0] ? esc(d.author_name[0]) : "Unknown author"];
-    if (d.first_publish_year) bits.push(d.first_publish_year);
+    if (d.first_publish_year) bits.push(String(d.first_publish_year));
     if (d.number_of_pages_median) bits.push(d.number_of_pages_median + "p");
     return `<button type="button" class="cand${i === selIdx ? " sel" : ""}" data-doc-idx="${i}" title="Use this book's details">
         <span class="cand-cover">${cov}</span>
@@ -3222,47 +3223,47 @@ function renderCandidates(docs, selIdx) {
   box.innerHTML = `<p class="cand-hint muted">${hint}</p><div class="cand-list">${cards}</div>`;
 }
 
-function saveBookFromForm(e) {
+function saveBookFromForm(e: SubmitEvent) {
   e.preventDefault();
-  const id = $("#f-id").value;
-  const status = $$("input[name='f-status']").find((r) => r.checked).value;
+  const id = $<HTMLInputElement>("#f-id").value;
+  const status = $$<HTMLInputElement>("input[name='f-status']").find((r) => r.checked)!.value as BookStatus;
   const existing = id ? state.books.find((b) => b.id === id) : null;
-  const title = $("#f-title").value.trim();
+  const title = $<HTMLInputElement>("#f-title").value.trim();
   if (!title) return;
   const wasFinished = existing && existing.status === "finished";
 
-  const book = existing || { id: uid(), addedAt: new Date().toISOString(), logs: [], quotes: [], readCount: 1, finishHistory: [] };
+  const book: Book = existing || ({ id: uid(), addedAt: new Date().toISOString(), logs: [], quotes: [], readCount: 1, finishHistory: [] } as unknown as Book);
   book.title = title;
-  book.author = $("#f-author").value.trim();
-  book.totalPages = Number($("#f-pages").value) || 0;
-  book.isbn = $("#f-isbn").value.trim();
-  book.format = $("#f-format").value;
-  book.publishedYear = Number($("#f-year").value) || null;
-  book.seriesName = $("#f-series").value.trim();
-  book.seriesNumber = $("#f-series-num").value !== "" ? Number($("#f-series-num").value) : null;
-  book.coverUrl = $("#f-cover").value.trim();
-  book.owned = $("#f-owned").checked;
-  book.location = $("#f-location").value.trim();
-  book.description = $("#f-desc").value.trim();
-  book.review = $("#f-review").value.trim();
-  book.tags = parseList($("#f-tags").value);
-  book.collections = parseList($("#f-collections").value);
-  book.pickReason = $("#f-pick-reason").value.trim();
-  book.expectation = Number($("#f-expectation").value) || null;
-  book.loanDue = $("#f-loan-due").value || "";
+  book.author = $<HTMLInputElement>("#f-author").value.trim();
+  book.totalPages = Number($<HTMLInputElement>("#f-pages").value) || 0;
+  book.isbn = $<HTMLInputElement>("#f-isbn").value.trim();
+  book.format = $<HTMLSelectElement>("#f-format").value as Book["format"];
+  book.publishedYear = Number($<HTMLInputElement>("#f-year").value) || null;
+  book.seriesName = $<HTMLInputElement>("#f-series").value.trim();
+  book.seriesNumber = $<HTMLInputElement>("#f-series-num").value !== "" ? Number($<HTMLInputElement>("#f-series-num").value) : null;
+  book.coverUrl = $<HTMLInputElement>("#f-cover").value.trim();
+  book.owned = $<HTMLInputElement>("#f-owned").checked;
+  book.location = $<HTMLInputElement>("#f-location").value.trim();
+  book.description = $<HTMLTextAreaElement>("#f-desc").value.trim();
+  book.review = $<HTMLTextAreaElement>("#f-review").value.trim();
+  book.tags = parseList($<HTMLInputElement>("#f-tags").value);
+  book.collections = parseList($<HTMLInputElement>("#f-collections").value);
+  book.pickReason = $<HTMLTextAreaElement>("#f-pick-reason").value.trim();
+  book.expectation = Number($<HTMLSelectElement>("#f-expectation").value) || null;
+  book.loanDue = $<HTMLInputElement>("#f-loan-due").value || "";
   book.quotes = book.quotes || [];
   book.status = status;
 
   if (status === "reading") {
-    book.startedAt = $("#f-started").value ? new Date($("#f-started").value).toISOString() : new Date().toISOString();
+    book.startedAt = $<HTMLInputElement>("#f-started").value ? new Date($<HTMLInputElement>("#f-started").value).toISOString() : new Date().toISOString();
   } else if (status === "want") {
     /* no dates */
   } else if (status === "finished") {
-    book.finishedAt = $("#f-finished").value ? new Date($("#f-finished").value).toISOString() : new Date().toISOString();
+    book.finishedAt = $<HTMLInputElement>("#f-finished").value ? new Date($<HTMLInputElement>("#f-finished").value).toISOString() : new Date().toISOString();
     book.startedAt = book.startedAt || book.finishedAt;
     book.rating = modalRating || book.rating || null;
     if (book.logs.length === 0 && book.totalPages > 0) {
-      book.logs.push({ id: uid(), date: book.finishedAt, pages: book.totalPages, minutes: 0, mood: "", note: "Added as already read" });
+      book.logs.push({ id: uid(), date: book.finishedAt!, pages: book.totalPages, minutes: 0, mood: "", note: "Added as already read" });
     }
     if (!wasFinished) {
       book.finishHistory = book.finishHistory || [];
@@ -3287,44 +3288,44 @@ function saveBookFromForm(e) {
 // ---------------------------------------------------------------------------
 // Log / finish / rate dialogs
 // ---------------------------------------------------------------------------
-function openLogModal(book, log) {
+function openLogModal(book: Book, log?: ReadingLog | null) {
   resetTimer();
   const isAudio = book.format === "audio";
   const baseline = pagesBefore(book, log);
-  $("#log-book-id").value = book.id;
-  $("#log-id").value = log ? log.id : "";
-  $("#log-baseline").value = baseline;
+  $<HTMLInputElement>("#log-book-id").value = book.id;
+  $<HTMLInputElement>("#log-id").value = log ? log.id : "";
+  $<HTMLInputElement>("#log-baseline").value = String(baseline);
   $("#log-book-name").textContent = book.title;
   $("#log-modal-title").textContent = log ? "Edit reading session" : "Log a reading session";
   // Audio books track minutes as a running total per session; page-based books
   // ask for the page you've reached and we work out the delta ourselves.
   $("#log-pages-label").textContent = isAudio ? "Minutes read this session *" : "Current page *";
-  $("#log-pages").min = isAudio ? 1 : baseline + 1;
-  $("#log-pages").value = log ? (isAudio ? log.pages : baseline + log.pages) : "";
-  $("#log-minutes").value = log && log.minutes ? log.minutes : "";
-  $("#log-note").value = log ? log.note : "";
-  $("#log-when").value = log ? toLocalInput(log.date) : nowLocalInput();
+  $<HTMLInputElement>("#log-pages").min = String(isAudio ? 1 : baseline + 1);
+  $<HTMLInputElement>("#log-pages").value = log ? String(isAudio ? log.pages : baseline + log.pages) : "";
+  $<HTMLInputElement>("#log-minutes").value = log && log.minutes ? String(log.minutes) : "";
+  $<HTMLInputElement>("#log-note").value = log ? log.note : "";
+  $<HTMLInputElement>("#log-when").value = log ? toLocalInput(log.date) : nowLocalInput();
   paintMood(log ? log.mood : "");
   updateLogPageHint();
   showModal("log-modal");
-  setTimeout(() => $("#log-pages").focus(), 50);
+  setTimeout(() => $<HTMLInputElement>("#log-pages").focus(), 50);
 }
 // Live helper under the page field: shows where you left off and the pages
 // this session works out to. Hidden entirely for audio books.
 function updateLogPageHint() {
   const hint = $("#log-page-hint");
   if (!hint) return;
-  const book = state.books.find((b) => b.id === $("#log-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#log-book-id").value);
   if (!book || book.format === "audio") { hint.hidden = true; return; }
   hint.hidden = false;
-  const baseline = Number($("#log-baseline").value) || 0;
+  const baseline = Number($<HTMLInputElement>("#log-baseline").value) || 0;
   const total = book.totalPages || 0;
-  const cur = Number($("#log-pages").value);
+  const cur = Number($<HTMLInputElement>("#log-pages").value);
   let msg = (baseline > 0 ? `You were on page ${num(baseline)}` : "Starting from the beginning");
   if (total) msg += ` of ${num(total)}`;
   msg += ".";
   let warn = false;
-  if ($("#log-pages").value !== "") {
+  if ($<HTMLInputElement>("#log-pages").value !== "") {
     const delta = cur - baseline;
     if (delta > 0) msg += ` That's +${num(delta)} ${unitLabel(book)} this session.`;
     else { msg += " ⚠️ Enter a page beyond where you left off."; warn = true; }
@@ -3332,30 +3333,30 @@ function updateLogPageHint() {
   hint.textContent = msg;
   hint.classList.toggle("warn", warn);
 }
-function paintMood(mood) {
-  $("#log-mood").value = mood || "";
+function paintMood(mood: string) {
+  $<HTMLInputElement>("#log-mood").value = mood || "";
   $$("#mood-row button").forEach((b) => b.classList.toggle("sel", b.dataset.mood === mood));
 }
-function saveLog(e) {
+function saveLog(e: SubmitEvent) {
   e.preventDefault();
-  const book = state.books.find((b) => b.id === $("#log-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#log-book-id").value);
   if (!book) return;
   const isAudio = book.format === "audio";
-  const entered = Number($("#log-pages").value);
+  const entered = Number($<HTMLInputElement>("#log-pages").value);
   if (!entered || entered < 1) return;
   // For page-based books the field holds the page reached; the session's page
   // count is that minus where we left off. Audio still logs raw minutes.
-  const baseline = Number($("#log-baseline").value) || 0;
+  const baseline = Number($<HTMLInputElement>("#log-baseline").value) || 0;
   const pages = isAudio ? entered : entered - baseline;
   if (!isAudio && pages < 1) {
     toast("⚠️", "Check the page number", `You were already on page ${num(baseline)} — enter a higher page.`);
     return;
   }
-  const when = $("#log-when").value ? new Date($("#log-when").value).toISOString() : new Date().toISOString();
-  const note = $("#log-note").value.trim();
-  const minutes = Number($("#log-minutes").value) || 0;
-  const mood = $("#log-mood").value || "";
-  const editId = $("#log-id").value;
+  const when = $<HTMLInputElement>("#log-when").value ? new Date($<HTMLInputElement>("#log-when").value).toISOString() : new Date().toISOString();
+  const note = $<HTMLInputElement>("#log-note").value.trim();
+  const minutes = Number($<HTMLInputElement>("#log-minutes").value) || 0;
+  const mood = $<HTMLInputElement>("#log-mood").value || "";
+  const editId = $<HTMLInputElement>("#log-id").value;
   if (editId) {
     const lg = book.logs.find((x) => x.id === editId);
     if (lg) { lg.pages = pages; lg.date = when; lg.note = note; lg.minutes = minutes; lg.mood = mood; }
@@ -3371,28 +3372,28 @@ function saveLog(e) {
 }
 
 let finishRating = 0;
-function openFinishModal(book) {
-  $("#finish-mode").value = "finish";
-  $("#finish-book-id").value = book.id;
+function openFinishModal(book: Book) {
+  $<HTMLInputElement>("#finish-mode").value = "finish";
+  $<HTMLInputElement>("#finish-book-id").value = book.id;
   $("#finish-book-name").textContent = book.title;
-  $("#finish-date").value = todayISODate();
+  $<HTMLInputElement>("#finish-date").value = todayISODate();
   finishRating = book.rating || 0;
   paintStars($("#finish-stars"), finishRating);
   showModal("finish-modal");
 }
-function openRereadModal(book) {
+function openRereadModal(book: Book) {
   openFinishModal(book);
-  $("#finish-mode").value = "reread";
+  $<HTMLInputElement>("#finish-mode").value = "reread";
   $("#finish-modal-title").textContent = "Finished a re-read";
   finishRating = 0; // rate THIS read on its own
   paintStars($("#finish-stars"), 0);
 }
-function saveFinish(e) {
+function saveFinish(e: SubmitEvent) {
   e.preventDefault();
-  const book = state.books.find((b) => b.id === $("#finish-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#finish-book-id").value);
   if (!book) return;
-  const mode = $("#finish-mode").value || "finish";
-  const when = $("#finish-date").value ? new Date($("#finish-date").value).toISOString() : new Date().toISOString();
+  const mode = $<HTMLInputElement>("#finish-mode").value || "finish";
+  const when = $<HTMLInputElement>("#finish-date").value ? new Date($<HTMLInputElement>("#finish-date").value).toISOString() : new Date().toISOString();
   if (mode === "reread") {
     book.readCount = (book.readCount || 1) + 1;
     book.finishedAt = when;
@@ -3426,12 +3427,12 @@ function saveFinish(e) {
   if (!wasFinished) confetti();
   toast("🏁", "Finished!", book.title);
 }
-function rateBook(book) {
-  $("#finish-mode").value = "finish";
+function rateBook(book: Book) {
+  $<HTMLInputElement>("#finish-mode").value = "finish";
   $("#finish-modal-title").textContent = "Rate this book";
-  $("#finish-book-id").value = book.id;
+  $<HTMLInputElement>("#finish-book-id").value = book.id;
   $("#finish-book-name").textContent = book.title;
-  $("#finish-date").value = (book.finishedAt || new Date().toISOString()).slice(0, 10);
+  $<HTMLInputElement>("#finish-date").value = (book.finishedAt || new Date().toISOString()).slice(0, 10);
   finishRating = book.rating || 0;
   paintStars($("#finish-stars"), finishRating);
   showModal("finish-modal");
@@ -3440,41 +3441,41 @@ function rateBook(book) {
 // ---------------------------------------------------------------------------
 // Bookmark ("where I left off") + DNF-reason dialogs
 // ---------------------------------------------------------------------------
-function openBookmarkModal(book) {
-  $("#bm-book-id").value = book.id;
+function openBookmarkModal(book: Book) {
+  $<HTMLInputElement>("#bm-book-id").value = book.id;
   $("#bm-book-name").textContent = book.title;
-  $("#bm-page").value = book.bookmark && book.bookmark.page ? book.bookmark.page : "";
-  $("#bm-note").value = book.bookmark ? book.bookmark.note : "";
-  $("#bm-clear").hidden = !book.bookmark;
+  $<HTMLInputElement>("#bm-page").value = book.bookmark && book.bookmark.page ? String(book.bookmark.page) : "";
+  $<HTMLInputElement>("#bm-note").value = book.bookmark ? book.bookmark.note : "";
+  $<HTMLButtonElement>("#bm-clear").hidden = !book.bookmark;
   showModal("bookmark-modal");
-  setTimeout(() => $("#bm-note").focus(), 50);
+  setTimeout(() => $<HTMLInputElement>("#bm-note").focus(), 50);
 }
-function openLendModal(book) {
-  $("#lend-book-id").value = book.id;
+function openLendModal(book: Book) {
+  $<HTMLInputElement>("#lend-book-id").value = book.id;
   $("#lend-book-name").textContent = book.title;
-  $("#lend-name").value = book.lentTo || "";
-  $("#lend-date").value = new Date().toISOString().slice(0, 10);
+  $<HTMLInputElement>("#lend-name").value = book.lentTo || "";
+  $<HTMLInputElement>("#lend-date").value = new Date().toISOString().slice(0, 10);
   showModal("lend-modal");
-  setTimeout(() => $("#lend-name").focus(), 50);
+  setTimeout(() => $<HTMLInputElement>("#lend-name").focus(), 50);
 }
-function saveLend(e) {
+function saveLend(e: SubmitEvent) {
   e.preventDefault();
-  const book = state.books.find((b) => b.id === $("#lend-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#lend-book-id").value);
   if (!book) return;
-  const name = $("#lend-name").value.trim();
+  const name = $<HTMLInputElement>("#lend-name").value.trim();
   if (!name) return;
   book.lentTo = name;
-  book.lentAt = $("#lend-date").value ? new Date($("#lend-date").value + "T12:00:00").toISOString() : new Date().toISOString();
+  book.lentAt = $<HTMLInputElement>("#lend-date").value ? new Date($<HTMLInputElement>("#lend-date").value + "T12:00:00").toISOString() : new Date().toISOString();
   closeModals();
   commit();
   toast("📤", "Lent out", `“${book.title}” is with ${name} now`);
 }
-function saveBookmark(e) {
+function saveBookmark(e: SubmitEvent) {
   e.preventDefault();
-  const book = state.books.find((b) => b.id === $("#bm-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#bm-book-id").value);
   if (!book) return;
-  const page = $("#bm-page").value ? Number($("#bm-page").value) : null;
-  const note = $("#bm-note").value.trim();
+  const page = $<HTMLInputElement>("#bm-page").value ? Number($<HTMLInputElement>("#bm-page").value) : null;
+  const note = $<HTMLInputElement>("#bm-note").value.trim();
   if (!page && !note) { closeModals(); return; }
   book.bookmark = { page, note, date: new Date().toISOString() };
   closeModals();
@@ -3482,27 +3483,27 @@ function saveBookmark(e) {
   toast("🔖", "Bookmark saved", (page ? "p." + page + " · " : "") + book.title);
 }
 function clearBookmark() {
-  const book = state.books.find((b) => b.id === $("#bm-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#bm-book-id").value);
   if (!book) return;
   book.bookmark = null;
   closeModals();
   commit();
   toast("🔖", "Bookmark cleared", book.title);
 }
-function openDnfModal(book) {
-  $("#dnf-book-id").value = book.id;
+function openDnfModal(book: Book) {
+  $<HTMLInputElement>("#dnf-book-id").value = book.id;
   $("#dnf-book-name").textContent = book.title;
-  $("#dnf-reason").value = book.dnfReason || "";
+  $<HTMLTextAreaElement>("#dnf-reason").value = book.dnfReason || "";
   showModal("dnf-modal");
-  setTimeout(() => $("#dnf-reason").focus(), 50);
+  setTimeout(() => $<HTMLTextAreaElement>("#dnf-reason").focus(), 50);
 }
-function saveDnf(e) {
+function saveDnf(e: SubmitEvent) {
   e.preventDefault();
-  const book = state.books.find((b) => b.id === $("#dnf-book-id").value);
+  const book = state.books.find((b) => b.id === $<HTMLInputElement>("#dnf-book-id").value);
   if (!book) return;
   book.status = "dnf";
   book.finishedAt = book.finishedAt || new Date().toISOString();
-  book.dnfReason = $("#dnf-reason").value.trim();
+  book.dnfReason = $<HTMLTextAreaElement>("#dnf-reason").value.trim();
   book.bookmark = null;
   closeModals();
   commit();
@@ -3512,25 +3513,25 @@ function saveDnf(e) {
 // ---------------------------------------------------------------------------
 // Reading-session timer
 // ---------------------------------------------------------------------------
-let timerStart = null, timerInterval = null;
+let timerStart: number | null = null, timerInterval: ReturnType<typeof setInterval> | null = null;
 function resetTimer() {
-  if (timerInterval) clearInterval(timerInterval);
+  if (timerInterval) clearInterval(timerInterval!);
   timerInterval = null; timerStart = null;
-  const btn = $("#timer-btn"), read = $("#timer-read");
+  const btn = $<HTMLButtonElement>("#timer-btn"), read = $("#timer-read");
   if (btn) btn.textContent = "⏱ Start timer";
   if (read) { read.hidden = true; read.textContent = "00:00"; }
 }
 function toggleTimer() {
   if (timerStart) {
     const mins = Math.max(0, Math.round((Date.now() - timerStart) / 60000));
-    $("#log-minutes").value = (Number($("#log-minutes").value) || 0) + mins;
+    $<HTMLInputElement>("#log-minutes").value = String((Number($<HTMLInputElement>("#log-minutes").value) || 0) + mins);
     resetTimer();
   } else {
     timerStart = Date.now();
-    $("#timer-btn").textContent = "⏹ Stop timer";
+    $<HTMLButtonElement>("#timer-btn").textContent = "⏹ Stop timer";
     $("#timer-read").hidden = false;
     timerInterval = setInterval(() => {
-      const s = Math.floor((Date.now() - timerStart) / 1000);
+      const s = Math.floor((Date.now() - timerStart!) / 1000);
       $("#timer-read").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
     }, 1000);
   }
@@ -3553,7 +3554,7 @@ const EAN_SIG = [ // run-width signature (4 runs, 7 modules) per digit, L-encodi
   [1, 2, 3, 1], [1, 1, 1, 4], [1, 3, 1, 2], [1, 2, 1, 3], [3, 1, 1, 2],
 ]; // G-encoding signature = the same reversed; R-encoding = same as L
 const EAN_PARITY = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
-function eanMatchDigit(runs, i, rightSide) {
+function eanMatchDigit(runs: number[], i: number, rightSide: boolean) {
   const total = runs[i] + runs[i + 1] + runs[i + 2] + runs[i + 3];
   if (!total) return null;
   let best = null, bestD = Infinity, secondD = Infinity;
@@ -3565,7 +3566,7 @@ function eanMatchDigit(runs, i, rightSide) {
       dl += Math.abs(w - sig[k]);
       dg += Math.abs(w - sig[3 - k]);
     }
-    const cand = rightSide ? [[dl, "L"]] : [[dl, "L"], [dg, "G"]];
+    const cand: [number, string][] = rightSide ? [[dl, "L"]] : [[dl, "L"], [dg, "G"]];
     for (const [dist, par] of cand) {
       if (dist < bestD) { secondD = bestD; bestD = dist; best = { d, par }; }
       else if (dist < secondD) secondD = dist;
@@ -3574,14 +3575,14 @@ function eanMatchDigit(runs, i, rightSide) {
   if (!best || bestD > 1.5 || secondD - bestD < 0.25) return null; // too blurry/ambiguous
   return best;
 }
-function eanGuardOk(runs, i, count, m) {
+function eanGuardOk(runs: number[], i: number, count: number, m: number) {
   let total = 0;
   for (let k = 0; k < count; k++) { if (runs[i + k] == null) return false; total += runs[i + k]; }
   if (Math.abs(total / count - m) > m * 0.55) return false;
   for (let k = 0; k < count; k++) if (Math.abs(runs[i + k] - m) > m * 0.7) return false;
   return true;
 }
-function eanDecodeRuns(runs, startsDark) {
+function eanDecodeRuns(runs: number[], startsDark: boolean) {
   // runs = widths of alternating dark/light stretches; runs[0] darkness = startsDark
   for (let i = startsDark ? 0 : 1; i + 58 < runs.length; i += 2) {
     const m = (runs[i] + runs[i + 1] + runs[i + 2]) / 3; // start guard 1-1-1
@@ -3616,7 +3617,7 @@ function eanDecodeRuns(runs, startsDark) {
   }
   return null;
 }
-function eanRowRuns(data, w, y) {
+function eanRowRuns(data: Uint8ClampedArray, w: number, y: number) {
   const off = y * w * 4;
   let min = 255, max = 0;
   const lum = new Array(w);
@@ -3637,8 +3638,8 @@ function eanRowRuns(data, w, y) {
   runs.push(len);
   return { runs, startsDark: lum[0] < thr };
 }
-function decodeEAN13FromCanvas(canvas) {
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+function decodeEAN13FromCanvas(canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   const w = canvas.width, h = canvas.height;
   const data = ctx.getImageData(0, 0, w, h).data;
   for (let f = 0.30; f <= 0.70; f += 0.05) {
@@ -3654,31 +3655,31 @@ function decodeEAN13FromCanvas(canvas) {
   return null;
 }
 window.__decodeEAN13Canvas = decodeEAN13FromCanvas; // debug/test hook (no camera needed)
-function decodeEAN13FromVideo(video, canvas) {
+function decodeEAN13FromVideo(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
   if (!video.videoWidth) return null;
   const w = Math.min(900, video.videoWidth);
   const h = Math.round(video.videoHeight * (w / video.videoWidth));
   canvas.width = w; canvas.height = h;
-  canvas.getContext("2d", { willReadFrequently: true }).drawImage(video, 0, 0, w, h);
+  canvas.getContext("2d", { willReadFrequently: true })!.drawImage(video, 0, 0, w, h);
   return decodeEAN13FromCanvas(canvas);
 }
 
-let scanStream = null, scanLoop = null, scanDetector = null;
-async function openScan(onDetect) {
-  const onCode = typeof onDetect === "function" ? onDetect : null; // called via addEventListener too
+let scanStream: MediaStream | null = null, scanLoop: ReturnType<typeof setTimeout> | null = null, scanDetector: BarcodeDetector | null = null;
+async function openScan(onDetect?: unknown) {
+  const onCode = typeof onDetect === "function" ? (onDetect as (isbn: string) => unknown) : null; // called via addEventListener too
   // Native BarcodeDetector where available (Android/Chrome); otherwise the
   // built-in EAN-13 decoder above (iOS Safari has no BarcodeDetector).
   scanDetector = null;
   if ("BarcodeDetector" in window) {
-    try { scanDetector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"] }); }
-    catch (e) { try { scanDetector = new window.BarcodeDetector(); } catch (e2) { scanDetector = null; } }
+    try { scanDetector = new window.BarcodeDetector!({ formats: ["ean_13", "ean_8", "upc_a"] }); }
+    catch (e: any) { try { scanDetector = new window.BarcodeDetector!(); } catch (e2) { scanDetector = null; } }
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast("⚠️", "No camera access", "Type the ISBN instead."); return; }
   try { scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } } }); }
-  catch (e) { toast("⚠️", "Camera blocked", "Allow camera access, or type the ISBN."); return; }
-  const v = $("#scan-video");
+  catch (e: any) { toast("⚠️", "Camera blocked", "Allow camera access, or type the ISBN."); return; }
+  const v = $<HTMLVideoElement>("#scan-video");
   v.srcObject = scanStream;
-  try { await v.play(); } catch (e) { /* ignore */ }
+  try { await v.play(); } catch (e: any) { /* ignore */ }
   showModal("scan-modal");
   const grabCanvas = document.createElement("canvas");
   scanLoop = setInterval(async () => {
@@ -3695,33 +3696,33 @@ async function openScan(onDetect) {
         stopScan();
         $("#scan-modal").hidden = true;
         if (onCode) onCode(raw);
-        else { $("#f-isbn").value = raw; handleFetch(); }
+        else { $<HTMLInputElement>("#f-isbn").value = raw; handleFetch(); }
       }
-    } catch (e) { /* keep scanning */ }
+    } catch (e: any) { /* keep scanning */ }
   }, scanDetector ? 500 : 350);
 }
 function stopScan() {
-  if (scanLoop) clearInterval(scanLoop);
+  if (scanLoop) clearInterval(scanLoop!);
   scanLoop = null;
   if (scanStream) { scanStream.getTracks().forEach((t) => t.stop()); scanStream = null; }
-  const v = $("#scan-video"); if (v) v.srcObject = null;
+  const v = $<HTMLVideoElement>("#scan-video"); if (v) v.srcObject = null;
 }
 
 // "Scan to check" (Owned tab): am I holding a book I already have?
 // (exposed as window.__checkScannedBook so it can be tested without a camera)
 // Matches by ISBN first, then by the title Open Library reports for it.
 // Pull "(Series Name, #3)" out of a Goodreads/OL-style title.
-function parseSeriesFromTitle(title) {
+function parseSeriesFromTitle(title: string) {
   const m = String(title || "").match(/\(([^,(#]+?)[,]?\s*#\s*(\d+(?:\.\d+)?)\)\s*$/);
   return m ? { name: m[1].trim(), number: Number(m[2]) } : null;
 }
 // A one-line "how this book sits in a series you're collecting" note for the
 // Should-I-Buy verdict — the thing Goodreads/Fable don't do in-hand.
-function seriesInsight(seriesName, thisNumber) {
+function seriesInsight(seriesName: string, thisNumber: number | null) {
   if (!seriesName) return "";
   const inSeries = state.books.filter((b) => (b.seriesName || "").toLowerCase() === seriesName.toLowerCase());
   if (!inSeries.length) return "";
-  const owned = inSeries.filter((b) => b.owned && b.seriesNumber != null).map((b) => b.seriesNumber).sort((a, b) => a - b);
+  const owned = inSeries.filter((b) => b.owned && b.seriesNumber != null).map((b) => b.seriesNumber!).sort((a, b) => a - b);
   const parts = [];
   parts.push(`You have ${inSeries.length} from <strong>${esc(seriesName)}</strong>` + (owned.length ? ` (own #${owned.join(", #")})` : "") + ".");
   if (thisNumber != null) {
@@ -3731,27 +3732,27 @@ function seriesInsight(seriesName, thisNumber) {
   }
   return parts.join(" ");
 }
-async function checkScannedBook(isbn) {
+async function checkScannedBook(isbn: string) {
   const digits = String(isbn || "").replace(/[^0-9Xx]/g, "");
   switchView("owned");
   const box = $("#owned-check-result");
   box.hidden = false;
   box.innerHTML = `<div class="own-verdict"><p class="muted">Looking up ${esc(digits)}…</p></div>`;
-  const normT = (s) => String(s || "").toLowerCase().replace(/\s*\(.*?\)\s*$/, "").replace(/\s*:.*$/, "").trim();
+  const normT = (s: unknown) => String(s || "").toLowerCase().replace(/\s*\(.*?\)\s*$/, "").replace(/\s*:.*$/, "").trim();
   let hit = state.books.find((b) => (b.isbn || "").replace(/[^0-9Xx]/g, "") === digits);
   let scanTitle = "", scanAuthor = "";
   if (!hit) {
     try {
       const docs = await searchOpenLibrary("", "", digits);
       if (docs[0]) { scanTitle = docs[0].title || ""; scanAuthor = (docs[0].author_name || [])[0] || ""; }
-    } catch (e) { /* offline — fall through to ISBN-only verdict */ }
+    } catch (e: any) { /* offline — fall through to ISBN-only verdict */ }
     if (scanTitle) {
       const c = normT(scanTitle);
       hit = state.books.find((b) => { const a = normT(b.title); return a && c && (a === c || a.includes(c) || c.includes(a)); });
     }
   }
   const fmtName = { physical: "a physical copy", ebook: "an e-book", audio: "an audiobook" };
-  const parsed = parseSeriesFromTitle(scanTitle) || {};
+  const parsed = parseSeriesFromTitle(scanTitle) || ({} as { name?: string; number?: number | null });
   const seriesName = (hit && hit.seriesName) || parsed.name || "";
   const seriesNum = hit && hit.seriesNumber != null ? hit.seriesNumber : (parsed.number != null ? parsed.number : null);
   const insight = seriesInsight(seriesName, seriesNum);
@@ -3794,33 +3795,33 @@ async function checkScannedBook(isbn) {
 // ---------------------------------------------------------------------------
 // Star inputs
 // ---------------------------------------------------------------------------
-function paintStarSpans(container, v) {
+function paintStarSpans(container: HTMLElement, v: number) {
   $$("span", container).forEach((x) => {
     const n = Number(x.dataset.star);
     x.classList.toggle("on", n <= v);
     x.classList.toggle("half-on", n - 0.5 === v);
   });
 }
-function paintStars(container, rating) {
-  container.dataset.rating = rating;
+function paintStars(container: HTMLElement, rating: number | null | undefined) {
+  container.dataset.rating = String(rating);
   paintStarSpans(container, Number(rating));
 }
 // Click the left half of a star for a half-star rating (e.g. 3.5★).
-function starValueFromEvent(e, s) {
+function starValueFromEvent(e: MouseEvent, s: HTMLElement) {
   const rect = s.getBoundingClientRect();
   const half = (e.clientX - rect.left) < rect.width / 2;
   return Number(s.dataset.star) - (half ? 0.5 : 0);
 }
-function wireStars(container, onSet) {
-  container.addEventListener("click", (e) => { const s = e.target.closest("[data-star]"); if (!s) return; const v = starValueFromEvent(e, s); onSet(v); paintStars(container, v); });
-  container.addEventListener("mousemove", (e) => { const s = e.target.closest("[data-star]"); if (!s) return; paintStarSpans(container, starValueFromEvent(e, s)); });
+function wireStars(container: HTMLElement, onSet: (v: number) => void) {
+  container.addEventListener("click", (e) => { const s = (e.target as HTMLElement).closest<HTMLElement>("[data-star]"); if (!s) return; const v = starValueFromEvent(e, s); onSet(v); paintStars(container, v); });
+  container.addEventListener("mousemove", (e) => { const s = (e.target as HTMLElement).closest<HTMLElement>("[data-star]"); if (!s) return; paintStarSpans(container, starValueFromEvent(e, s)); });
   container.addEventListener("mouseleave", () => paintStars(container, Number(container.dataset.rating)));
 }
 
 // ---------------------------------------------------------------------------
 // Modal plumbing
 // ---------------------------------------------------------------------------
-function showModal(id) { $("#" + id).hidden = false; }
+function showModal(id: string) { $("#" + id).hidden = false; }
 function closeModals() {
   stopScan();
   resetTimer();
@@ -3832,7 +3833,7 @@ function closeModals() {
 // ---------------------------------------------------------------------------
 // Data import / export / file connect / Goodreads
 // ---------------------------------------------------------------------------
-function downloadBlob(text, filename) {
+function downloadBlob(text: string, filename: string) {
   const blob = new Blob([text], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -3845,13 +3846,13 @@ function exportJSON() {
   toast("⬇️", "Exported", "enkelas-bookshelf.json downloaded");
 }
 // Base64 helpers for bundling ePub bytes into the "export everything" file.
-function bufToB64(buf) {
+function bufToB64(buf: ArrayBuffer): string {
   const u8 = new Uint8Array(buf);
   let s = "";
-  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000) as unknown as number[]);
   return btoa(s);
 }
-function b64ToBuf(s) {
+function b64ToBuf(s: string): ArrayBuffer {
   const bin = atob(s);
   const u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
@@ -3860,7 +3861,7 @@ function b64ToBuf(s) {
 // One file with EVERYTHING: books, preferences, and the eReader's ePubs
 // (bookmarks, highlights and reading stats included) — a whole-life backup.
 async function exportEverything() {
-  const btn = $("#btn-export-full");
+  const btn = $<HTMLButtonElement>("#btn-export-full");
   if (btn) { btn.disabled = true; btn.textContent = "Packing…"; }
   try {
     const bundle = {
@@ -3869,7 +3870,7 @@ async function exportEverything() {
       appVersion: APP_VERSION,
       state,
       prefs: { theme: loadTheme() },
-      epubs: [],
+      epubs: [] as any[],
     };
     if (EReader && EReader.exportAll) {
       const recs = await EReader.exportAll();
@@ -3878,17 +3879,17 @@ async function exportEverything() {
     downloadBlob(JSON.stringify(bundle), "enkelas-bookshelf-full.json");
     markExported();
     toast("📦", "Everything exported", state.books.length + " books" + (bundle.epubs.length ? " + " + bundle.epubs.length + " ePub" + (bundle.epubs.length === 1 ? "" : "s") : ""));
-  } catch (e) {
+  } catch (e: any) {
     console.warn(e);
     toast("⚠️", "Export failed", "Try the plain backup instead.");
   }
   if (btn) { btn.disabled = false; btn.textContent = "📦 Export everything"; }
 }
-function importJSON(file) {
+function importJSON(file: File) {
   const reader = new FileReader();
   reader.onload = async () => {
     try {
-      const data = JSON.parse(reader.result);
+      const data = JSON.parse(reader.result as string);
       const isFull = data && data.kind === "enkelas-full-backup";
       state = normalize(isFull ? data.state : data);
       knownBadges = new Set();
@@ -3897,7 +3898,7 @@ function importJSON(file) {
       let epubNote = "";
       if (isFull && Array.isArray(data.epubs) && data.epubs.length && EReader && EReader.importAll) {
         try {
-          await EReader.importAll(data.epubs.map((r) => Object.assign({}, r, { data: b64ToBuf(r.data) })));
+          await EReader.importAll(data.epubs.map((r: any) => Object.assign({}, r, { data: b64ToBuf(r.data) })));
           epubNote = " · " + data.epubs.length + " ePub" + (data.epubs.length === 1 ? "" : "s") + " restored";
         } catch (e2) { epubNote = " · ePubs couldn't be restored"; }
       }
@@ -3907,27 +3908,27 @@ function importJSON(file) {
         applyTheme(th);
       }
       toast("⬆️", "Imported", state.books.length + " books loaded" + epubNote);
-    } catch (e) { toast("⚠️", "Import failed", "That file isn't valid bookshelf JSON."); }
+    } catch (e: any) { toast("⚠️", "Import failed", "That file isn't valid bookshelf JSON."); }
   };
   reader.readAsText(file);
 }
 async function connectFile() {
   if (!supportsFS) { toast("ℹ️", "Use Export / Import", "This browser can't link a file directly. Your data is saved in-browser."); return; }
   try {
-    const [handle] = await window.showOpenFilePicker({ types: [{ description: "JSON", accept: { "application/json": [".json"] } }], multiple: false })
-      .catch(async () => { const h = await window.showSaveFilePicker({ suggestedName: "bookshelf.json", types: [{ description: "JSON", accept: { "application/json": [".json"] } }] }); return [h]; });
+    const [handle] = await window.showOpenFilePicker!({ types: [{ description: "JSON", accept: { "application/json": [".json"] } }], multiple: false })
+      .catch(async () => { const h = await window.showSaveFilePicker!({ suggestedName: "bookshelf.json", types: [{ description: "JSON", accept: { "application/json": [".json"] } }] }); return [h]; });
     fileHandle = handle;
     const text = await (await handle.getFile()).text();
-    if (text.trim()) { try { state = normalize(JSON.parse(text)); knownBadges = new Set(); } catch (e) { /* keep */ } }
+    if (text.trim()) { try { state = normalize(JSON.parse(text)); knownBadges = new Set(); } catch (e: any) { /* keep */ } }
     await persist();
     render();
     knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
     toast("🔗", "File connected", "Changes now save to your JSON file.");
-  } catch (e) { if (e && e.name !== "AbortError") { console.warn(e); toast("⚠️", "Couldn't connect file", ""); } }
+  } catch (e: any) { if (e && e.name !== "AbortError") { console.warn(e); toast("⚠️", "Couldn't connect file", ""); } }
 }
 
 // Minimal RFC-4180-ish CSV parser (handles quotes and embedded commas/newlines).
-function parseCSV(text) {
+function parseCSV(text: string) {
   const rows = []; let row = [], field = "", inQ = false, i = 0;
   text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   while (i < text.length) {
@@ -3944,7 +3945,7 @@ function parseCSV(text) {
   if (field.length || row.length) { row.push(field); rows.push(row); }
   return rows;
 }
-function importGoodreads(file) {
+function importGoodreads(file: File) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
@@ -3956,13 +3957,13 @@ function importGoodreads(file) {
       const rows = parseCSV(text);
       if (rows.length < 2) throw 0;
       const header = rows[0].map((h) => h.trim());
-      const idx = (name) => header.indexOf(name);
+      const idx = (name: string) => header.indexOf(name);
       const cTitle = idx("Title"), cAuthor = idx("Author"), cRating = idx("My Rating"),
         cPages = idx("Number of Pages"), cShelf = idx("Exclusive Shelf"), cShelves = idx("Bookshelves"),
         cReview = idx("My Review"), cDateRead = idx("Date Read"), cISBN = idx("ISBN"),
         cISBN13 = idx("ISBN13"), cYear = idx("Original Publication Year"), cOwned = idx("Owned Copies");
       if (cTitle < 0) throw 0;
-      const clean = (s) => {
+      const clean = (s: string) => {
         let v = String(s == null ? "" : s).trim().replace(/^=/, "");
         if (v.length >= 2 && ((v[0] === '"' && v[v.length - 1] === '"') || (v[0] === "'" && v[v.length - 1] === "'"))) v = v.slice(1, -1);
         return v.trim();
@@ -4002,8 +4003,8 @@ function importGoodreads(file) {
           seriesName, seriesNumber: null, publishedYear: year, quotes: [], readCount: 1, finishHistory: [],
           status, rating: rating || null, startedAt: null, finishedAt, addedAt: new Date().toISOString(), logs: [],
           owned: cOwned >= 0 ? (parseFloat(clean(row[cOwned]) || "0") || 0) > 0 : false,
-        };
-        if (status === "finished" && pages > 0 && finishedAt) book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, note: "Imported from Goodreads" });
+        } as unknown as Book;
+        if (status === "finished" && pages > 0 && finishedAt) book.logs.push({ id: uid(), date: finishedAt, pages, minutes: 0, mood: "", note: "Imported from Goodreads" });
         state.books.push(book);
         added++;
       }
@@ -4012,7 +4013,7 @@ function importGoodreads(file) {
       knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
       toast("📥", "Goodreads import", added + " book" + (added === 1 ? "" : "s") + " added");
       if (added) backfillCovers(true);
-    } catch (e) { console.warn(e); toast("⚠️", "Import failed", "That doesn't look like a Goodreads CSV export."); }
+    } catch (e: any) { console.warn(e); toast("⚠️", "Import failed", "That doesn't look like a Goodreads CSV export."); }
   };
   reader.readAsText(file);
 }
@@ -4020,7 +4021,7 @@ function importGoodreads(file) {
 // ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
-function switchView(view) {
+function switchView(view: string) {
   activeView = view;
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
   $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + view));
@@ -4030,19 +4031,19 @@ function switchView(view) {
   if (view === "community") openCommunity();
 }
 
-function onMainClick(e) {
-  const actBtn = e.target.closest("[data-action]");
+function onMainClick(e: MouseEvent) {
+  const actBtn = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
   if (actBtn) {
     const action = actBtn.dataset.action;
     if (action === "dismiss-check") { $("#owned-check-result").hidden = true; return; }
-    if (action === "scan-add") { openBookModal({ status: "want" }); $("#f-isbn").value = actBtn.dataset.isbn || ""; if ($("#f-isbn").value) handleFetch(); return; }
+    if (action === "scan-add") { openBookModal({ status: "want" }); $<HTMLInputElement>("#f-isbn").value = actBtn.dataset.isbn || ""; if ($<HTMLInputElement>("#f-isbn").value) handleFetch(); return; }
     const book = state.books.find((b) => b.id === actBtn.dataset.id);
     if (!book) return;
     if (action === "log") openLogModal(book);
     else if (action === "detail") openBookPage(book);
     else if (action === "finish") openFinishModal(book);
     else if (action === "edit") openBookModal({ book });
-    else if (action === "cover") { openBookModal({ book }); setTimeout(() => $("#btn-fetch").focus(), 80); }
+    else if (action === "cover") { openBookModal({ book }); setTimeout(() => $<HTMLButtonElement>("#btn-fetch").focus(), 80); }
     else if (action === "rate") rateBook(book);
     else if (action === "start") { book.status = "reading"; book.startedAt = new Date().toISOString(); commit(); toast("📖", "Started reading", book.title); }
     else if (action === "bookmark") openBookmarkModal(book);
@@ -4053,28 +4054,28 @@ function onMainClick(e) {
     else if (action === "delete") { if (confirm(`Remove “${book.title}” from your bookshelf? This can't be undone.`)) { state.books = state.books.filter((b) => b.id !== book.id); commit(); toast("🗑", "Removed", book.title); } }
     return;
   }
-  const tagChip = e.target.closest("[data-tag]");
+  const tagChip = (e.target as HTMLElement).closest<HTMLElement>("[data-tag]");
   if (tagChip) {
-    const tag = tagChip.dataset.tag;
+    const tag = tagChip.dataset.tag!;
     leaveBookPage();
-    if (activeView === "library") { libraryTag = tag; $("#library-tag").value = tag; renderLibrary(); }
-    else if (activeView === "want") { wantQuery = tag; $("#want-search").value = tag; renderWant(); }
-    else { readingQuery = tag; $("#reading-search").value = tag; renderReading(); }
+    if (activeView === "library") { libraryTag = tag; $<HTMLSelectElement>("#library-tag").value = tag; renderLibrary(); }
+    else if (activeView === "want") { wantQuery = tag; $<HTMLInputElement>("#want-search").value = tag; renderWant(); }
+    else { readingQuery = tag; $<HTMLInputElement>("#reading-search").value = tag; renderReading(); }
     return;
   }
-  const colChip = e.target.closest("[data-collection]");
+  const colChip = (e.target as HTMLElement).closest<HTMLElement>("[data-collection]");
   if (colChip) {
-    const col = colChip.dataset.collection;
+    const col = colChip.dataset.collection!;
     leaveBookPage();
-    if (activeView === "library") { libraryCollection = col; $("#library-collection").value = col; renderLibrary(); }
-    else { switchView("library"); libraryCollection = col; $("#library-collection").value = col; renderLibrary(); }
+    if (activeView === "library") { libraryCollection = col; $<HTMLSelectElement>("#library-collection").value = col; renderLibrary(); }
+    else { switchView("library"); libraryCollection = col; $<HTMLSelectElement>("#library-collection").value = col; renderLibrary(); }
     return;
   }
-  const addBtn = e.target.closest("[data-add]");
-  if (addBtn) { openBookModal({ status: addBtn.dataset.add }); return; }
+  const addBtn = (e.target as HTMLElement).closest<HTMLElement>("[data-add]");
+  if (addBtn) { openBookModal({ status: addBtn.dataset.add as BookStatus }); return; }
   // Tapping anywhere else on a book card (or a Read-next pick) opens its detail page.
-  const card = e.target.closest(".book-card[data-id], .rn-card[data-id]");
-  if (card && !e.target.closest("button, a, input, select, textarea, details, summary, label")) {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".book-card[data-id], .rn-card[data-id]");
+  if (card && !(e.target as HTMLElement).closest<HTMLElement>("button, a, input, select, textarea, details, summary, label")) {
     const book = state.books.find((b) => b.id === card.dataset.id);
     if (book) openBookPage(book);
   }
@@ -4084,40 +4085,40 @@ function init() {
   // Loaded by tests.html (which has no app shell) — expose helpers, skip UI wiring.
   if (!document.getElementById("main")) return;
   $("#tabs").addEventListener("click", (e) => {
-    const tab = e.target.closest(".tab");
+    const tab = (e.target as HTMLElement).closest<HTMLElement>(".tab");
     if (!tab) return;
     if (activeView === "book") histCleanHash();
-    switchView(tab.dataset.view);
+    switchView(tab.dataset.view!);
   });
   $("#main").addEventListener("click", onMainClick);
 
   // Search + filters
-  $("#reading-search").addEventListener("input", (e) => { readingQuery = e.target.value.trim(); renderReading(); });
-  $("#want-search").addEventListener("input", (e) => { wantQuery = e.target.value.trim(); renderWant(); });
-  $("#library-search").addEventListener("input", (e) => { libraryQuery = e.target.value.trim(); renderLibrary(); });
-  $("#owned-search").addEventListener("input", (e) => { ownedQuery = e.target.value.trim(); renderOwned(); });
-  $("#owned-location").addEventListener("change", (e) => { ownedLocation = e.target.value; renderOwned(); });
-  $("#owned-unread-btn").addEventListener("click", () => { ownedUnreadOnly = !ownedUnreadOnly; renderOwned(); });
-  $("#btn-scan-check").addEventListener("click", () => openScan(checkScannedBook));
+  $<HTMLInputElement>("#reading-search").addEventListener("input", (e) => { readingQuery = (e.target as HTMLInputElement).value.trim(); renderReading(); });
+  $<HTMLInputElement>("#want-search").addEventListener("input", (e) => { wantQuery = (e.target as HTMLInputElement).value.trim(); renderWant(); });
+  $<HTMLInputElement>("#library-search").addEventListener("input", (e) => { libraryQuery = (e.target as HTMLInputElement).value.trim(); renderLibrary(); });
+  $<HTMLInputElement>("#owned-search").addEventListener("input", (e) => { ownedQuery = (e.target as HTMLInputElement).value.trim(); renderOwned(); });
+  $<HTMLSelectElement>("#owned-location").addEventListener("change", (e) => { ownedLocation = (e.target as HTMLInputElement).value; renderOwned(); });
+  $<HTMLButtonElement>("#owned-unread-btn").addEventListener("click", () => { ownedUnreadOnly = !ownedUnreadOnly; renderOwned(); });
+  $<HTMLButtonElement>("#btn-scan-check").addEventListener("click", () => openScan(checkScannedBook));
   window.__checkScannedBook = checkScannedBook;
-  $("#library-tag").addEventListener("change", (e) => { libraryTag = e.target.value; renderLibrary(); });
-  $("#library-collection").addEventListener("change", (e) => { libraryCollection = e.target.value; renderLibrary(); });
-  $("#library-sort").addEventListener("change", renderLibrary);
-  $("#library-format").addEventListener("change", (e) => { libraryFormat = e.target.value; renderLibrary(); });
-  $("#library-rating").addEventListener("change", (e) => { libraryRating = Number(e.target.value) || 0; renderLibrary(); });
-  $("#library-view-toggle").addEventListener("click", (e) => { const b = e.target.closest("[data-libview]"); if (b) { libraryView = b.dataset.libview; renderLibrary(); } });
+  $<HTMLSelectElement>("#library-tag").addEventListener("change", (e) => { libraryTag = (e.target as HTMLInputElement).value; renderLibrary(); });
+  $<HTMLSelectElement>("#library-collection").addEventListener("change", (e) => { libraryCollection = (e.target as HTMLInputElement).value; renderLibrary(); });
+  $<HTMLSelectElement>("#library-sort").addEventListener("change", renderLibrary);
+  $<HTMLSelectElement>("#library-format").addEventListener("change", (e) => { libraryFormat = (e.target as HTMLInputElement).value; renderLibrary(); });
+  $<HTMLSelectElement>("#library-rating").addEventListener("change", (e) => { libraryRating = Number((e.target as HTMLInputElement).value) || 0; renderLibrary(); });
+  $("#library-view-toggle").addEventListener("click", (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-libview]"); if (b) { libraryView = b.dataset.libview!; renderLibrary(); } });
 
   // Genre + collection quick-add chips
-  $("#tag-suggest").addEventListener("click", (e) => { const chip = e.target.closest("[data-add-tag]"); if (!chip) return; const t = parseList($("#f-tags").value); t.push(chip.dataset.addTag); $("#f-tags").value = parseList(t.join(",")).join(", "); renderTagHelpers(); });
-  $("#collection-suggest").addEventListener("click", (e) => { const chip = e.target.closest("[data-add-collection]"); if (!chip) return; const t = parseList($("#f-collections").value); t.push(chip.dataset.addCollection); $("#f-collections").value = parseList(t.join(",")).join(", "); renderTagHelpers(); });
-  $("#f-tags").addEventListener("input", renderTagHelpers);
-  $("#btn-fetch-genres").addEventListener("click", () => fetchGenresForForm());
-  $("#f-collections").addEventListener("input", renderTagHelpers);
-  $("#f-format").addEventListener("change", updatePagesLabel);
+  $("#tag-suggest").addEventListener("click", (e) => { const chip = (e.target as HTMLElement).closest<HTMLElement>("[data-add-tag]"); if (!chip) return; const t = parseList($<HTMLInputElement>("#f-tags").value); t.push(chip.dataset.addTag!); $<HTMLInputElement>("#f-tags").value = parseList(t.join(",")).join(", "); renderTagHelpers(); });
+  $("#collection-suggest").addEventListener("click", (e) => { const chip = (e.target as HTMLElement).closest<HTMLElement>("[data-add-collection]"); if (!chip) return; const t = parseList($<HTMLInputElement>("#f-collections").value); t.push(chip.dataset.addCollection!); $<HTMLInputElement>("#f-collections").value = parseList(t.join(",")).join(", "); renderTagHelpers(); });
+  $<HTMLInputElement>("#f-tags").addEventListener("input", renderTagHelpers);
+  $<HTMLButtonElement>("#btn-fetch-genres").addEventListener("click", () => fetchGenresForForm());
+  $<HTMLInputElement>("#f-collections").addEventListener("input", renderTagHelpers);
+  $<HTMLSelectElement>("#f-format").addEventListener("change", updatePagesLabel);
 
   // Detail modal actions
   $("#detail-body").addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-detail-action]");
+    const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-detail-action]");
     if (!btn) return;
     const book = state.books.find((x) => x.id === currentDetailId);
     if (!book) return;
@@ -4147,46 +4148,46 @@ function init() {
   $("#detail-body").addEventListener("submit", (e) => {
     const book = state.books.find((x) => x.id === currentDetailId);
     if (!book) return;
-    if (e.target.id === "quote-form") {
+    if ((e.target as HTMLElement).id === "quote-form") {
       e.preventDefault();
-      const text = $("#q-text").value.trim();
+      const text = $<HTMLInputElement>("#q-text").value.trim();
       if (!text) return;
       book.quotes = book.quotes || [];
-      book.quotes.push({ id: uid(), text, page: $("#q-page").value ? Number($("#q-page").value) : null, at: new Date().toISOString() });
+      book.quotes.push({ id: uid(), text, page: $<HTMLInputElement>("#q-page").value ? Number($<HTMLInputElement>("#q-page").value) : null, at: new Date().toISOString() });
       commit(); refreshDetail();
       toast("❝", "Quote saved", book.title);
-    } else if (e.target.id === "journal-form") {
+    } else if ((e.target as HTMLElement).id === "journal-form") {
       e.preventDefault();
-      const text = $("#j-text").value.trim();
+      const text = $<HTMLInputElement>("#j-text").value.trim();
       if (!text) return;
       book.journal = book.journal || [];
-      book.journal.push({ id: uid(), date: new Date().toISOString(), page: $("#j-page").value ? Number($("#j-page").value) : null, text });
+      book.journal.push({ id: uid(), date: new Date().toISOString(), page: $<HTMLInputElement>("#j-page").value ? Number($<HTMLInputElement>("#j-page").value) : null, text });
       commit(); refreshDetail();
       toast("📓", "Journal entry added", book.title);
-    } else if (e.target.id === "char-form") {
+    } else if ((e.target as HTMLElement).id === "char-form") {
       e.preventDefault();
-      const name = $("#char-name").value.trim();
+      const name = $<HTMLInputElement>("#char-name").value.trim();
       if (!name) return;
       book.characters = book.characters || [];
-      book.characters.push({ id: uid(), name, desc: $("#char-desc").value.trim() });
+      book.characters.push({ id: uid(), name, desc: $<HTMLInputElement>("#char-desc").value.trim() });
       commit(); refreshDetail();
-    } else if (e.target.id === "vocab-form") {
+    } else if ((e.target as HTMLElement).id === "vocab-form") {
       e.preventDefault();
-      const word = $("#vocab-word").value.trim();
+      const word = $<HTMLInputElement>("#vocab-word").value.trim();
       if (!word) return;
       book.vocab = book.vocab || [];
-      book.vocab.push({ id: uid(), word, def: $("#vocab-def").value.trim(), page: $("#vocab-page").value ? Number($("#vocab-page").value) : null });
+      book.vocab.push({ id: uid(), word, def: $<HTMLInputElement>("#vocab-def").value.trim(), page: $<HTMLInputElement>("#vocab-page").value ? Number($<HTMLInputElement>("#vocab-page").value) : null });
       commit(); refreshDetail();
     }
   });
 
   // Book modal
-  $("#book-form").addEventListener("submit", saveBookFromForm);
-  $("#btn-fetch").addEventListener("click", handleFetch);
-  $("#btn-scan").addEventListener("click", openScan);
-  $("#f-cover").addEventListener("input", (e) => setCoverPreview(e.target.value.trim()));
+  $<HTMLFormElement>("#book-form").addEventListener("submit", saveBookFromForm);
+  $<HTMLButtonElement>("#btn-fetch").addEventListener("click", handleFetch);
+  $<HTMLButtonElement>("#btn-scan").addEventListener("click", openScan);
+  $<HTMLInputElement>("#f-cover").addEventListener("input", (e) => setCoverPreview((e.target as HTMLInputElement).value.trim()));
   $("#cover-candidates").addEventListener("click", (e) => {
-    const card = e.target.closest("[data-doc-idx]");
+    const card = (e.target as HTMLElement).closest<HTMLElement>("[data-doc-idx]");
     if (!card) return;
     const doc = lastSearchDocs[Number(card.dataset.docIdx)];
     if (!doc) return;
@@ -4195,23 +4196,23 @@ function init() {
     applyDoc(doc, { overwrite: true });
     toast("✨", "Details filled in", doc.title || "Book selected");
   });
-  $$("input[name='f-status']").forEach((r) => r.addEventListener("change", () => toggleStatusFields(r.value)));
+  $$<HTMLInputElement>("input[name='f-status']").forEach((r) => r.addEventListener("change", () => toggleStatusFields(r.value)));
   wireStars($("#f-stars"), (v) => (modalRating = v));
 
   // Log + finish
-  $("#log-form").addEventListener("submit", saveLog);
-  $("#log-pages").addEventListener("input", updateLogPageHint);
-  $("#finish-form").addEventListener("submit", saveFinish);
-  $("#timer-btn").addEventListener("click", toggleTimer);
+  $<HTMLFormElement>("#log-form").addEventListener("submit", saveLog);
+  $<HTMLInputElement>("#log-pages").addEventListener("input", updateLogPageHint);
+  $<HTMLFormElement>("#finish-form").addEventListener("submit", saveFinish);
+  $<HTMLButtonElement>("#timer-btn").addEventListener("click", toggleTimer);
   wireStars($("#finish-stars"), (v) => (finishRating = v));
 
   // Goals
-  $("#goal-save").addEventListener("click", () => {
+  $<HTMLButtonElement>("#goal-save").addEventListener("click", () => {
     state.settings.goal = {
-      year: Number($("#goal-year").value) || new Date().getFullYear(),
-      target: Number($("#goal-target").value) || 0,
-      pagesTarget: Number($("#goal-pages").value) || 0,
-      dailyPages: Number($("#goal-daily").value) || 0,
+      year: Number($<HTMLInputElement>("#goal-year").value) || new Date().getFullYear(),
+      target: Number($<HTMLInputElement>("#goal-target").value) || 0,
+      pagesTarget: Number($<HTMLInputElement>("#goal-pages").value) || 0,
+      dailyPages: Number($<HTMLInputElement>("#goal-daily").value) || 0,
     };
     commit();
     checkNewBadges();
@@ -4219,120 +4220,120 @@ function init() {
   });
 
   // Year in Review + monthly recap
-  $("#btn-year-review").addEventListener("click", () => openYearReview(new Date().getFullYear()));
+  $<HTMLButtonElement>("#btn-year-review").addEventListener("click", () => openYearReview(new Date().getFullYear()));
   $("#year-body").addEventListener("click", (e) => {
-    const act = e.target.closest("[data-yr-action]");
+    const act = (e.target as HTMLElement).closest<HTMLElement>("[data-yr-action]");
     if (act) {
       const y = Number(act.dataset.year);
       if (act.dataset.yrAction === "image") shareYearCard(y);
       else { downloadText("my-" + y + "-in-books.md", yearMarkdown(y)); toast("⬇️", "Year journal exported", y + " as Markdown"); }
       return;
     }
-    const b = e.target.closest("[data-year-nav]");
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-year-nav]");
     if (b && !b.disabled) openYearReview(Number(b.dataset.yearNav));
   });
-  $("#btn-month-recap").addEventListener("click", () => { const n = new Date(); openMonthlyRecap(n.getFullYear(), n.getMonth()); });
-  $("#btn-snapshot").addEventListener("click", shareSnapshotCard);
+  $<HTMLButtonElement>("#btn-month-recap").addEventListener("click", () => { const n = new Date(); openMonthlyRecap(n.getFullYear(), n.getMonth()); });
+  $<HTMLButtonElement>("#btn-snapshot").addEventListener("click", shareSnapshotCard);
   $("#month-body").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-month-nav]");
-    if (b && !b.disabled) { const [y, m] = b.dataset.monthNav.split("-").map(Number); openMonthlyRecap(y, m); }
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-month-nav]");
+    if (b && !b.disabled) { const [y, m] = b.dataset.monthNav!.split("-").map(Number); openMonthlyRecap(y, m); }
   });
 
   // Mood picker in the log dialog
   $("#mood-row").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-mood]");
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-mood]");
     if (!b) return;
-    paintMood($("#log-mood").value === b.dataset.mood ? "" : b.dataset.mood);
+    paintMood($<HTMLInputElement>("#log-mood").value === b.dataset.mood ? "" : b.dataset.mood!);
   });
 
   // Bookmark + DNF dialogs
-  $("#bookmark-form").addEventListener("submit", saveBookmark);
-  $("#lend-form").addEventListener("submit", saveLend);
-  $("#bm-clear").addEventListener("click", clearBookmark);
-  $("#dnf-form").addEventListener("submit", saveDnf);
+  $<HTMLFormElement>("#bookmark-form").addEventListener("submit", saveBookmark);
+  $<HTMLFormElement>("#lend-form").addEventListener("submit", saveLend);
+  $<HTMLButtonElement>("#bm-clear").addEventListener("click", clearBookmark);
+  $<HTMLFormElement>("#dnf-form").addEventListener("submit", saveDnf);
 
   // Bookshelf drag & drop
   setupShelfDnD($("#library-list"));
 
   // Built-in eReader
-  $("#btn-ereader").addEventListener("click", () => {
+  $<HTMLButtonElement>("#btn-ereader").addEventListener("click", () => {
     if (EReader) EReader.openLibrary();
     else toast("⚠️", "eReader unavailable", "The reader script didn't load.");
   });
 
   // Data menu
-  $("#btn-export").addEventListener("click", exportJSON);
-  $("#btn-import").addEventListener("click", () => $("#import-input").click());
-  $("#import-input").addEventListener("change", (e) => { if (e.target.files[0]) importJSON(e.target.files[0]); e.target.value = ""; });
-  $("#btn-goodreads").addEventListener("click", () => $("#goodreads-input").click());
-  $("#goodreads-input").addEventListener("change", (e) => { if (e.target.files[0]) importGoodreads(e.target.files[0]); e.target.value = ""; });
-  $("#btn-connect-file").addEventListener("click", connectFile);
-  $("#btn-theme").addEventListener("click", toggleTheme);
+  $<HTMLButtonElement>("#btn-export").addEventListener("click", exportJSON);
+  $<HTMLButtonElement>("#btn-import").addEventListener("click", () => $<HTMLInputElement>("#import-input").click());
+  $<HTMLInputElement>("#import-input").addEventListener("change", (e) => { if ((e.target as HTMLInputElement).files![0]) importJSON((e.target as HTMLInputElement).files![0]); (e.target as HTMLInputElement).value = ""; });
+  $<HTMLButtonElement>("#btn-goodreads").addEventListener("click", () => $<HTMLInputElement>("#goodreads-input").click());
+  $<HTMLInputElement>("#goodreads-input").addEventListener("change", (e) => { if ((e.target as HTMLInputElement).files![0]) importGoodreads((e.target as HTMLInputElement).files![0]); (e.target as HTMLInputElement).value = ""; });
+  $<HTMLButtonElement>("#btn-connect-file").addEventListener("click", connectFile);
+  $<HTMLButtonElement>("#btn-theme").addEventListener("click", toggleTheme);
 
   // Settings / data safety
-  $("#btn-settings").addEventListener("click", openSettings);
+  $<HTMLButtonElement>("#btn-settings").addEventListener("click", openSettings);
   $("#storage-status").addEventListener("click", openSettings);
   $("#storage-status").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSettings(); } });
-  $("#btn-clear-data").addEventListener("click", clearLocalData);
-  $("#btn-refresh-app").addEventListener("click", refreshAppFiles);
-  $("#btn-export-full").addEventListener("click", exportEverything);
-  $("#btn-conflicts").addEventListener("click", () => { closeModals(); openConflicts(); });
-  $("#btn-shelf-doctor").addEventListener("click", () => { closeModals(); openShelfDoctor(); });
+  $<HTMLButtonElement>("#btn-clear-data").addEventListener("click", clearLocalData);
+  $<HTMLButtonElement>("#btn-refresh-app").addEventListener("click", refreshAppFiles);
+  $<HTMLButtonElement>("#btn-export-full").addEventListener("click", exportEverything);
+  $<HTMLButtonElement>("#btn-conflicts").addEventListener("click", () => { closeModals(); openConflicts(); });
+  $<HTMLButtonElement>("#btn-shelf-doctor").addEventListener("click", () => { closeModals(); openShelfDoctor(); });
   // Reading clubs
-  $("#btn-clubs").addEventListener("click", () => { closeModals(); openClubs(); });
+  $<HTMLButtonElement>("#btn-clubs").addEventListener("click", () => { closeModals(); openClubs(); });
   $("#clubs-body").addEventListener("click", (e) => {
-    const react = e.target.closest("[data-react]"); if (react) { toggleReaction(react.dataset.comment, react.dataset.react); return; }
-    const open = e.target.closest("[data-club-open]"); if (open) { openClub(open.dataset.clubOpen); return; }
-    if (e.target.closest("[data-club-back]")) { renderClubsListScreen(); return; }
-    const leave = e.target.closest("[data-club-leave]");
+    const react = (e.target as HTMLElement).closest<HTMLElement>("[data-react]"); if (react) { toggleReaction(react.dataset.comment!, react.dataset.react!); return; }
+    const open = (e.target as HTMLElement).closest<HTMLElement>("[data-club-open]"); if (open) { openClub(open.dataset.clubOpen!); return; }
+    if ((e.target as HTMLElement).closest<HTMLElement>("[data-club-back]")) { renderClubsListScreen(); return; }
+    const leave = (e.target as HTMLElement).closest<HTMLElement>("[data-club-leave]");
     if (leave) { if (confirm("Leave this club? You can rejoin later with the code.")) clubApi("/" + leave.dataset.clubLeave + "/leave", { method: "POST" }).then(() => { toast("👋", "Left the club", ""); renderClubsListScreen(); }); return; }
-    const share = e.target.closest("[data-club-share]");
+    const share = (e.target as HTMLElement).closest<HTMLElement>("[data-club-share]");
     if (share && share.dataset.clubShare) { shareClubInvite(share.dataset.clubShare, share.dataset.clubShareTitle || ""); return; }
-    const copy = e.target.closest("[data-club-copy]");
+    const copy = (e.target as HTMLElement).closest<HTMLElement>("[data-club-copy]");
     if (copy && copy.dataset.clubCopy) { try { navigator.clipboard.writeText(copy.dataset.clubCopy); } catch (e2) { /* ignore */ } toast("📋", "Invite code copied", copy.dataset.clubCopy); return; }
   });
   $("#clubs-body").addEventListener("submit", (e) => {
     e.preventDefault();
-    if (e.target.id === "club-create-form") {
-      const title = $("#club-book-title").value.trim(); if (!title) return;
-      clubApi("", { method: "POST", body: JSON.stringify({ bookTitle: title, bookAuthor: $("#club-book-author").value.trim(), displayName: clubDisplayName() }) })
+    if ((e.target as HTMLElement).id === "club-create-form") {
+      const title = $<HTMLInputElement>("#club-book-title").value.trim(); if (!title) return;
+      clubApi("", { method: "POST", body: JSON.stringify({ bookTitle: title, bookAuthor: $<HTMLInputElement>("#club-book-author").value.trim(), displayName: clubDisplayName() }) })
         .then(({ res, data }) => { if (res.ok && data.clubId) { toast("👥", "Club created", "Invite code " + data.joinCode); openClub(data.clubId); } else toast("⚠️", "Couldn't create the club", (data && data.error) || ""); });
-    } else if (e.target.id === "club-join-form") {
-      const code = $("#club-join-code").value.trim().toUpperCase(); if (!code) return;
+    } else if ((e.target as HTMLElement).id === "club-join-form") {
+      const code = $<HTMLInputElement>("#club-join-code").value.trim().toUpperCase(); if (!code) return;
       joinClubByCode(code);
-    } else if (e.target.id === "club-comment-form") {
+    } else if ((e.target as HTMLElement).id === "club-comment-form") {
       postClubComment();
     }
   });
-  $("#clubs-body").addEventListener("input", (e) => { if (e.target.id === "club-progress-range") { const v = $("#club-my-pct"); if (v) v.textContent = e.target.value; } });
-  $("#clubs-body").addEventListener("change", (e) => { if (e.target.id === "club-progress-range") setClubProgress(Number(e.target.value) || 0); });
+  $("#clubs-body").addEventListener("input", (e) => { if ((e.target as HTMLElement).id === "club-progress-range") { const v = $("#club-my-pct"); if (v) v.textContent = (e.target as HTMLInputElement).value; } });
+  $("#clubs-body").addEventListener("change", (e) => { if ((e.target as HTMLElement).id === "club-progress-range") setClubProgress(Number((e.target as HTMLInputElement).value) || 0); });
 
   // Community recommendations
-  $("#btn-recommend").addEventListener("click", () => openRecommendModal());
-  $("#recommend-form").addEventListener("submit", (e) => { e.preventDefault(); submitRecommend(); });
-  $("#community-category").addEventListener("change", (e) => { communityCategory = e.target.value; drawCommunity(); });
-  $("#community-sort").addEventListener("change", (e) => { communitySort = e.target.value; drawCommunity(); });
-  $("#community-hide-read").addEventListener("change", (e) => { communityHideRead = e.target.checked; drawCommunity(); });
+  $<HTMLButtonElement>("#btn-recommend").addEventListener("click", () => openRecommendModal());
+  $<HTMLFormElement>("#recommend-form").addEventListener("submit", (e) => { e.preventDefault(); submitRecommend(); });
+  $<HTMLSelectElement>("#community-category").addEventListener("change", (e) => { communityCategory = (e.target as HTMLInputElement).value; drawCommunity(); });
+  $<HTMLSelectElement>("#community-sort").addEventListener("change", (e) => { communitySort = (e.target as HTMLInputElement).value; drawCommunity(); });
+  $<HTMLInputElement>("#community-hide-read").addEventListener("change", (e) => { communityHideRead = (e.target as HTMLInputElement).checked; drawCommunity(); });
   $("#community-body").addEventListener("click", (e) => {
-    if (e.target.closest("[data-community-signin]")) { closeModals(); openAuthModal("login"); return; }
-    if (e.target.closest("[data-community-showread]")) { communityHideRead = false; const cb = $("#community-hide-read"); if (cb) cb.checked = false; drawCommunity(); return; }
-    const card = e.target.closest("[data-rec]");
+    if ((e.target as HTMLElement).closest<HTMLElement>("[data-community-signin]")) { closeModals(); openAuthModal("login"); return; }
+    if ((e.target as HTMLElement).closest<HTMLElement>("[data-community-showread]")) { communityHideRead = false; const cb = $<HTMLInputElement>("#community-hide-read"); if (cb) cb.checked = false; drawCommunity(); return; }
+    const card = (e.target as HTMLElement).closest<HTMLElement>("[data-rec]");
     if (!card) return;
     const id = card.dataset.rec;
-    if (e.target.closest("[data-rec-del]")) { deleteRec(id); return; }
-    const vote = e.target.closest("[data-vote]");
-    if (vote) voteRec(id, Number(vote.dataset.vote));
+    if ((e.target as HTMLElement).closest<HTMLElement>("[data-rec-del]")) { deleteRec(id!); return; }
+    const vote = (e.target as HTMLElement).closest<HTMLElement>("[data-vote]");
+    if (vote) voteRec(id!, Number(vote.dataset.vote));
   });
-  $("#btn-doctor-covers").addEventListener("click", async (e) => {
-    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Searching…";
+  $<HTMLButtonElement>("#btn-doctor-covers").addEventListener("click", async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement; btn.disabled = true; btn.textContent = "Searching…";
     await backfillCovers(true);
     btn.disabled = false; btn.textContent = "🔍 Find all missing covers";
     renderShelfDoctor();
   });
   $("#doctor-body").addEventListener("click", async (e) => {
-    const mg = e.target.closest("[data-doctor-merge]");
+    const mg = (e.target as HTMLElement).closest<HTMLElement>("[data-doctor-merge]");
     if (mg) { const g = duplicateGroups().find((x) => x.key === mg.dataset.doctorMerge); if (g) mergeDuplicateGroup(g.books); return; }
-    const fx = e.target.closest("[data-doctor-fix]");
+    const fx = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-doctor-fix]");
     if (!fx) return;
     const book = state.books.find((b) => b.id === fx.dataset.id);
     if (!book) return;
@@ -4344,7 +4345,7 @@ function init() {
         const url = await findCoverFor(book);
         if (url) { book.coverUrl = url; commit(); toast("🖼", "Cover found", book.title); renderShelfDoctor(); }
         else { toast("🔍", "No cover found", "Try editing and pasting one."); fx.disabled = false; fx.textContent = "🔍 Find cover"; }
-      } catch (err) { toast("⚠️", "Lookup failed", "Check your connection."); fx.disabled = false; fx.textContent = "🔍 Find cover"; }
+      } catch (err: any) { toast("⚠️", "Lookup failed", "Check your connection."); fx.disabled = false; fx.textContent = "🔍 Find cover"; }
       return;
     }
     if (fix === "genres") {
@@ -4356,12 +4357,12 @@ function init() {
           picks.forEach((p) => { if (!have.has(p.toLowerCase())) { have.add(p.toLowerCase()); book.tags.push(p); } });
           commit(); toast("🏷️", "Genres added", picks.join(", ")); renderShelfDoctor();
         } else { toast("🔍", "No genres found", "Add a couple by hand."); fx.disabled = false; fx.textContent = "✨ Fetch genres"; }
-      } catch (err) { toast("⚠️", "Couldn't fetch genres", "Check your connection."); fx.disabled = false; fx.textContent = "✨ Fetch genres"; }
+      } catch (err: any) { toast("⚠️", "Couldn't fetch genres", "Check your connection."); fx.disabled = false; fx.textContent = "✨ Fetch genres"; }
       return;
     }
   });
   $("#settings-modal").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-settings-action]");
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-settings-action]");
     if (!b) return;
     const act = b.dataset.settingsAction;
     if (act === "signin") { closeModals(); openAuthModal("login"); }
@@ -4372,14 +4373,14 @@ function init() {
   // PWA install + first-run onboarding
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstallPrompt = e; updateInstallUI(); });
   window.addEventListener("appinstalled", () => { deferredInstallPrompt = null; updateInstallUI(); toast("📲", "Installed!", "Enkela's Bookshelf is on your home screen now."); });
-  $("#btn-install-app").addEventListener("click", promptInstall);
+  $<HTMLButtonElement>("#btn-install-app").addEventListener("click", promptInstall);
   $("#onboard-modal").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-onboard]");
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-onboard]");
     if (!b) return;
     const act = b.dataset.onboard;
     finishOnboarding();
     closeModals();
-    if (act === "goodreads") $("#goodreads-input").click();
+    if (act === "goodreads") $<HTMLInputElement>("#goodreads-input").click();
     else if (act === "add") openBookModal({ status: "reading" });
     else if (act === "goal") switchView("goals");
     else if (act === "install") promptInstall();
@@ -4387,22 +4388,22 @@ function init() {
 
   // Accounts + sync
   if (syncEnabled()) {
-    $("#btn-account").addEventListener("click", () => {
+    $<HTMLButtonElement>("#btn-account").addEventListener("click", () => {
       if (auth) { const m = $("#account-menu"); m.hidden = !m.hidden; }
       else openAuthModal("login");
     });
-    $("#am-sync").addEventListener("click", () => { closeAccountMenu(); toast("🔄", "Syncing…", ""); pullData(); });
-    $("#am-settings").addEventListener("click", openSettings);
-    $("#am-signout").addEventListener("click", logout);
-    $("#tab-login").addEventListener("click", () => setAuthMode("login"));
-    $("#tab-register").addEventListener("click", () => setAuthMode("register"));
-    $("#auth-form").addEventListener("submit", onAuthSubmit);
-    document.addEventListener("click", (e) => { if (!e.target.closest("#account-wrap")) closeAccountMenu(); });
+    $<HTMLButtonElement>("#am-sync").addEventListener("click", () => { closeAccountMenu(); toast("🔄", "Syncing…", ""); pullData(); });
+    $<HTMLButtonElement>("#am-settings").addEventListener("click", openSettings);
+    $<HTMLButtonElement>("#am-signout").addEventListener("click", logout);
+    $<HTMLButtonElement>("#tab-login").addEventListener("click", () => setAuthMode("login"));
+    $<HTMLButtonElement>("#tab-register").addEventListener("click", () => setAuthMode("register"));
+    $<HTMLFormElement>("#auth-form").addEventListener("submit", onAuthSubmit);
+    document.addEventListener("click", (e) => { if (!(e.target as HTMLElement).closest<HTMLElement>("#account-wrap")) closeAccountMenu(); });
   }
 
   // Modal close
   $$(".modal-backdrop").forEach((m) => m.addEventListener("click", (e) => { if (e.target === m) closeModals(); }));
-  document.addEventListener("click", (e) => { if (e.target.closest("[data-close-modal]")) closeModals(); });
+  document.addEventListener("click", (e) => { if ((e.target as HTMLElement).closest<HTMLElement>("[data-close-modal]")) closeModals(); });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     const hadOpenModal = $$(".modal-backdrop").some((m) => !m.hidden);
@@ -4411,7 +4412,7 @@ function init() {
   });
 
   // Book page navigation
-  $("#btn-book-back").addEventListener("click", goBackFromBook);
+  $<HTMLButtonElement>("#btn-book-back").addEventListener("click", goBackFromBook);
   window.addEventListener("popstate", () => {
     const m = (location.hash || "").match(/^#book\/(.+)$/);
     const b = m && state.books.find((x) => x.id === decodeURIComponent(m[1]));
@@ -4419,11 +4420,11 @@ function init() {
     else closeBookPage();
   });
 
-  if (!supportsFS) $("#btn-connect-file").style.display = "none";
+  if (!supportsFS) $<HTMLButtonElement>("#btn-connect-file").style.display = "none";
 
   // We restore list scroll positions ourselves when leaving a book page —
   // stop the browser fighting us on popstate.
-  try { history.scrollRestoration = "manual"; } catch (e) { /* ignore */ }
+  try { history.scrollRestoration = "manual"; } catch (e: any) { /* ignore */ }
   applyTheme(loadTheme());
   render();
   knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
@@ -4440,7 +4441,7 @@ function init() {
     const code = joinLink[1].toUpperCase();
     if (syncEnabled() && auth) { if (openClubsShell()) joinClubByCode(code); }
     else if (syncEnabled()) {
-      try { localStorage.setItem(PENDING_JOIN_KEY, code); } catch (e) { /* ignore */ }
+      try { localStorage.setItem(PENDING_JOIN_KEY, code); } catch (e: any) { /* ignore */ }
       openAuthModal("login");
       toast("👥", "You've been invited to a club", "Sign in and you'll join automatically.");
     }
@@ -4465,7 +4466,7 @@ export const BookshelfAPI = {
       .concat(state.books.filter((b) => b.status === "finished" || b.status === "dnf"))
       .map((b) => ({ id: b.id, title: b.title, author: b.author, totalPages: b.totalPages, status: b.status }));
   },
-  addReadingLog(bookId, entry) {
+  addReadingLog(bookId: string, entry: { pages?: number; minutes?: number; note?: string }) {
     const b = state.books.find((x) => x.id === bookId);
     if (!b) return false;
     if (b.status === "want") { b.status = "reading"; b.startedAt = b.startedAt || new Date().toISOString(); }
@@ -4483,12 +4484,12 @@ export const BookshelfAPI = {
   // Live session logging: the reader calls this every minute while reading,
   // updating ONE log in place (no toast — the reader announces the session
   // itself when it ends). Returns the log id to pass back on the next call.
-  upsertReadingLog(bookId, logId, entry) {
+  upsertReadingLog(bookId: string, logId: string | null | undefined, entry: { pages?: number; minutes?: number; note?: string }) {
     const b = state.books.find((x) => x.id === bookId);
     if (!b) return null;
     if (b.status === "want") { b.status = "reading"; b.startedAt = b.startedAt || new Date().toISOString(); }
     let lg = logId ? b.logs.find((x) => x.id === logId) : null;
-    if (!lg) { lg = { id: uid(), mood: "", note: "" }; b.logs.push(lg); }
+    if (!lg) { lg = { id: uid(), date: new Date().toISOString(), pages: 0, minutes: 0, mood: "", note: "" }; b.logs.push(lg); }
     lg.date = new Date().toISOString();
     lg.pages = Math.max(0, Math.round(entry.pages || 0));
     lg.minutes = Math.max(0, Math.round(entry.minutes || 0));
@@ -4498,12 +4499,12 @@ export const BookshelfAPI = {
     return lg.id;
   },
   // The reader's "save quote" lands the selection straight on the linked book.
-  addQuote(bookId, text) {
+  addQuote(bookId: string, text: string) {
     const b = state.books.find((x) => x.id === bookId);
     const t = String(text || "").trim();
     if (!b || !t) return false;
     b.quotes = b.quotes || [];
-    b.quotes.push({ id: uid(), text: t.slice(0, 2000), page: null });
+    b.quotes.push({ id: uid(), text: t.slice(0, 2000), page: null, at: null });
     commit();
     return true;
   },
