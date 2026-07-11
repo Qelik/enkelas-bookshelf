@@ -10,7 +10,7 @@
 // (which is still used for local `wrangler dev` / manual deploys from that dir).
 {
   "name": "enkelas-bookshelf-sync",
-  "main": "sync-worker/src/worker.js",
+  "main": "sync-worker/src/worker.ts",
   "compatibility_date": "2024-11-01",
   "kv_namespaces": [
     {

@@ -1,0 +1,16 @@
+{
+  // Type-check only: wrangler bundles src/worker.ts natively (esbuild strips
+  // types without checking), so tsc is the correctness gate here.
+  // Runtime globals come from worker-configuration.d.ts (`npx wrangler types`).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "skipLibCheck": true
+  },
+  "files": ["worker-configuration.d.ts", "src/env.d.ts", "src/worker.ts"]
+}

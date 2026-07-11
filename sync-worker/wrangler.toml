@@ -1,5 +1,5 @@
 name = "enkelas-bookshelf-sync"
-main = "src/worker.js"
+main = "src/worker.ts"
 compatibility_date = "2024-11-01"
 
 # KV namespace for users + per-user data.
