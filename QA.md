@@ -117,3 +117,8 @@ Enkela it's ready. Tick the boxes; note anything odd.
 ---
 
 _When everything above passes on both an iPhone and an Android device, it's ready to hand over._
+
+## TypeScript gate (2026-07-11)
+
+- [ ] `npm run check` passes — zero diagnostics across app, service worker, and sync-worker programs.
+- [ ] `npm run build` re-run after any `src/*.ts` edit, and the regenerated root `app.js`/`reader.js`/`sw.js` committed alongside the sources (never hand-edited).

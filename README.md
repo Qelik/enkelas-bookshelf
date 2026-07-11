@@ -1,7 +1,13 @@
 # 📚 Enkela's Bookshelf
 
 A cozy, **backend-free** reading tracker. Everything runs in the browser and your
-data is stored as JSON — no server, no account, no build step.
+data is stored as JSON — no server required, no account required.
+
+Written in **strict TypeScript** (compiled with the Go-native TypeScript 7 toolchain);
+sources live in `src/`, and the compiled `app.js`/`reader.js`/`sw.js` are committed at
+the repo root so the site still deploys as plain static files with zero CI. Serve the
+folder over HTTP (`python3 -m http.server`) to run it — the app loads as ES modules,
+which browsers do not allow from `file://`.
 
 **▶ Live app: https://qelik.github.io/enkelas-bookshelf/**
 On a phone, open that link and use the browser's **Share → Add to Home Screen** so the data sticks and it works offline.

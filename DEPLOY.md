@@ -16,10 +16,16 @@ The app is plain static files served from the repo root by GitHub Pages
 (repo `Qelik/enkelas-bookshelf`, branch `main`, live at
 <https://qelik.github.io/enkelas-bookshelf/>).
 
-1. **Bump the service-worker cache** in `sw.js` (`const CACHE = "enkelas-bookshelf-vNN"`).
+0. **Build from TypeScript.** Sources are `src/*.ts`; the served `app.js`/
+   `reader.js`/`sw.js` at the root are compiler output and are COMMITTED.
+   After editing any `src/*.ts`: `npm run build`, then commit the sources
+   AND the regenerated JS together. Never hand-edit the root JS files —
+   the next build overwrites them. `npm run check` must pass (it also
+   type-checks the worker) before shipping.
+1. **Bump the service-worker cache** in `src/sw.ts` (`const CACHE = "enkelas-bookshelf-vNN"`).
    Installed devices keep running old code until this changes — skip it and your
    changes won't reach anyone who already opened the app. Also bump `APP_VERSION`
-   in `app.js` so the version shown in **Settings → App** matches.
+   in `src/app.ts` so the version shown in **Settings → App** matches (then rebuild).
 2. **Commit & push to `main`.** Pages auto-rebuilds (~1 min).
 3. **Verify live:**
    - Hard-reload <https://qelik.github.io/enkelas-bookshelf/> (or use
