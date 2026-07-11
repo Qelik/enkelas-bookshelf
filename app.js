@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.10c"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.11"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -3055,6 +3055,55 @@ async function fetchGenresForBook(book) {
     }
     return picks;
 }
+// Batch version of the per-book "✨ Fetch genres" fix: walk every book without
+// genres and look them up one at a time (spaced out so we're gentle on
+// OpenLibrary). Books that come back empty are just skipped.
+let genreBackfillBusy = false;
+async function backfillGenres() {
+    if (genreBackfillBusy)
+        return;
+    if (navigator.onLine === false) {
+        toast("📡", "You're offline", "Genre lookup needs a connection.");
+        return;
+    }
+    genreBackfillBusy = true;
+    const btn = $("#btn-doctor-genres");
+    try {
+        const todo = state.books.filter((b) => !(b.tags && b.tags.length));
+        if (!todo.length) {
+            toast("🎉", "Nothing to do", "Every book already has genres.");
+            return;
+        }
+        let filled = 0;
+        for (let i = 0; i < todo.length; i++) {
+            const b = todo[i];
+            if (!state.books.includes(b))
+                continue; // a sync pull may have replaced the list
+            if (btn)
+                btn.textContent = `Fetching… ${i + 1}/${todo.length}`;
+            try {
+                const picks = await fetchGenresForBook(b);
+                if (picks.length) {
+                    const have = new Set((b.tags || []).map((x) => x.toLowerCase()));
+                    picks.forEach((p) => { if (!have.has(p.toLowerCase())) {
+                        have.add(p.toLowerCase());
+                        b.tags.push(p);
+                    } });
+                    filled++;
+                    renderShelfDoctor(); // keep the "No genres yet" list shrinking as we go
+                }
+            }
+            catch (e) { /* skip this one, keep going */ }
+            await sleep(350);
+        }
+        if (filled)
+            commit();
+        toast("🏷️", filled ? "Genres added" : "No genres found", filled ? `Filled in ${filled} book${filled === 1 ? "" : "s"}.` : "Try adding a few by hand.");
+    }
+    finally {
+        genreBackfillBusy = false;
+    }
+}
 function mergeDuplicateGroup(group) {
     if (!group || group.length < 2)
         return;
@@ -4080,7 +4129,7 @@ function saveBookFromForm(e) {
 // Log / finish / rate dialogs
 // ---------------------------------------------------------------------------
 function openLogModal(book, log) {
-    resetTimer();
+    restoreTimer(book.id); // resume a session left running before the app was closed
     const isAudio = book.format === "audio";
     const baseline = pagesBefore(book, log);
     $("#log-book-id").value = book.id;
@@ -4330,12 +4379,52 @@ function saveDnf(e) {
 // ---------------------------------------------------------------------------
 // Reading-session timer
 // ---------------------------------------------------------------------------
+// The timer runs off an absolute start timestamp mirrored to localStorage, so a
+// session survives the app being backgrounded and killed by the OS (mobile does
+// this after a while). Reopening the same book's log resumes where we left off;
+// sessions older than TIMER_MAX_MS are treated as abandoned.
+const TIMER_KEY = "enkelas-bookshelf-timer";
+const TIMER_MAX_MS = 12 * 3600 * 1000;
 let timerStart = null, timerInterval = null;
-function resetTimer() {
+function savedTimer() {
+    try {
+        const v = JSON.parse(localStorage.getItem(TIMER_KEY) || "null");
+        return v && typeof v.start === "number" ? v : null;
+    }
+    catch (e) {
+        return null;
+    }
+}
+function paintTimer() {
+    const read = $("#timer-read");
+    if (!read || timerStart == null)
+        return;
+    const s = Math.max(0, Math.floor((Date.now() - timerStart) / 1000));
+    read.textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+function runTimer(startAt) {
+    if (timerInterval)
+        clearInterval(timerInterval);
+    timerStart = startAt;
+    $("#timer-btn").textContent = "⏹ Stop timer";
+    $("#timer-read").hidden = false;
+    paintTimer(); // show the right value at once — matters when resuming a session
+    timerInterval = setInterval(paintTimer, 1000);
+}
+// clearSaved=false stops the visible ticker but keeps the persisted session, so
+// closing the modal (or any incidental closeModals()) doesn't discard a running
+// timer — only an explicit Stop or a saved log clears it.
+function resetTimer(clearSaved = true) {
     if (timerInterval)
         clearInterval(timerInterval);
     timerInterval = null;
     timerStart = null;
+    if (clearSaved) {
+        try {
+            localStorage.removeItem(TIMER_KEY);
+        }
+        catch (e) { /* ignore */ }
+    }
     const btn = $("#timer-btn"), read = $("#timer-read");
     if (btn)
         btn.textContent = "⏱ Start timer";
@@ -4344,6 +4433,15 @@ function resetTimer() {
         read.textContent = "00:00";
     }
 }
+// Resume a still-fresh persisted session for this book when its log opens;
+// otherwise start from a clean slate (leaving any other book's session intact).
+function restoreTimer(bookId) {
+    const saved = savedTimer();
+    if (saved && saved.bookId === bookId && Date.now() - saved.start < TIMER_MAX_MS)
+        runTimer(saved.start);
+    else
+        resetTimer(false);
+}
 function toggleTimer() {
     if (timerStart) {
         const mins = Math.max(0, Math.round((Date.now() - timerStart) / 60000));
@@ -4351,13 +4449,12 @@ function toggleTimer() {
         resetTimer();
     }
     else {
-        timerStart = Date.now();
-        $("#timer-btn").textContent = "⏹ Stop timer";
-        $("#timer-read").hidden = false;
-        timerInterval = setInterval(() => {
-            const s = Math.floor((Date.now() - timerStart) / 1000);
-            $("#timer-read").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
-        }, 1000);
+        const start = Date.now();
+        try {
+            localStorage.setItem(TIMER_KEY, JSON.stringify({ start, bookId: $("#log-book-id").value }));
+        }
+        catch (e) { /* ignore */ }
+        runTimer(start);
     }
 }
 // ---------------------------------------------------------------------------
@@ -4740,7 +4837,7 @@ function wireStars(container, onSet) {
 function showModal(id) { $("#" + id).hidden = false; }
 function closeModals() {
     stopScan();
-    resetTimer();
+    resetTimer(false); // keep a running session alive so it can resume on reopen
     stopClubPoll(); // also closes any open club WebSocket
     $$(".modal-backdrop").forEach((m) => (m.hidden = true));
     $("#finish-modal-title").textContent = "Finish this book";
@@ -5539,6 +5636,15 @@ function init() {
         await backfillCovers(true);
         btn.disabled = false;
         btn.textContent = "🔍 Find all missing covers";
+        renderShelfDoctor();
+    });
+    $("#btn-doctor-genres").addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = "Fetching…";
+        await backfillGenres();
+        btn.disabled = false;
+        btn.textContent = "🏷️ Fetch all missing genres";
         renderShelfDoctor();
     });
     $("#doctor-body").addEventListener("click", async (e) => {
