@@ -1,6 +1,7 @@
 {
   "name": "enkelas-bookshelf",
   "private": true,
+  "type": "module",
   "description": "Reading tracker PWA — TypeScript sources in src/, compiled JS committed at root (served raw by GitHub Pages).",
   "scripts": {
     "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.sw.json",

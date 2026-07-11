@@ -7,7 +7,8 @@
  *  - shell files changed but sw.js CACHE version wasn't bumped
  *  - app.js changed but APP_VERSION wasn't bumped
  *  - sw.js precache list pointing at files that don't exist
- *  - JS syntax errors in app.js / reader.js / sw.js
+ *  - JS syntax errors in the emitted app.js / reader.js / sw.js
+ *  - TypeScript diagnostics (npm run check — app, sw, and worker programs)
  *  - root wrangler.jsonc drifting from sync-worker/wrangler.toml
  *    (Workers Builds deploys from the ROOT config on every push!)
  * Exits non-zero when something needs fixing. Browser data-logic tests still
@@ -71,6 +72,13 @@ for (const f of ["app.js", "reader.js", "sw.js"]) {
   catch (e) { fail(`${f} has a syntax error:\n${e.stderr || e.message}`); }
 }
 
+// --- TypeScript ------------------------------------------------------------------
+// Sources live in src/*.ts; the served root JS is compiler output. Rebuild
+// with `npm run build` after editing sources and commit both together.
+console.log("\nTypeScript (npm run check)");
+try { sh("npm run check"); ok("zero diagnostics across app, sw, and worker programs"); }
+catch (e) { fail(`npm run check failed:\n${(e.stdout || e.message || "").toString().slice(0, 1500)}`); }
+
 // --- Worker config drift ---------------------------------------------------------
 // Workers Builds runs `npx wrangler deploy` from the repo ROOT on every push,
 // so root wrangler.jsonc MUST mirror sync-worker/wrangler.toml.
@@ -90,9 +98,9 @@ if (existsSync(join(root, "wrangler.jsonc")) && existsSync(join(root, "sync-work
     if (same) ok(`${label} match (${[...a].join(", ") || "none"})`);
     else fail(`${label} DIFFER — root: [${[...a]}] vs sync-worker: [${[...b]}]. Fix before pushing or the auto-deployed worker breaks.`);
   }
-  const mainOk = /"main"\s*:\s*"sync-worker\/src\/worker\.js"/.test(jsonc);
-  if (mainOk) ok("root config points at sync-worker/src/worker.js");
-  else fail('root wrangler.jsonc "main" must be "sync-worker/src/worker.js"');
+  const mainOk = /"main"\s*:\s*"sync-worker\/src\/worker\.ts"/.test(jsonc);
+  if (mainOk) ok("root config points at sync-worker/src/worker.ts");
+  else fail('root wrangler.jsonc "main" must be "sync-worker/src/worker.ts"');
 } else warn("wrangler configs not found — skipped");
 
 // --- Reminders --------------------------------------------------------------------

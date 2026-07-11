@@ -21,7 +21,7 @@ check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected: $2, got: 
 json() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d$1)" 2>/dev/null; }
 
 say "▸ starting wrangler dev --local on :$PORT (log: $LOG)"
-( cd "$DIR" && npx wrangler dev --local --port "$PORT" --var AUTH_SECRET:test-secret-for-endpoint-tests >"$LOG" 2>&1 ) &
+( cd "$DIR" && npx wrangler dev --local --config wrangler.toml --port "$PORT" --var AUTH_SECRET:test-secret-for-endpoint-tests >"$LOG" 2>&1 ) &
 WRANGLER_PID=$!
 trap 'kill $WRANGLER_PID 2>/dev/null; wait $WRANGLER_PID 2>/dev/null' EXIT
 

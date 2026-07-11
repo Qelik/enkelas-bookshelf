@@ -3,9 +3,11 @@
 #
 #   ./scripts/run-tests.sh
 #
-# No dependencies beyond python3 + an installed Chrome/Chromium/Edge. The app
-# has no build step, so the "test runner" is simply: serve the folder, load
-# tests.html in headless Chrome, read the summary line out of the DOM.
+# No dependencies beyond python3 + an installed Chrome/Chromium/Edge. The
+# committed root JS is already-built compiler output (rebuild with `npm run
+# build` after editing src/*.ts), so the "test runner" is simply: serve the
+# folder, load tests.html in headless Chrome, read the summary from the DOM.
+# (Serving over HTTP matters — the app loads as ES modules, not file://.)
 set -u
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8151}"

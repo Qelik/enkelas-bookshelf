@@ -14,5 +14,5 @@
     "types": [],
     "skipLibCheck": true
   },
-  "files": ["src/types.ts", "src/globals.d.ts", "src/app.ts", "src/reader.ts"]
+  "files": ["src/types.d.ts", "src/globals.d.ts", "src/app.ts", "src/reader.ts"]
 }
