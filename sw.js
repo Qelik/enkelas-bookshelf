@@ -4,7 +4,7 @@
 // lib.webworker types `self` as a plain WorkerGlobalScope; re-view it as the
 // service-worker scope so skipWaiting/clients/event types check correctly.
 const sw = self;
-const CACHE = "enkelas-bookshelf-v32";
+const CACHE = "enkelas-bookshelf-v33";
 const SHELL = [
     "./",
     "./index.html",

@@ -77,6 +77,7 @@
         <h2>Want to Read</h2>
         <div class="head-controls">
           <input type="search" id="want-search" class="input search" placeholder="🔍 Search title, author, tag" />
+          <button class="ghost" id="btn-giftlist" title="Share a list of books you'd love to be gifted">🎁 Gift list</button>
           <button class="primary" data-add="want">＋ Add to list</button>
         </div>
       </div>
@@ -895,6 +896,37 @@
         <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
       </div>
       <div class="modal-body" id="reader-summary-body"></div>
+    </div>
+  </div>
+
+  <!-- Gift-list composer: pick want-to-read books you don't own and share them
+       as an image or a link so someone can buy them for you. -->
+  <div class="modal-backdrop" id="giftlist-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="giftlist-title">
+      <div class="modal-head">
+        <h3 id="giftlist-title">🎁 Books I'd love to be gifted</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" id="giftlist-intro">Books on your Want-to-Read list that you don't own yet. Pick the ones to include, then share them as an image or a link.</p>
+        <div id="giftlist-books" class="giftlist-books"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="ghost" data-close-modal>Cancel</button>
+        <button type="button" class="ghost" id="btn-giftlist-image">🖼 Save as image</button>
+        <button type="button" class="primary" id="btn-giftlist-link">🔗 Share link</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Received gift list: what a friend sees when they open a #gift/… link. -->
+  <div class="modal-backdrop" id="giftgot-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="giftgot-title">
+      <div class="modal-head">
+        <h3 id="giftgot-title">🎁 A wishlist for you</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="giftgot-body"></div>
     </div>
   </div>
 

@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.11"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.20"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -2169,6 +2169,172 @@ async function shareYearCard(year: number) {
   }, "image/png");
 }
 
+// --- Gift list ---------------------------------------------------------------
+// Share the Want-to-Read books you don't own yet, so someone can buy them for
+// you. Two ways out: a PNG card, or a self-contained #gift/… link that renders
+// a read-only wishlist (with buy-search links) when a friend opens it.
+
+/** Want-to-Read books not already on the home shelf — the giftable ones. */
+function giftEligible() {
+  return state.books
+    .filter((b) => b.status === "want" && !b.owned)
+    .sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
+}
+/** First name to sign the wishlist with — account name, else the shelf title. */
+function sharerName() {
+  const full = (auth && auth.user && auth.user.fullName || "").trim();
+  if (full) return full.split(/\s+/)[0];
+  const m = /^(.*?)'s Bookshelf$/.exec(appTitle() || "");
+  return (m && m[1]) || "A reader";
+}
+// URL-safe base64 of a UTF-8 string (payload rides in the link fragment).
+function b64urlEncode(s: string) {
+  let bin = "";
+  new TextEncoder().encode(s).forEach((c) => (bin += String.fromCharCode(c)));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlDecode(s: string) {
+  const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+interface GiftPayload { v: number; n: string; b: [string, string, string][]; }
+function giftListUrl(books: Book[]) {
+  if (!/^https?:/.test(location.protocol)) return ""; // file:// has no shareable origin
+  const payload: GiftPayload = { v: 1, n: sharerName(), b: books.map((b) => [b.title, b.author || "", b.isbn || ""]) };
+  return location.origin + location.pathname + "#gift/" + b64urlEncode(JSON.stringify(payload));
+}
+
+function openGiftList() {
+  const books = giftEligible();
+  const box = $("#giftlist-books");
+  const none = books.length === 0;
+  box.innerHTML = none
+    ? `<p class="empty">Every book on your Want-to-Read list is already marked as owned (🏠). Add books you don't own yet and they'll show up here to gift.</p>`
+    : books.map((b) => `
+        <label class="giftlist-book">
+          <input type="checkbox" class="giftlist-check" data-id="${esc(b.id)}" checked>
+          <span class="giftlist-book-main"><strong>${esc(b.title)}</strong>${b.author ? ` <span class="muted">— ${esc(b.author)}</span>` : ""}</span>
+        </label>`).join("");
+  $<HTMLButtonElement>("#btn-giftlist-image").disabled = none;
+  $<HTMLButtonElement>("#btn-giftlist-link").disabled = none;
+  showModal("giftlist-modal");
+}
+/** The eligible books whose checkbox is ticked in the composer. */
+function selectedGiftBooks() {
+  const ids = $$<HTMLInputElement>(".giftlist-check").filter((c) => c.checked).map((c) => c.dataset.id);
+  return giftEligible().filter((b) => ids.indexOf(b.id) >= 0);
+}
+
+function toBlobAsync(cv: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => { try { cv.toBlob(resolve, "image/png"); } catch (e: any) { resolve(null); } });
+}
+function drawGiftCard(books: Book[]) {
+  const W = 1000, marginX = 74, headerH = 300, rowH = 96, footerH = 150;
+  const shown = books.slice(0, 40), extra = books.length - shown.length;
+  const H = headerH + shown.length * rowH + footerH;
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d")!;
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#fbf7ef"); g.addColorStop(1, "#efe2ca");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#c98a4b"; ctx.lineWidth = 5; ctx.strokeRect(42, 42, W - 84, H - 84);
+  ctx.strokeStyle = "rgba(201,138,75,.45)"; ctx.lineWidth = 1.5; ctx.strokeRect(56, 56, W - 112, H - 112);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#9c5b3a"; ctx.font = "600 60px Georgia, serif"; ctx.fillText("🎁 Books I'd love", W / 2, 150);
+  ctx.fillText("to be gifted", W / 2, 218);
+  ctx.fillStyle = "#6b6258"; ctx.font = "italic 30px Georgia, serif"; ctx.fillText(sharerName() + "'s reading wishlist", W / 2, 268);
+  ctx.textAlign = "left";
+  shown.forEach((b, i) => {
+    const y = headerH + i * rowH;
+    ctx.fillStyle = "#c98a4b"; ctx.font = "600 30px Georgia, serif"; ctx.textAlign = "right";
+    ctx.fillText(String(i + 1) + ".", marginX + 34, y + 34);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#2c2722"; ctx.font = "600 34px Georgia, serif";
+    const tx = marginX + 56, maxW = W - tx - marginX;
+    let ty = y + 34;
+    ctx.fillText(clampText(ctx, b.title, maxW), tx, ty); ty += 38;
+    if (b.author) { ctx.fillStyle = "#6b6258"; ctx.font = "italic 26px Georgia, serif"; ctx.fillText(clampText(ctx, "by " + b.author, maxW), tx, ty); }
+    ctx.strokeStyle = "rgba(201,138,75,.25)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(marginX, y + rowH - 14); ctx.lineTo(W - marginX, y + rowH - 14); ctx.stroke();
+  });
+  ctx.textAlign = "center"; ctx.fillStyle = "#6b6258"; ctx.font = "italic 26px Georgia, serif";
+  if (extra > 0) ctx.fillText("…and " + extra + " more", W / 2, H - footerH + 60);
+  ctx.fillStyle = "#9c5b3a"; ctx.font = "600 26px Georgia, serif";
+  ctx.fillText("📚 " + appTitle(), W / 2, H - 78);
+  ctx.textAlign = "left";
+  return cv;
+}
+/** Truncate to one line with an ellipsis at the given pixel width. */
+function clampText(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
+  let s = String(text);
+  if (ctx.measureText(s).width <= maxW) return s;
+  while (s.length > 1 && ctx.measureText(s + "…").width > maxW) s = s.slice(0, -1);
+  return s.replace(/\s+$/, "") + "…";
+}
+async function shareGiftListImage() {
+  const books = selectedGiftBooks();
+  if (!books.length) { toast("📋", "Pick at least one book", "Tick the books you'd like to include."); return; }
+  const blob = await toBlobAsync(drawGiftCard(books));
+  if (!blob) { toast("⚠️", "Couldn't create the image", ""); return; }
+  const file = new File([blob], "gift-list.png", { type: "image/png" });
+  const text = sharerName() + "'s reading wishlist — " + books.length + " book" + (books.length === 1 ? "" : "s");
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Books I'd love to be gifted", text }); return; }
+    catch (e: any) { if (e && e.name === "AbortError") return; /* fall through to download */ }
+  }
+  downloadFileBlob("gift-list.png", blob);
+  toast("🖼", "Wishlist image saved", "Send it to whoever's spoiling you.");
+}
+async function shareGiftListLink() {
+  const books = selectedGiftBooks();
+  if (!books.length) { toast("📋", "Pick at least one book", "Tick the books you'd like to include."); return; }
+  const url = giftListUrl(books);
+  const text = sharerName() + "'s reading wishlist — " + books.length + " book" + (books.length === 1 ? "" : "s");
+  if (url && navigator.share) {
+    try { await navigator.share({ title: "Books I'd love to be gifted", text, url }); return; }
+    catch (e: any) { if (e && e.name === "AbortError") return; /* fall through to clipboard */ }
+  }
+  const body = url ? text + "\n" + url
+    : text + "\n\n" + books.map((b, i) => `${i + 1}. ${b.title}${b.author ? " — " + b.author : ""}`).join("\n");
+  try { await navigator.clipboard.writeText(body); toast("📋", "Wishlist copied", url ? "Send the link to a friend." : "Paste it to a friend."); }
+  catch (e: any) { toast("ℹ️", "Your wishlist", body); }
+}
+
+// Buy-search links a gift-giver can act on — ISBN when we have it, else title+author.
+function buyLinks(title: string, author: string, isbn: string) {
+  const q = (isbn || (title + " " + author)).trim();
+  const e = encodeURIComponent(q);
+  return [
+    { label: "Bookshop.org", url: "https://bookshop.org/search?keywords=" + e },
+    { label: "Amazon", url: "https://www.amazon.com/s?k=" + e + "&i=stripbooks" },
+    { label: "Google Books", url: "https://www.google.com/search?tbm=bks&q=" + e },
+  ];
+}
+/** Render a wishlist a friend opened via a #gift/… link (read-only). */
+function openReceivedGiftList(payload: GiftPayload) {
+  const name = (payload.n || "A reader").trim();
+  const books = Array.isArray(payload.b) ? payload.b : [];
+  $("#giftgot-title").textContent = "🎁 " + name + "'s wishlist";
+  $("#giftgot-body").innerHTML =
+    `<p class="muted">${esc(name)} would love to be gifted ${books.length === 1 ? "this book" : "any of these " + books.length + " books"}. Tap a title to find it in a shop.</p>` +
+    `<div class="giftgot-list">` + books.map(([title, author, isbn]) => {
+      const links = buyLinks(title || "", author || "", isbn || "");
+      return `<div class="giftgot-book">
+        <div class="giftgot-book-main"><strong>${esc(title)}</strong>${author ? `<span class="muted"> — ${esc(author)}</span>` : ""}</div>
+        <div class="giftgot-buy">${links.map((l) => `<a class="mini" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`).join("")}</div>
+      </div>`;
+    }).join("") + `</div>`;
+  showModal("giftgot-modal");
+}
+function maybeOpenGiftLink() {
+  const m = (location.hash || "").match(/^#gift\/(.+)$/);
+  if (!m) return;
+  histCleanHash();
+  try {
+    const payload = JSON.parse(b64urlDecode(m[1])) as GiftPayload;
+    if (payload && Array.isArray(payload.b)) openReceivedGiftList(payload);
+  } catch (e: any) { toast("⚠️", "Couldn't open that wishlist", "The link looks incomplete."); }
+}
+
 // --- Monthly wrap-up ---
 function monthLogs(y: number, m: number) {
   const logs: { d: Date; pages: number; minutes: number }[] = [];
@@ -4296,6 +4462,9 @@ function init() {
   });
   $<HTMLButtonElement>("#btn-month-recap").addEventListener("click", () => { const n = new Date(); openMonthlyRecap(n.getFullYear(), n.getMonth()); });
   $<HTMLButtonElement>("#btn-snapshot").addEventListener("click", shareSnapshotCard);
+  $<HTMLButtonElement>("#btn-giftlist").addEventListener("click", openGiftList);
+  $<HTMLButtonElement>("#btn-giftlist-image").addEventListener("click", shareGiftListImage);
+  $<HTMLButtonElement>("#btn-giftlist-link").addEventListener("click", shareGiftListLink);
   $("#month-body").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-month-nav]");
     if (b && !b.disabled) { const [y, m] = b.dataset.monthNav!.split("-").map(Number); openMonthlyRecap(y, m); }
@@ -4502,6 +4671,8 @@ function init() {
   const deepBook = deepLink && state.books.find((x) => x.id === decodeURIComponent(deepLink[1]));
   if (deepBook) openBookPage(deepBook, { push: false });
   else if (deepLink) histCleanHash();
+  // Deep link: a #gift/<payload> URL opens a friend's read-only wishlist.
+  maybeOpenGiftLink();
   // Deep link: a #join/CODE invite URL joins that club (after sign-in if needed).
   const joinLink = (location.hash || "").match(/^#join\/([A-Za-z0-9]{4,12})$/i);
   if (joinLink) {

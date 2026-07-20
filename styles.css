@@ -1087,3 +1087,15 @@ html[data-theme="dark"] .lent-badge.overdue { background: #40291a; color: #e0a07
 #auth-form label { margin-top: 10px; }
 .auth-error { color: #b3352c; font-size: 13px; min-height: 18px; margin: 8px 0 0; }
 .auth-note { margin: 14px 0 0; text-align: center; }
+
+/* ---------- Gift list ---------- */
+.giftlist-books { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; max-height: 46vh; overflow-y: auto; }
+.giftlist-book { display: flex; align-items: flex-start; gap: 10px; padding: 9px 10px; border-radius: 10px; cursor: pointer; }
+.giftlist-book:hover { background: var(--paper-2); }
+.giftlist-book input { margin-top: 3px; flex-shrink: 0; }
+.giftlist-book-main { font-size: 14.5px; line-height: 1.35; }
+.giftgot-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.giftgot-book { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.giftgot-book-main { font-size: 15.5px; }
+.giftgot-buy { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.giftgot-buy a.mini { display: inline-block; padding: 5px 10px; font-size: 12.5px; text-decoration: none; }
