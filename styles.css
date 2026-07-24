@@ -219,9 +219,16 @@ main { padding: 18px 28px calc(88px + env(safe-area-inset-bottom, 0px)); }
 
 /* ---------- Forms / inputs ---------- */
 .input, .select {
-  width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px;
+  width: 100%; max-width: 100%; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px;
   background: #fff; font-size: 14px; color: var(--ink); font-family: var(--sans);
 }
+/* iOS Safari sizes native controls — date/time inputs especially, and textareas —
+   to their own intrinsic width and ignores width:100%, so fields end up misaligned
+   and overflow the modal. Neutralize the native appearance so every .input is
+   exactly its container width. Selects keep their native dropdown arrow (they use
+   .select, not .input, so they're untouched here). */
+.input { -webkit-appearance: none; appearance: none; }
+textarea.input { max-width: 100%; box-sizing: border-box; }
 .input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(156,91,58,.15); }
 label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 4px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px; }
