@@ -229,19 +229,31 @@ label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 4px; }
 /* ---------- Modals ---------- */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(40,30,20,.45); backdrop-filter: blur(2px);
-  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 100; overflow-y: auto;
+  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 100; overflow: hidden;
 }
 [hidden] { display: none !important; }
 .modal {
   background: var(--paper-2); border-radius: 16px; width: 100%; max-width: 620px;
   box-shadow: 0 20px 60px rgba(0,0,0,.35); border: 1px solid var(--line); animation: pop .18s ease;
+  /* Cap to the padded viewport and lay out as head / scrolling body / pinned foot. */
+  display: flex; flex-direction: column; max-height: 100%; overflow: hidden;
 }
 .modal.small { max-width: 460px; }
 @keyframes pop { from { transform: translateY(8px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
-.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+.modal-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line); }
 .modal-head h3 { margin: 0; font-size: 19px; }
-.modal-body { padding: 20px 22px; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+/* Only the body scrolls; min-height:0 lets this flex child shrink so overflow kicks in. */
+.modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 20px 22px; }
+/* Drop the body's bottom padding when it holds a pinned foot, so the sticky bar
+   sits flush at the scroll bottom with no content sliver peeking beneath it. */
+.modal-body:has(.modal-foot) { padding-bottom: 0; }
+/* Footer is the last child inside the body — pin it to the bottom of the scroll area
+   so Cancel/Save stay visible without scrolling. Bleed to full card width. */
+.modal-foot {
+  display: flex; justify-content: flex-end; gap: 10px; position: sticky; bottom: 0;
+  margin: 18px -22px 0; padding: 14px 22px 18px; background: var(--paper-2);
+  border-top: 1px solid var(--line); box-shadow: 0 -8px 14px -10px rgba(40,30,20,.3);
+}
 
 /* Settings / Data Safety */
 .storage-status { cursor: pointer; }
@@ -516,6 +528,7 @@ html[data-theme="dark"] .cand:hover { background: rgba(255,255,255,.1); }
   .modal-backdrop { padding: calc(14px + var(--safe-top)) 10px calc(14px + env(safe-area-inset-bottom, 0px)); }
   .modal-head { padding: 14px 16px; }
   .modal-body { padding: 16px; }
+  .modal-foot { margin: 14px -16px 0; padding: 12px 16px 16px; }
   .grid-2 { grid-template-columns: 1fr; gap: 10px; margin-bottom: 10px; }
   .cover-fetch { flex-direction: column; }
   .detail-top { gap: 14px; }
