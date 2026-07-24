@@ -250,10 +250,13 @@ label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 4px; }
 /* Footer is the last child inside the body — pin it to the bottom of the scroll area
    so Cancel/Save stay visible without scrolling. Bleed to full card width. */
 .modal-foot {
-  display: flex; justify-content: flex-end; gap: 10px; position: sticky; bottom: 0;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; position: sticky; bottom: 0;
   margin: 18px -22px 0; padding: 14px 22px 18px; background: var(--paper-2);
   border-top: 1px solid var(--line); box-shadow: 0 -8px 14px -10px rgba(40,30,20,.3);
 }
+/* A footer placed directly under .modal (not inside the padded body) has no body
+   padding to cancel, so the bleed margins would overflow the card — zero them. */
+.modal > .modal-foot { margin-left: 0; margin-right: 0; }
 
 /* Settings / Data Safety */
 .storage-status { cursor: pointer; }
