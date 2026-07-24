@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.20"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.24"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -62,6 +62,36 @@ let fileHandle: FileSystemFileHandle | null = null;
 let knownBadges = new Set<string>();
 let activeView = "reading";
 let storagePersisted = false;
+
+// ---------------------------------------------------------------------------
+// Navigation: a fixed bottom bar of grouped "main tabs". Each group owns one or
+// more views; when a group has several, a secondary sub-nav lets you switch
+// between them. Tapping a bottom-nav tab returns to the last view you had open
+// in that group (or its first view).
+// ---------------------------------------------------------------------------
+interface NavSub { view: string; icon: string; label: string; }
+interface NavGroup { group: string; icon: string; label: string; views: NavSub[]; }
+const NAV_GROUPS: NavGroup[] = [
+  { group: "reading", icon: "📖", label: "Reading", views: [
+    { view: "reading", icon: "📖", label: "Reading" },
+  ] },
+  { group: "shelf", icon: "📚", label: "Shelf", views: [
+    { view: "want", icon: "📌", label: "Want to Read" },
+    { view: "library", icon: "🗂️", label: "Library" },
+    { view: "owned", icon: "🏠", label: "Owned" },
+  ] },
+  { group: "progress", icon: "📊", label: "Progress", views: [
+    { view: "journey", icon: "🧭", label: "Journey" },
+    { view: "goals", icon: "🎯", label: "Goals" },
+    { view: "stats", icon: "📊", label: "Stats" },
+    { view: "achievements", icon: "🏅", label: "Achievements" },
+  ] },
+  { group: "community", icon: "🌟", label: "Community", views: [
+    { view: "community", icon: "🌟", label: "Community" },
+  ] },
+];
+const groupForView = (view: string): NavGroup | undefined => NAV_GROUPS.find((g) => g.views.some((v) => v.view === view));
+const lastViewPerGroup: Record<string, string> = {};
 let readingQuery = "", wantQuery = "", libraryQuery = "", ownedQuery = "";
 let ownedLocation = "", ownedUnreadOnly = false;
 let libraryTag = "", libraryCollection = "", libraryView = "grid";
@@ -4251,12 +4281,37 @@ function importGoodreads(file: File) {
 // ---------------------------------------------------------------------------
 function switchView(view: string) {
   activeView = view;
-  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
   $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + view));
-  // The book page is a real page: hide the app chrome (header/stats/tabs)
+  const group = groupForView(view);
+  if (group) lastViewPerGroup[group.group] = view;
+  renderBottomNav(group?.group);
+  renderSubnav(group, view);
+  // The book page is a real page: hide the app chrome (header/stats/nav)
   // so it starts at the top with just the Back bar.
   document.body.classList.toggle("book-open", view === "book");
   if (view === "community") openCommunity();
+}
+
+// Fixed bottom bar of main tabs. `activeGroup` is highlighted; undefined (e.g.
+// the standalone book page) leaves every tab inactive.
+function renderBottomNav(activeGroup?: string) {
+  const nav = $("#bottom-nav");
+  nav.innerHTML = NAV_GROUPS.map((g) => `
+    <button class="bn-item${g.group === activeGroup ? " active" : ""}" data-group="${g.group}" aria-current="${g.group === activeGroup ? "page" : "false"}">
+      <span class="bn-ico" aria-hidden="true">${g.icon}</span>
+      <span class="bn-label">${g.label}</span>
+    </button>`).join("");
+}
+
+// Secondary sub-tabs for the active group. Hidden when the group has one view.
+function renderSubnav(group: NavGroup | undefined, view: string) {
+  const nav = $("#subnav");
+  if (!group || group.views.length < 2) { nav.hidden = true; nav.innerHTML = ""; return; }
+  nav.hidden = false;
+  nav.innerHTML = group.views.map((v) => `
+    <button class="sub-tab${v.view === view ? " active" : ""}" data-view="${v.view}" aria-current="${v.view === view ? "page" : "false"}">
+      <span aria-hidden="true">${v.icon}</span> ${v.label}
+    </button>`).join("");
 }
 
 function onMainClick(e: MouseEvent) {
@@ -4312,8 +4367,20 @@ function onMainClick(e: MouseEvent) {
 function init() {
   // Loaded by tests.html (which has no app shell) — expose helpers, skip UI wiring.
   if (!document.getElementById("main")) return;
-  $("#tabs").addEventListener("click", (e) => {
-    const tab = (e.target as HTMLElement).closest<HTMLElement>(".tab");
+  // Bottom nav (main tabs) — event-delegated so re-rendering the bar is fine.
+  $("#bottom-nav").addEventListener("click", (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>(".bn-item");
+    if (!item) return;
+    const g = item.dataset.group!;
+    const group = NAV_GROUPS.find((x) => x.group === g);
+    if (!group) return;
+    if (activeView === "book") histCleanHash();
+    // Return to the last view opened in this group, else its first view.
+    switchView(lastViewPerGroup[g] || group.views[0].view);
+  });
+  // Sub-nav (views within the active group).
+  $("#subnav").addEventListener("click", (e) => {
+    const tab = (e.target as HTMLElement).closest<HTMLElement>(".sub-tab");
     if (!tab) return;
     if (activeView === "book") histCleanHash();
     switchView(tab.dataset.view!);

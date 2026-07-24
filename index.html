@@ -44,17 +44,8 @@
 
   <section class="stats-strip" id="stats-strip"><!-- rendered by JS --></section>
 
-  <nav class="tabs" id="tabs">
-    <button class="tab active" data-view="reading">📖 Reading</button>
-    <button class="tab" data-view="want">📌 Want to Read</button>
-    <button class="tab" data-view="library">🗂️ Library</button>
-    <button class="tab" data-view="owned">🏠 Owned</button>
-    <button class="tab" data-view="journey">🧭 Journey</button>
-    <button class="tab" data-view="goals">🎯 Goals</button>
-    <button class="tab" data-view="stats">📊 Stats</button>
-    <button class="tab" data-view="achievements">🏅 Achievements</button>
-    <button class="tab" data-view="community">🌟 Community</button>
-  </nav>
+  <!-- Secondary nav: sub-tabs for the active bottom-nav group (rendered by JS). -->
+  <nav class="subnav" id="subnav" aria-label="Section" hidden></nav>
 
   <main id="main">
     <!-- READING -->
@@ -277,6 +268,9 @@
       <div id="detail-body"></div>
     </section>
   </main>
+
+  <!-- Primary navigation: fixed bottom bar of grouped tabs (rendered by JS). -->
+  <nav class="bottom-nav" id="bottom-nav" aria-label="Main navigation"></nav>
 
   <!-- ADD / EDIT BOOK MODAL -->
   <div class="modal-backdrop" id="book-modal" hidden>
