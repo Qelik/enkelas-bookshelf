@@ -124,6 +124,9 @@ button { font-family: var(--sans); cursor: pointer; border: none; }
 .bn-item:hover { color: var(--ink); }
 .bn-item.active { color: var(--accent); }
 .bn-item.active .bn-ico { transform: translateY(-2px); }
+/* While a modal is open it's a focused task — get the bottom bar out of the way
+   so it never overlaps the modal's footer buttons. */
+body:has(.modal-backdrop:not([hidden])) .bottom-nav { display: none; }
 
 /* ---------- Views ---------- */
 main { padding: 18px 28px calc(88px + env(safe-area-inset-bottom, 0px)); }
@@ -226,7 +229,7 @@ label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 4px; }
 /* ---------- Modals ---------- */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(40,30,20,.45); backdrop-filter: blur(2px);
-  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 50; overflow-y: auto;
+  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 100; overflow-y: auto;
 }
 [hidden] { display: none !important; }
 .modal {
@@ -813,6 +816,7 @@ body.book-open .app-header, body.book-open .stats-strip, body.book-open .subnav,
 html[data-theme="dark"] .own-verdict.have { background: #26301f; border-color: #4a5c42; }
 html[data-theme="dark"] .own-verdict.partial { background: #322a18; border-color: #6a5a34; }
 .book-page-bar { position: sticky; top: var(--safe-top); z-index: 30; background: var(--paper); padding: 10px 0; margin-bottom: 4px; }
+.book-page-bar .mini { padding: 11px 18px; font-size: 15.5px; font-weight: 600; border-radius: 10px; }
 .detail-review { font-style: italic; white-space: pre-wrap; font-size: 14px; color: var(--ink); }
 
 /* ---------- Per-book progress chart ---------- */
