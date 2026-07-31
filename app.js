@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31e"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31f"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -454,7 +454,8 @@ function markExported() {
         localStorage.setItem(LASTEXPORT_KEY, new Date().toISOString());
     }
     catch (e) { /* ignore */ }
-    if (!$("#settings-modal").hidden)
+    const sm = $("#settings-modal"); // $ asserts non-null; tests.html has no app shell
+    if (sm && !sm.hidden)
         renderSettings();
 }
 // Every sync conflict (two devices disagreeing) is remembered, so "wait, where
@@ -1371,8 +1372,12 @@ function moodMatchLine() {
     if (recent.length < 3)
         return "";
     const avg = recent.reduce((a, l) => a + l.pages, 0) / recent.length;
-    const moods = recent.map((l) => l.mood).filter(Boolean);
-    const topMood = moods.length ? moods.sort((a, b) => moods.filter((m) => m === b).length - moods.filter((m) => m === a).length)[0] : "";
+    // Most common mood. The old form ran two filters inside a sort comparator
+    // (O(n² log n)) over the array being sorted; a tally is one pass.
+    const tally = {};
+    recent.forEach((l) => { if (l.mood)
+        tally[l.mood] = (tally[l.mood] || 0) + 1; });
+    const topMood = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || "";
     const pool = state.books.filter((b) => (b.status === "want" || (b.owned && b.status !== "finished" && b.status !== "dnf" && pagesRead(b) === 0)) && b.totalPages);
     if (!pool.length)
         return "";
@@ -3969,10 +3974,25 @@ function drawCommunity() {
     }
     body.innerHTML = html + readNote;
 }
+// A recommendation's cover URL comes from whoever posted it, and every viewer's
+// browser fetches it — so an arbitrary URL would let a recommender log the IP of
+// everyone who opens the shared board (or point at something unrelated
+// entirely). Only load covers from the image hosts this app itself uses.
+const COVER_HOSTS = /^(covers\.openlibrary\.org|books\.google\.com|books\.googleusercontent\.com|lh\d+\.googleusercontent\.com)$/i;
+function safeCoverUrl(url) {
+    try {
+        const u = new URL(String(url || ""));
+        return u.protocol === "https:" && COVER_HOSTS.test(u.hostname) ? u.href : "";
+    }
+    catch (e) {
+        return "";
+    } // not a URL at all
+}
 function recCardHTML(r) {
     const up = r.up || 0, down = r.down || 0, mine = r.myVote || 0;
-    const cover = r.cover_url
-        ? `<img class="rec-cover" src="${esc(r.cover_url)}" alt="" loading="lazy" />`
+    const coverUrl = safeCoverUrl(r.cover_url);
+    const cover = coverUrl
+        ? `<img class="rec-cover" src="${esc(coverUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
         : `<div class="rec-cover rec-cover-ph">📖</div>`;
     const worth = (up + down) ? Math.round((up / (up + down)) * 100) : 0;
     const verdict = (up + down) >= 2 ? `<span class="rec-verdict ${worth >= 60 ? "good" : worth <= 40 ? "meh" : ""}">${worth}% say worth reading</span>` : "";
@@ -6371,6 +6391,6 @@ export const BookshelfAPI = {
 };
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl };
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order

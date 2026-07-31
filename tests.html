@@ -259,6 +259,19 @@
         eq(T.mergeShelfOrder(["a", "b", "c"], ["c", "b", "a"], ["a", "b", "c"]), ["c", "b", "a"], "plain reorder");
       });
 
+      // --- community cover URLs are attacker-supplied --------------------------
+      test("safeCoverUrl only allows the app's own cover hosts", function () {
+        assert(T.safeCoverUrl("https://covers.openlibrary.org/b/id/123-L.jpg"), "Open Library allowed");
+        assert(T.safeCoverUrl("https://books.google.com/books/content?id=x"), "Google Books allowed");
+        eq(T.safeCoverUrl("https://tracker.example.com/pixel.gif"), "", "arbitrary host blocked");
+        eq(T.safeCoverUrl("http://covers.openlibrary.org/b/id/1-L.jpg"), "", "plain http blocked");
+        eq(T.safeCoverUrl("javascript:alert(1)"), "", "javascript: blocked");
+        eq(T.safeCoverUrl("https://evil.com/#covers.openlibrary.org"), "", "hostname not fooled by a fragment");
+        eq(T.safeCoverUrl("https://covers.openlibrary.org.evil.com/x.jpg"), "", "suffix host blocked");
+        eq(T.safeCoverUrl(""), "", "empty is empty");
+        eq(T.safeCoverUrl(null), "", "null is empty");
+      });
+
       // --- full-backup base64 round-trip --------------------------------------
       test("bufToB64/b64ToBuf survive a binary round-trip", function () {
         var src = new Uint8Array(70000); // > one 0x8000 chunk
