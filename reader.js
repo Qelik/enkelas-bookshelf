@@ -9,7 +9,7 @@
 import { BookshelfAPI } from "./app.js";
 // Bumped alongside meaningful reader changes; lets us tell at a glance which
 // build a device is actually running when the SW/HTTP caches misbehave.
-window.__readerBuild = "2026-07-10b";
+window.__readerBuild = "2026-07-31";
 const GAP = 48; // must match .reader-content column-gap
 const IDLE_MS = 120000; // stop the clock after 2 min without a page turn/touch
 const SESSION_GAP = 900000; // a 15-min+ lull (reader left open) starts a NEW session
@@ -101,11 +101,25 @@ async function idbPut(rec) {
 }
 async function idbDel(id) {
     const db = await openDb();
+    usageCache = null;
     return new Promise((resolve, reject) => {
         const q = db.transaction("epubs", "readwrite").objectStore("epubs").delete(id);
         q.onsuccess = () => resolve();
         q.onerror = () => reject(q.error);
     });
+}
+// How much room the ePubs take. Answering it means pulling every record —
+// ArrayBuffers included — out of IndexedDB, and the Settings screen asks on
+// every render while it's open, which is once a minute during a reading session.
+// Cache it; only adding or removing a book can change the answer (progress and
+// highlight writes cannot).
+let usageCache = null;
+async function epubUsage() {
+    if (usageCache)
+        return usageCache;
+    const recs = await idbAll();
+    usageCache = { count: recs.length, bytes: recs.reduce((n, r) => n + ((r.data && r.data.byteLength) || 0), 0) };
+    return usageCache;
 }
 // ---------------------------------------------------------------------------
 // ePub parsing
@@ -183,7 +197,19 @@ async function parseEpub(buf) {
 let rec = null; // IndexedDB record of the open book
 let book = null; // { zip, title, author, spine, labels, chars[], totalChars }
 let chapterCache = new Map(); // spine index -> sanitized HTML
-let blobUrls = [];
+// Image blob URLs per chapter, so evicting a chapter can release its images.
+// They used to go into one flat list that was only emptied when the reader
+// closed, so a long session with an illustrated book leaked every image it had
+// ever shown — and re-opening an evicted chapter minted a fresh duplicate set.
+let chapterBlobs = new Map();
+function releaseChapterBlobs(i) {
+    (chapterBlobs.get(i) || []).forEach((u) => URL.revokeObjectURL(u));
+    chapterBlobs.delete(i);
+}
+function releaseAllBlobs() {
+    chapterBlobs.forEach((urls) => urls.forEach((u) => URL.revokeObjectURL(u)));
+    chapterBlobs.clear();
+}
 let pos = { ch: 0, page: 0 };
 let pag = { step: 1, pages: 1 };
 let turning = false;
@@ -278,6 +304,7 @@ async function chapterHTML(i) {
         });
     });
     const dir = dirOf(path);
+    const mine = [];
     const imgs = Array.from(doc.querySelectorAll("img[src], image"));
     for (const img of imgs) {
         const isSvgImage = img.tagName.toLowerCase() === "image";
@@ -292,7 +319,7 @@ async function chapterHTML(i) {
         }
         const blob = await file.async("blob");
         const url = URL.createObjectURL(blob);
-        blobUrls.push(url);
+        mine.push(url);
         if (isSvgImage) {
             img.setAttribute("href", url);
             img.removeAttribute("xlink:href");
@@ -305,11 +332,37 @@ async function chapterHTML(i) {
     }
     const html = doc.body ? doc.body.innerHTML : src;
     chapterCache.set(i, html);
-    if (chapterCache.size > 6)
-        chapterCache.delete(chapterCache.keys().next().value);
+    chapterBlobs.set(i, mine);
+    // Evict oldest-first, but never the chapter on screen or the one just loaded —
+    // revoking a URL that's still in the DOM would blank its images.
+    while (chapterCache.size > 6) {
+        let victim = null;
+        for (const k of chapterCache.keys())
+            if (k !== i && k !== pos.ch) {
+                victim = k;
+                break;
+            }
+        if (victim === null)
+            break;
+        chapterCache.delete(victim);
+        releaseChapterBlobs(victim);
+    }
     return html;
 }
+function applyChars(chars) {
+    book.chars = chars;
+    book.totalChars = chars.reduce((a, b) => a + b, 0) || 1;
+    updateBars();
+}
+// Counting characters means decompressing every chapter in the book — by far the
+// most expensive thing the reader does, and it ran on every single open even
+// though the answer can never change for a given file. Compute it once and keep
+// it on the IndexedDB record.
 async function computeChars() {
+    if (rec && Array.isArray(rec.chars) && rec.chars.length === book.spine.length) {
+        applyChars(rec.chars.slice());
+        return;
+    }
     const chars = [];
     for (let i = 0; i < book.spine.length; i++) {
         const f = book.zip.file(book.spine[i]);
@@ -320,9 +373,11 @@ async function computeChars() {
         const s = await f.async("string");
         chars.push(s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").length);
     }
-    book.chars = chars;
-    book.totalChars = chars.reduce((a, b) => a + b, 0) || 1;
-    updateBars();
+    applyChars(chars);
+    if (rec) {
+        rec.chars = chars.slice();
+        idbPut(rec);
+    }
 }
 // ---------------------------------------------------------------------------
 // Highlights — anchored to the TEXT itself (chapter + nearest occurrence), so
@@ -965,6 +1020,7 @@ async function openBook(id) {
         lastSearch = { q: "", results: null };
         closeDrawer();
         hideSelbar();
+        releaseAllBlobs(); // in case a previous book was left open
         chapterCache = new Map();
         etaMode = localStorage.getItem(ETA_KEY) === "book" ? "book" : "chapter";
         const fs = Number(localStorage.getItem(FS_KEY)) || 19;
@@ -1013,8 +1069,7 @@ function closeReader() {
         syncSessionLog();
     idbPut(rec);
     session = null;
-    blobUrls.forEach((u) => URL.revokeObjectURL(u));
-    blobUrls = [];
+    releaseAllBlobs();
     book = null;
     rec = null;
     els.overlay.hidden = true;
@@ -1105,6 +1160,7 @@ async function handleUpload(file) {
             stats: { seconds: 0, cpm: 0 },
             linkedBookId,
         });
+        usageCache = null; // a new book changes the stored size
         toast("📚", "Added to your eReader", parsed.title + (linkedBookId ? " · linked to your bookshelf" : ""));
         renderList();
     }
@@ -1338,12 +1394,15 @@ export const EReader = {
         renderList();
         $("#ereader-modal").hidden = false;
     },
-    // For the app's "export everything" backup + backup-health panel.
+    // For the app's "export everything" backup — this one really does need the bytes.
     exportAll() { return idbAll(); },
+    // For the backup-health panel, which only wants the count and total size.
+    usage() { return epubUsage(); },
     async importAll(recs) {
         for (const r of recs)
             if (r && r.id && r.data)
                 await idbPut(r);
+        usageCache = null;
     },
 };
 window.EReader = EReader; // kept on window for console + backwards-compat

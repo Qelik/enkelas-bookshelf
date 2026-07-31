@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31d"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31e"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -2759,14 +2759,16 @@ function renderBackupHealth() {
       if (el) el.innerHTML = `<span>${p ? "🔒" : "⚠️"}</span><span>${p ? "The browser granted persistent storage — it won't auto-clear your data." : "Storage isn't marked persistent yet — installing the app (Add to Home Screen) protects it."}</span>`;
     }).catch(() => { const el = $("#bh-persist"); if (el) el.hidden = true; });
   } else { const el = $("#bh-persist"); if (el) el.hidden = true; }
-  if (EReader && EReader.exportAll) {
-    EReader.exportAll().then((recs) => {
+  // usage() rather than exportAll(): this only needs a count and a total, and
+  // exportAll pulls every ePub's ArrayBuffer out of IndexedDB — which this panel
+  // was doing on every render while Settings sat open.
+  if (EReader && EReader.usage) {
+    EReader.usage().then(({ count, bytes }) => {
       const el = $("#bh-epubs");
-      if (!el || !recs.length) return;
-      const bytes = recs.reduce((n, r) => n + ((r.data && r.data.byteLength) || 0), 0);
+      if (!el || !count) return;
       const size = bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(1) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB";
       el.hidden = false;
-      el.lastElementChild!.textContent = recs.length + " ePub" + (recs.length === 1 ? "" : "s") + " in the eReader (" + size + ") — only “Export everything” includes these.";
+      el.lastElementChild!.textContent = count + " ePub" + (count === 1 ? "" : "s") + " in the eReader (" + size + ") — only “Export everything” includes these.";
     }).catch(() => { /* ignore */ });
   }
 }
