@@ -216,6 +216,29 @@
         eq(missed, 0, "no bucket lost its day key");
       });
 
+      // --- derived-value cache -----------------------------------------------
+      // Heavy derivations (streaks, page totals, badges) are cached per data
+      // epoch so one render pass computes each once. The cache must be exact:
+      // reuse within an epoch, recompute after any state change.
+      test("derived() caches within an epoch and recomputes after a change", function () {
+        var runs = 0;
+        var f = function () { runs++; return runs; };
+        eq(T.derived("__t_probe", f), 1, "first call computes");
+        eq(T.derived("__t_probe", f), 1, "second call reuses the cache");
+        eq(runs, 1, "compute ran exactly once");
+        T.invalidateDerived();
+        eq(T.derived("__t_probe", f), 2, "recomputes after invalidateDerived");
+        eq(runs, 2, "compute ran again");
+      });
+      test("derived() caches falsy and empty values too", function () {
+        var runs = 0;
+        T.invalidateDerived();
+        var z = function () { runs++; return 0; };
+        eq(T.derived("__t_zero", z), 0, "zero returned");
+        eq(T.derived("__t_zero", z), 0, "zero returned again");
+        eq(runs, 1, "0 is cached, not treated as a miss");
+      });
+
       // --- full-backup base64 round-trip --------------------------------------
       test("bufToB64/b64ToBuf survive a binary round-trip", function () {
         var src = new Uint8Array(70000); // > one 0x8000 chunk

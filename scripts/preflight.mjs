@@ -22,6 +22,12 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 const sh = (cmd) => execSync(cmd, { cwd: root, encoding: "utf8" }).trim();
+// Same, but WITHOUT trimming: `git status --porcelain` encodes the status in the
+// first two columns, so trimming the whole blob eats the leading space of the
+// first line and slice(3) then chops two characters off that filename ("app.js"
+// -> "pp.js"). That silently emptied shellChanged and let the sw.js cache-bump
+// check pass whenever app.js sorted first — exactly when it matters most.
+const shRaw = (cmd) => execSync(cmd, { cwd: root, encoding: "utf8" });
 
 let failures = 0, warnings = 0;
 const ok = (msg) => console.log("  ✓ " + msg);
@@ -33,9 +39,9 @@ const SHELL_FILES = ["index.html", "styles.css", "app.js", "reader.js", "manifes
 // --- Which files changed since the last commit? -----------------------------
 let changed = [];
 try {
-  changed = sh("git status --porcelain")
+  changed = shRaw("git status --porcelain")
     .split("\n").filter(Boolean)
-    .map((l) => l.slice(3).replace(/^"|"$/g, ""));
+    .map((l) => l.slice(3).trim().replace(/^"|"$/g, ""));
 } catch (e) {
   warn("not a git checkout — skipping change-aware checks");
 }

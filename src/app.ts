@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31b"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -178,12 +178,14 @@ function uniqueValues(getter: (b: Book) => string[]) {
   }));
   return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
 }
-function allTags() { return uniqueValues((b) => b.tags); }
-function allCollections() { return uniqueValues((b) => b.collections); }
-function allLocations() {
-  const seen = new Map();
-  state.books.forEach((b) => { const l = (b.location || "").trim(); if (l) { const k = l.toLowerCase(); if (!seen.has(k)) seen.set(k, l); } });
-  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+function allTags(): string[] { return derived("allTags", () => uniqueValues((b) => b.tags)); }
+function allCollections(): string[] { return derived("allCollections", () => uniqueValues((b) => b.collections)); }
+function allLocations(): string[] {
+  return derived("allLocations", () => {
+    const seen = new Map();
+    state.books.forEach((b) => { const l = (b.location || "").trim(); if (l) { const k = l.toLowerCase(); if (!seen.has(k)) seen.set(k, l); } });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  });
 }
 
 function bookMatches(book: Book, q: string) {
@@ -299,6 +301,25 @@ function normalize(data: any): AppState {
   return base;
 }
 
+// ---------------------------------------------------------------------------
+// Derived-value cache
+// ---------------------------------------------------------------------------
+// Several derived values walk every book and every log — readingStreak,
+// totalPagesRead, perDayMap, computeBadges, duplicateGroups, journeyEvents. A
+// single render pass used to recompute readingStreak 4× and totalPagesRead 4×
+// (renderStats, renderAchievements, renderStatsView and checkNewBadges each ask
+// independently). Cache them against an epoch that every state mutation bumps,
+// so a pass computes each at most once.
+let dataEpoch = 0;
+let derivedEpoch = -1;
+const derivedCache = new Map<string, unknown>();
+function invalidateDerived() { dataEpoch++; }
+function derived<T>(key: string, compute: () => T): T {
+  if (derivedEpoch !== dataEpoch) { derivedCache.clear(); derivedEpoch = dataEpoch; }
+  if (!derivedCache.has(key)) derivedCache.set(key, compute());
+  return derivedCache.get(key) as T;
+}
+
 async function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e: any) { console.warn(e); }
   if (fileHandle) {
@@ -314,7 +335,7 @@ async function persist() {
     }
   }
 }
-function commit() { state.updatedAt = new Date().toISOString(); render(); persist(); schedulePush(); }
+function commit() { state.updatedAt = new Date().toISOString(); invalidateDerived(); render(); persist(); schedulePush(); }
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -420,6 +441,7 @@ async function doAuth(mode: string, creds: { email: string; fullName?: string; p
 // Replace local state with the account's copy.
 function adoptServer(blob: any, updatedAt?: string | null) {
   state = normalize(blob);
+  invalidateDerived(); // computeBadges below must see the adopted books, not the old cache
   if (updatedAt) state.updatedAt = updatedAt;
   saveSyncBase(updatedAt || null);
   knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
@@ -530,6 +552,7 @@ async function logout() {
   saveSyncBase(null);
   try { localStorage.removeItem(STORAGE_KEY); } catch (e: any) { /* ignore */ }
   state = loadState(); // fresh, empty shelf
+  invalidateDerived();
   fileHandle = null;
   knownBadges = new Set();
   currentDetailId = null;
@@ -629,9 +652,11 @@ function pagesBefore(book: Book, log?: ReadingLog | null) {
   for (const l of sorted) { if (l.id === log.id) break; sum += Number(l.pages) || 0; }
   return sum;
 }
-function totalPagesRead() { return state.books.reduce((s, b) => s + pagesRead(b), 0); }
-function booksFinished() { return state.books.filter((b) => b.status === "finished"); }
-function libraryBooks() { return state.books.filter((b) => b.status === "finished" || b.status === "dnf"); }
+// NB: the cached list getters below hand back a shared array — read it, filter
+// it, or sort a copy, but never sort or splice the returned value in place.
+function totalPagesRead() { return derived("totalPagesRead", () => state.books.reduce((s, b) => s + pagesRead(b), 0)); }
+function booksFinished() { return derived("booksFinished", () => state.books.filter((b) => b.status === "finished")); }
+function libraryBooks() { return derived("libraryBooks", () => state.books.filter((b) => b.status === "finished" || b.status === "dnf")); }
 function booksFinishedInYear(year: number) {
   return booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt!).getFullYear() === year).length;
 }
@@ -646,14 +671,18 @@ function pagesOnDay(t: number) {
   return s;
 }
 function perDayMap(): Record<number, number> {
-  const m: Record<number, number> = {};
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) { const k = startOfDay(d); m[k] = (m[k] || 0) + (Number(l.pages) || 0); } }));
-  return m;
+  return derived("perDayMap", () => {
+    const m: Record<number, number> = {};
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) { const k = startOfDay(d); m[k] = (m[k] || 0) + (Number(l.pages) || 0); } }));
+    return m;
+  });
 }
 function readingDaySet() {
-  const days = new Set<number>();
-  state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) days.add(startOfDay(d)); }));
-  return days;
+  return derived("readingDaySet", () => {
+    const days = new Set<number>();
+    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) days.add(startOfDay(d)); }));
+    return days;
+  });
 }
 // Split out from readingStreak so the day maths can be tested without a state.
 function streakFromDays(days: Set<number>) {
@@ -673,7 +702,7 @@ function streakFromDays(days: Set<number>) {
   }
   return { current, longest };
 }
-function readingStreak() { return streakFromDays(readingDaySet()); }
+function readingStreak() { return derived("readingStreak", () => streakFromDays(readingDaySet())); }
 // Estimated finish date for a book being read, based on recent pace.
 function estimateFinish(book: Book) {
   if (book.status !== "reading" || !book.totalPages) return null;
@@ -691,7 +720,8 @@ function estimateFinish(book: Book) {
   return { date: d, daysLeft };
 }
 
-function computeBadges() {
+function computeBadges() { return derived("computeBadges", computeBadgesUncached); }
+function computeBadgesUncached() {
   const tp = totalPagesRead();
   const bf = booksFinished().length;
   const goal = state.settings.goal;
@@ -901,23 +931,40 @@ async function backfillCovers(force?: boolean) {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+// One renderer per view. Each writes only into its own `#view-*` section, so a
+// hidden view can safely be left untouched until it's shown again.
+const VIEW_RENDERERS: Record<string, () => void> = {
+  reading: () => renderReading(),
+  want: () => renderWant(),
+  library: () => renderLibrary(),
+  owned: () => renderOwned(),
+  journey: () => renderJourney(),
+  goals: () => renderGoal(),
+  stats: () => { renderStatsView(); renderInsights(); },
+  achievements: () => renderAchievements(),
+};
+// Views whose DOM no longer matches the data because they were hidden when it
+// changed. switchView rebuilds one the moment it becomes visible.
+const staleViews = new Set<string>(Object.keys(VIEW_RENDERERS));
+function renderActiveView() {
+  const fn = VIEW_RENDERERS[activeView];
+  if (!fn) return; // "book" and "community" render through their own paths
+  staleViews.delete(activeView);
+  fn();
+}
 function render() {
   const perfT0 = PERF ? performance.now() : 0;
-  renderStats();
-  renderReading();
-  renderWant();
-  renderLibrary();
-  renderOwned();
-  renderJourney();
-  renderAchievements();
-  renderGoal();
-  renderStatsView();
-  renderInsights();
+  renderStats();          // header strip — on screen for every view
   renderStorageStatus();
+  // Only the view you're looking at is rebuilt; the other eight are marked
+  // stale and rebuilt when you navigate to them. Rebuilding all nine on every
+  // commit was pure waste — and the eReader commits once a minute while you read.
+  Object.keys(VIEW_RENDERERS).forEach((v) => staleViews.add(v));
+  renderActiveView();
   const sm = $("#settings-modal");
   if (sm && !sm.hidden) renderSettings(); // keep Settings live if it's open
   refreshDetail(); // keep the open book page in sync with data changes
-  if (PERF) console.log("[perf] render " + Math.round(performance.now() - perfT0) + "ms · " + state.books.length + " books");
+  if (PERF) console.log("[perf] render " + Math.round(performance.now() - perfT0) + "ms · " + activeView + " · " + state.books.length + " books");
 }
 
 function renderStats() {
@@ -2446,7 +2493,8 @@ function maybeShowMonthlyRecap() {
 // ---------------------------------------------------------------------------
 // Journey timeline — your whole reading life as one scrolling story
 // ---------------------------------------------------------------------------
-function journeyEvents() {
+function journeyEvents() { return derived("journeyEvents", journeyEventsUncached); }
+function journeyEventsUncached() {
   const ev: { t: string | null; icon: string; title: string; sub: string; id: string }[] = [];
   state.books.forEach((b) => {
     if (b.addedAt) ev.push({ t: b.addedAt, icon: "➕", title: `Added “${b.title}”`, sub: b.pickReason ? "💭 " + b.pickReason : "", id: b.id });
@@ -2686,6 +2734,7 @@ function clearLocalData() {
   if (!confirm(msg)) return;
   try { localStorage.removeItem(STORAGE_KEY); } catch (e: any) { /* ignore */ }
   state = defaultState();
+  invalidateDerived();
   knownBadges = new Set();
   currentDetailId = null;
   coverBackfillRan = false;
@@ -2706,10 +2755,12 @@ async function refreshAppFiles() {
 // ---------------------------------------------------------------------------
 // Shelf Doctor — data-quality dashboard (find & fix messy library entries)
 // ---------------------------------------------------------------------------
-function duplicateGroups() {
-  const by: Record<string, Book[]> = {};
-  state.books.forEach((b) => { const k = (b.title + "|" + (b.author || "")).toLowerCase(); (by[k] = by[k] || []).push(b); });
-  return Object.keys(by).map((k) => ({ key: k, books: by[k] })).filter((g) => g.books.length > 1);
+function duplicateGroups(): { key: string; books: Book[] }[] {
+  return derived("duplicateGroups", () => {
+    const by: Record<string, Book[]> = {};
+    state.books.forEach((b) => { const k = (b.title + "|" + (b.author || "")).toLowerCase(); (by[k] = by[k] || []).push(b); });
+    return Object.keys(by).map((k) => ({ key: k, books: by[k] })).filter((g) => g.books.length > 1);
+  });
 }
 function shelfDoctorIssues() {
   const bs = state.books;
@@ -3613,9 +3664,8 @@ function saveLog(e: SubmitEvent) {
   }
   resetTimer();
   closeModals();
-  commit();
+  commit(); // already re-renders the open book page
   checkNewBadges();
-  refreshDetail();
   toast(editId ? "✎" : "📖", editId ? "Log updated" : "Logged " + pages + " " + unitLabel(book), book.title);
 }
 
@@ -3651,7 +3701,6 @@ function saveFinish(e: SubmitEvent) {
     closeModals();
     commit();
     checkNewBadges();
-    refreshDetail();
     confetti();
     toast("🔁", "Re-read finished!", book.title + " · " + book.readCount + "× read");
     return;
@@ -4170,6 +4219,7 @@ function importJSON(file: File) {
       const data = JSON.parse(reader.result as string);
       const isFull = data && data.kind === "enkelas-full-backup";
       state = normalize(isFull ? data.state : data);
+      invalidateDerived();
       knownBadges = new Set();
       commit();
       knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
@@ -4197,7 +4247,7 @@ async function connectFile() {
       .catch(async () => { const h = await window.showSaveFilePicker!({ suggestedName: "bookshelf.json", types: [{ description: "JSON", accept: { "application/json": [".json"] } }] }); return [h]; });
     fileHandle = handle;
     const text = await (await handle.getFile()).text();
-    if (text.trim()) { try { state = normalize(JSON.parse(text)); knownBadges = new Set(); } catch (e: any) { /* keep */ } }
+    if (text.trim()) { try { state = normalize(JSON.parse(text)); invalidateDerived(); knownBadges = new Set(); } catch (e: any) { /* keep */ } }
     await persist();
     render();
     knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
@@ -4302,6 +4352,7 @@ function importGoodreads(file: File) {
 function switchView(view: string) {
   activeView = view;
   $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + view));
+  if (staleViews.has(view)) renderActiveView(); // it missed the changes while hidden
   const group = groupForView(view);
   if (group) lastViewPerGroup[group.group] = view;
   renderBottomNav(group?.group);
@@ -4454,11 +4505,11 @@ function init() {
     else if (act === "share-card") { shareBookCard(book); }
     else if (act === "export-md") { downloadText(slugify(book.title) + "-journal.md", bookMarkdown(book)); toast("⬇️", "Journal exported", book.title + " as Markdown"); }
     else if (act === "edit-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg) openLogModal(book, lg); }
-    else if (act === "del-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) { book.logs = book.logs.filter((x) => x.id !== lg.id); commit(); refreshDetail(); toast("🗑", "Log removed", book.title); } }
-    else if (act === "del-quote") { book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote); commit(); refreshDetail(); }
-    else if (act === "del-journal") { book.journal = (book.journal || []).filter((j) => j.id !== btn.dataset.journal); commit(); refreshDetail(); }
-    else if (act === "del-char") { book.characters = (book.characters || []).filter((c) => c.id !== btn.dataset.char); commit(); refreshDetail(); }
-    else if (act === "del-vocab") { book.vocab = (book.vocab || []).filter((v) => v.id !== btn.dataset.vocab); commit(); refreshDetail(); }
+    else if (act === "del-log") { const lg = book.logs.find((x) => x.id === btn.dataset.log); if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) { book.logs = book.logs.filter((x) => x.id !== lg.id); commit(); toast("🗑", "Log removed", book.title); } }
+    else if (act === "del-quote") { book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote); commit(); }
+    else if (act === "del-journal") { book.journal = (book.journal || []).filter((j) => j.id !== btn.dataset.journal); commit(); }
+    else if (act === "del-char") { book.characters = (book.characters || []).filter((c) => c.id !== btn.dataset.char); commit(); }
+    else if (act === "del-vocab") { book.vocab = (book.vocab || []).filter((v) => v.id !== btn.dataset.vocab); commit(); }
   });
   $("#detail-body").addEventListener("submit", (e) => {
     const book = state.books.find((x) => x.id === currentDetailId);
@@ -4469,7 +4520,7 @@ function init() {
       if (!text) return;
       book.quotes = book.quotes || [];
       book.quotes.push({ id: uid(), text, page: $<HTMLInputElement>("#q-page").value ? Number($<HTMLInputElement>("#q-page").value) : null, at: new Date().toISOString() });
-      commit(); refreshDetail();
+      commit();
       toast("❝", "Quote saved", book.title);
     } else if ((e.target as HTMLElement).id === "journal-form") {
       e.preventDefault();
@@ -4477,7 +4528,7 @@ function init() {
       if (!text) return;
       book.journal = book.journal || [];
       book.journal.push({ id: uid(), date: new Date().toISOString(), page: $<HTMLInputElement>("#j-page").value ? Number($<HTMLInputElement>("#j-page").value) : null, text });
-      commit(); refreshDetail();
+      commit();
       toast("📓", "Journal entry added", book.title);
     } else if ((e.target as HTMLElement).id === "char-form") {
       e.preventDefault();
@@ -4485,14 +4536,14 @@ function init() {
       if (!name) return;
       book.characters = book.characters || [];
       book.characters.push({ id: uid(), name, desc: $<HTMLInputElement>("#char-desc").value.trim() });
-      commit(); refreshDetail();
+      commit();
     } else if ((e.target as HTMLElement).id === "vocab-form") {
       e.preventDefault();
       const word = $<HTMLInputElement>("#vocab-word").value.trim();
       if (!word) return;
       book.vocab = book.vocab || [];
       book.vocab.push({ id: uid(), word, def: $<HTMLInputElement>("#vocab-def").value.trim(), page: $<HTMLInputElement>("#vocab-page").value ? Number($<HTMLInputElement>("#vocab-page").value) : null });
-      commit(); refreshDetail();
+      commit();
     }
   });
 
@@ -4840,7 +4891,7 @@ export const BookshelfAPI = {
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived };
 
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order

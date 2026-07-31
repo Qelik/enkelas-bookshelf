@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31b"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -175,16 +175,18 @@ function uniqueValues(getter) {
     }));
     return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
 }
-function allTags() { return uniqueValues((b) => b.tags); }
-function allCollections() { return uniqueValues((b) => b.collections); }
+function allTags() { return derived("allTags", () => uniqueValues((b) => b.tags)); }
+function allCollections() { return derived("allCollections", () => uniqueValues((b) => b.collections)); }
 function allLocations() {
-    const seen = new Map();
-    state.books.forEach((b) => { const l = (b.location || "").trim(); if (l) {
-        const k = l.toLowerCase();
-        if (!seen.has(k))
-            seen.set(k, l);
-    } });
-    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+    return derived("allLocations", () => {
+        const seen = new Map();
+        state.books.forEach((b) => { const l = (b.location || "").trim(); if (l) {
+            const k = l.toLowerCase();
+            if (!seen.has(k))
+                seen.set(k, l);
+        } });
+        return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+    });
 }
 function bookMatches(book, q) {
     if (!q)
@@ -302,6 +304,28 @@ function normalize(data) {
     });
     return base;
 }
+// ---------------------------------------------------------------------------
+// Derived-value cache
+// ---------------------------------------------------------------------------
+// Several derived values walk every book and every log — readingStreak,
+// totalPagesRead, perDayMap, computeBadges, duplicateGroups, journeyEvents. A
+// single render pass used to recompute readingStreak 4× and totalPagesRead 4×
+// (renderStats, renderAchievements, renderStatsView and checkNewBadges each ask
+// independently). Cache them against an epoch that every state mutation bumps,
+// so a pass computes each at most once.
+let dataEpoch = 0;
+let derivedEpoch = -1;
+const derivedCache = new Map();
+function invalidateDerived() { dataEpoch++; }
+function derived(key, compute) {
+    if (derivedEpoch !== dataEpoch) {
+        derivedCache.clear();
+        derivedEpoch = dataEpoch;
+    }
+    if (!derivedCache.has(key))
+        derivedCache.set(key, compute());
+    return derivedCache.get(key);
+}
 async function persist() {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -323,7 +347,7 @@ async function persist() {
         }
     }
 }
-function commit() { state.updatedAt = new Date().toISOString(); render(); persist(); schedulePush(); }
+function commit() { state.updatedAt = new Date().toISOString(); invalidateDerived(); render(); persist(); schedulePush(); }
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
@@ -497,6 +521,7 @@ async function doAuth(mode, creds) {
 // Replace local state with the account's copy.
 function adoptServer(blob, updatedAt) {
     state = normalize(blob);
+    invalidateDerived(); // computeBadges below must see the adopted books, not the old cache
     if (updatedAt)
         state.updatedAt = updatedAt;
     saveSyncBase(updatedAt || null);
@@ -665,6 +690,7 @@ async function logout() {
     }
     catch (e) { /* ignore */ }
     state = loadState(); // fresh, empty shelf
+    invalidateDerived();
     fileHandle = null;
     knownBadges = new Set();
     currentDetailId = null;
@@ -785,9 +811,11 @@ function pagesBefore(book, log) {
     }
     return sum;
 }
-function totalPagesRead() { return state.books.reduce((s, b) => s + pagesRead(b), 0); }
-function booksFinished() { return state.books.filter((b) => b.status === "finished"); }
-function libraryBooks() { return state.books.filter((b) => b.status === "finished" || b.status === "dnf"); }
+// NB: the cached list getters below hand back a shared array — read it, filter
+// it, or sort a copy, but never sort or splice the returned value in place.
+function totalPagesRead() { return derived("totalPagesRead", () => state.books.reduce((s, b) => s + pagesRead(b), 0)); }
+function booksFinished() { return derived("booksFinished", () => state.books.filter((b) => b.status === "finished")); }
+function libraryBooks() { return derived("libraryBooks", () => state.books.filter((b) => b.status === "finished" || b.status === "dnf")); }
 function booksFinishedInYear(year) {
     return booksFinished().filter((b) => b.finishedAt && new Date(b.finishedAt).getFullYear() === year).length;
 }
@@ -804,18 +832,22 @@ function pagesOnDay(t) {
     return s;
 }
 function perDayMap() {
-    const m = {};
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) {
-        const k = startOfDay(d);
-        m[k] = (m[k] || 0) + (Number(l.pages) || 0);
-    } }));
-    return m;
+    return derived("perDayMap", () => {
+        const m = {};
+        state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime())) {
+            const k = startOfDay(d);
+            m[k] = (m[k] || 0) + (Number(l.pages) || 0);
+        } }));
+        return m;
+    });
 }
 function readingDaySet() {
-    const days = new Set();
-    state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()))
-        days.add(startOfDay(d)); }));
-    return days;
+    return derived("readingDaySet", () => {
+        const days = new Set();
+        state.books.forEach((b) => b.logs.forEach((l) => { const d = new Date(l.date); if (!isNaN(d.getTime()))
+            days.add(startOfDay(d)); }));
+        return days;
+    });
 }
 // Split out from readingStreak so the day maths can be tested without a state.
 function streakFromDays(days) {
@@ -843,7 +875,7 @@ function streakFromDays(days) {
     }
     return { current, longest };
 }
-function readingStreak() { return streakFromDays(readingDaySet()); }
+function readingStreak() { return derived("readingStreak", () => streakFromDays(readingDaySet())); }
 // Estimated finish date for a book being read, based on recent pace.
 function estimateFinish(book) {
     if (book.status !== "reading" || !book.totalPages)
@@ -866,7 +898,8 @@ function estimateFinish(book) {
     d.setDate(d.getDate() + daysLeft);
     return { date: d, daysLeft };
 }
-function computeBadges() {
+function computeBadges() { return derived("computeBadges", computeBadgesUncached); }
+function computeBadgesUncached() {
     const tp = totalPagesRead();
     const bf = booksFinished().length;
     const goal = state.settings.goal;
@@ -1110,25 +1143,43 @@ async function backfillCovers(force) {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+// One renderer per view. Each writes only into its own `#view-*` section, so a
+// hidden view can safely be left untouched until it's shown again.
+const VIEW_RENDERERS = {
+    reading: () => renderReading(),
+    want: () => renderWant(),
+    library: () => renderLibrary(),
+    owned: () => renderOwned(),
+    journey: () => renderJourney(),
+    goals: () => renderGoal(),
+    stats: () => { renderStatsView(); renderInsights(); },
+    achievements: () => renderAchievements(),
+};
+// Views whose DOM no longer matches the data because they were hidden when it
+// changed. switchView rebuilds one the moment it becomes visible.
+const staleViews = new Set(Object.keys(VIEW_RENDERERS));
+function renderActiveView() {
+    const fn = VIEW_RENDERERS[activeView];
+    if (!fn)
+        return; // "book" and "community" render through their own paths
+    staleViews.delete(activeView);
+    fn();
+}
 function render() {
     const perfT0 = PERF ? performance.now() : 0;
-    renderStats();
-    renderReading();
-    renderWant();
-    renderLibrary();
-    renderOwned();
-    renderJourney();
-    renderAchievements();
-    renderGoal();
-    renderStatsView();
-    renderInsights();
+    renderStats(); // header strip — on screen for every view
     renderStorageStatus();
+    // Only the view you're looking at is rebuilt; the other eight are marked
+    // stale and rebuilt when you navigate to them. Rebuilding all nine on every
+    // commit was pure waste — and the eReader commits once a minute while you read.
+    Object.keys(VIEW_RENDERERS).forEach((v) => staleViews.add(v));
+    renderActiveView();
     const sm = $("#settings-modal");
     if (sm && !sm.hidden)
         renderSettings(); // keep Settings live if it's open
     refreshDetail(); // keep the open book page in sync with data changes
     if (PERF)
-        console.log("[perf] render " + Math.round(performance.now() - perfT0) + "ms · " + state.books.length + " books");
+        console.log("[perf] render " + Math.round(performance.now() - perfT0) + "ms · " + activeView + " · " + state.books.length + " books");
 }
 function renderStats() {
     const streak = readingStreak();
@@ -2965,7 +3016,8 @@ function maybeShowMonthlyRecap() {
 // ---------------------------------------------------------------------------
 // Journey timeline — your whole reading life as one scrolling story
 // ---------------------------------------------------------------------------
-function journeyEvents() {
+function journeyEvents() { return derived("journeyEvents", journeyEventsUncached); }
+function journeyEventsUncached() {
     const ev = [];
     state.books.forEach((b) => {
         if (b.addedAt)
@@ -3260,6 +3312,7 @@ function clearLocalData() {
     }
     catch (e) { /* ignore */ }
     state = defaultState();
+    invalidateDerived();
     knownBadges = new Set();
     currentDetailId = null;
     coverBackfillRan = false;
@@ -3289,9 +3342,11 @@ async function refreshAppFiles() {
 // Shelf Doctor — data-quality dashboard (find & fix messy library entries)
 // ---------------------------------------------------------------------------
 function duplicateGroups() {
-    const by = {};
-    state.books.forEach((b) => { const k = (b.title + "|" + (b.author || "")).toLowerCase(); (by[k] = by[k] || []).push(b); });
-    return Object.keys(by).map((k) => ({ key: k, books: by[k] })).filter((g) => g.books.length > 1);
+    return derived("duplicateGroups", () => {
+        const by = {};
+        state.books.forEach((b) => { const k = (b.title + "|" + (b.author || "")).toLowerCase(); (by[k] = by[k] || []).push(b); });
+        return Object.keys(by).map((k) => ({ key: k, books: by[k] })).filter((g) => g.books.length > 1);
+    });
 }
 function shelfDoctorIssues() {
     const bs = state.books;
@@ -4493,9 +4548,8 @@ function saveLog(e) {
     }
     resetTimer();
     closeModals();
-    commit();
+    commit(); // already re-renders the open book page
     checkNewBadges();
-    refreshDetail();
     toast(editId ? "✎" : "📖", editId ? "Log updated" : "Logged " + pages + " " + unitLabel(book), book.title);
 }
 let finishRating = 0;
@@ -4532,7 +4586,6 @@ function saveFinish(e) {
         closeModals();
         commit();
         checkNewBadges();
-        refreshDetail();
         confetti();
         toast("🔁", "Re-read finished!", book.title + " · " + book.readCount + "× read");
         return;
@@ -5185,6 +5238,7 @@ function importJSON(file) {
             const data = JSON.parse(reader.result);
             const isFull = data && data.kind === "enkelas-full-backup";
             state = normalize(isFull ? data.state : data);
+            invalidateDerived();
             knownBadges = new Set();
             commit();
             knownBadges = new Set(computeBadges().filter((b) => b.unlocked).map((b) => b.id));
@@ -5227,6 +5281,7 @@ async function connectFile() {
         if (text.trim()) {
             try {
                 state = normalize(JSON.parse(text));
+                invalidateDerived();
                 knownBadges = new Set();
             }
             catch (e) { /* keep */ }
@@ -5381,6 +5436,8 @@ function importGoodreads(file) {
 function switchView(view) {
     activeView = view;
     $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + view));
+    if (staleViews.has(view))
+        renderActiveView(); // it missed the changes while hidden
     const group = groupForView(view);
     if (group)
         lastViewPerGroup[group.group] = view;
@@ -5662,29 +5719,24 @@ function init() {
             if (lg && confirm(`Delete this log of ${num(lg.pages)} pages?`)) {
                 book.logs = book.logs.filter((x) => x.id !== lg.id);
                 commit();
-                refreshDetail();
                 toast("🗑", "Log removed", book.title);
             }
         }
         else if (act === "del-quote") {
             book.quotes = (book.quotes || []).filter((q) => q.id !== btn.dataset.quote);
             commit();
-            refreshDetail();
         }
         else if (act === "del-journal") {
             book.journal = (book.journal || []).filter((j) => j.id !== btn.dataset.journal);
             commit();
-            refreshDetail();
         }
         else if (act === "del-char") {
             book.characters = (book.characters || []).filter((c) => c.id !== btn.dataset.char);
             commit();
-            refreshDetail();
         }
         else if (act === "del-vocab") {
             book.vocab = (book.vocab || []).filter((v) => v.id !== btn.dataset.vocab);
             commit();
-            refreshDetail();
         }
     });
     $("#detail-body").addEventListener("submit", (e) => {
@@ -5699,7 +5751,6 @@ function init() {
             book.quotes = book.quotes || [];
             book.quotes.push({ id: uid(), text, page: $("#q-page").value ? Number($("#q-page").value) : null, at: new Date().toISOString() });
             commit();
-            refreshDetail();
             toast("❝", "Quote saved", book.title);
         }
         else if (e.target.id === "journal-form") {
@@ -5710,7 +5761,6 @@ function init() {
             book.journal = book.journal || [];
             book.journal.push({ id: uid(), date: new Date().toISOString(), page: $("#j-page").value ? Number($("#j-page").value) : null, text });
             commit();
-            refreshDetail();
             toast("📓", "Journal entry added", book.title);
         }
         else if (e.target.id === "char-form") {
@@ -5721,7 +5771,6 @@ function init() {
             book.characters = book.characters || [];
             book.characters.push({ id: uid(), name, desc: $("#char-desc").value.trim() });
             commit();
-            refreshDetail();
         }
         else if (e.target.id === "vocab-form") {
             e.preventDefault();
@@ -5731,7 +5780,6 @@ function init() {
             book.vocab = book.vocab || [];
             book.vocab.push({ id: uid(), word, def: $("#vocab-def").value.trim(), page: $("#vocab-page").value ? Number($("#vocab-page").value) : null });
             commit();
-            refreshDetail();
         }
     });
     // Book modal
@@ -6232,6 +6280,6 @@ export const BookshelfAPI = {
 };
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived };
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order
