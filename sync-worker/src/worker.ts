@@ -77,10 +77,16 @@ async function makeToken(uid: string, secret: string, days = 30) {
 }
 async function verifyToken(token: string, secret: string) {
   if (!token || token.indexOf(".") < 0) return null;
-  const [body, sig] = token.split(".");
-  const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), b64urlToBytes(sig), enc.encode(body)).catch(() => false);
-  if (!ok) return null;
+  // Everything here runs inside the try on purpose: b64urlToBytes calls atob,
+  // which THROWS on malformed base64url, and it was being evaluated as an
+  // argument — outside the old catch. A corrupt stored token therefore came
+  // back as a 500 "Server error" instead of a 401, and the client only offers
+  // re-login on a 401, so the app parked itself in a permanent "sync paused"
+  // state with no way out. A broken token simply means "not signed in".
   try {
+    const [body, sig] = token.split(".");
+    const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), b64urlToBytes(sig), enc.encode(body));
+    if (!ok) return null;
     const payload = JSON.parse(dec.decode(b64urlToBytes(body)));
     if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;
@@ -123,10 +129,14 @@ async function login(request: Request, env: Env, secret: string) {
   const ok = user ? await verifyPassword(password, user) : false;
   if (!ok) {
     await env.BOOKSHELF.put(tKey, String(attempts + 1), { expirationTtl: 900 });
-    return json({ error: raw ? "Wrong password." : "No account found with that email." }, 401);
+    // One message for both "no such account" and "wrong password": telling them
+    // apart let anyone probe which email addresses have accounts here.
+    return json({ error: "Wrong email or password." }, 401);
   }
   return json({ token: await makeToken(user.id, secret), user: { id: user.id, email: user.email, fullName: user.fullName } });
 }
+
+const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 
 async function getData(request: Request, env: Env, secret: string) {
   const auth = await requireAuth(request, secret);
@@ -149,7 +159,14 @@ async function putData(request: Request, env: Env, secret: string) {
     }
   }
   const updatedAt = b.updatedAt || new Date().toISOString();
-  await env.BOOKSHELF.put("data:" + auth.uid, JSON.stringify({ blob: b.blob, updatedAt }));
+  const record = JSON.stringify({ blob: b.blob, updatedAt });
+  // KV's hard ceiling is 25MB; refuse well before that with an explanation the
+  // client can show. Previously an oversized blob threw inside KV.put and
+  // surfaced as an opaque 500.
+  if (record.length > MAX_BLOB_BYTES) {
+    return json({ error: "This bookshelf is too large to sync (over " + Math.round(MAX_BLOB_BYTES / (1024 * 1024)) + " MB). Export a backup, then remove some books or reading logs." }, 413);
+  }
+  await env.BOOKSHELF.put("data:" + auth.uid, record);
   return json({ ok: true, updatedAt });
 }
 
@@ -173,11 +190,15 @@ function touchClub(env: Env, clubId: string) {
 }
 // Realtime is best-effort: nudge the club's Durable Object to broadcast to any
 // connected members. D1 stays the source of truth (and the spoiler gate).
-function notifyClub(env: Env, clubId: string, payload: unknown) {
+// The subrequest MUST be handed to ctx.waitUntil — an un-awaited fetch can be
+// cancelled the moment we return the response, which silently dropped the
+// broadcast and left everyone waiting on the 20s poll instead.
+function notifyClub(env: Env, ctx: ExecutionContext | null, clubId: string, payload: unknown) {
   if (!env.CLUB_ROOMS) return;
   try {
     const stub = env.CLUB_ROOMS.get(env.CLUB_ROOMS.idFromName(clubId));
-    stub.fetch(new Request("https://club/broadcast", { method: "POST", body: JSON.stringify(payload || {}) }));
+    const p = stub.fetch(new Request("https://club/broadcast", { method: "POST", body: JSON.stringify(payload || {}) }));
+    if (ctx) ctx.waitUntil(p.catch(() => { /* room asleep or gone */ }));
   } catch (e) { /* realtime unavailable — clients still poll */ }
 }
 async function clubWs(url: URL, request: Request, env: Env, clubId: string) {
@@ -193,8 +214,17 @@ async function clubsList(auth: { uid: string }, env: Env) {
   const clubs = (await env.CLUBS_DB.prepare(
     "SELECT c.* FROM clubs c JOIN members m ON m.club_id=c.id WHERE m.uid=?1 AND c.archived=0 ORDER BY c.created_at DESC"
   ).bind(auth.uid).all()).results as any[] || [];
+  if (!clubs.length) return json({ clubs });
+  // One query for the members of every club, rather than one query per club.
+  const ids = clubs.map((c) => c.id);
+  const holes = ids.map((_, i) => "?" + (i + 1)).join(",");
+  const rows = (await env.CLUBS_DB.prepare(
+    `SELECT club_id, uid, display_name, role, progress_pct FROM members WHERE club_id IN (${holes}) ORDER BY progress_pct DESC`
+  ).bind(...ids).all()).results as any[] || [];
+  const byClub: Record<string, any[]> = {};
+  for (const r of rows) (byClub[r.club_id] = byClub[r.club_id] || []).push(r);
   for (const c of clubs) {
-    c.members = (await env.CLUBS_DB.prepare("SELECT uid, display_name, role, progress_pct FROM members WHERE club_id=?1 ORDER BY progress_pct DESC").bind(c.id).all()).results as any[] || [];
+    c.members = byClub[c.id] || [];
     c.me = c.members.find((m: any) => m.uid === auth.uid) || null;
   }
   return json({ clubs });
@@ -245,9 +275,12 @@ async function clubDetail(clubId: string, auth: { uid: string }, env: Env) {
 async function clubComments(clubId: string, auth: { uid: string }, env: Env) {
   const me = await clubMember(env, clubId, auth.uid);
   if (!me) return json({ error: "Not a member of this club." }, 403);
+  // LEFT JOIN, not JOIN: leaving a club deletes the member row, and an inner
+  // join then dropped every comment that person had written out of everyone
+  // else's feed. The discussion outlives the membership.
   const comments = (await env.CLUBS_DB.prepare(
-    "SELECT c.id,c.uid,m.display_name,c.pos_pct,c.chapter,c.label,c.body,c.created_at " +
-    "FROM comments c JOIN members m ON m.club_id=c.club_id AND m.uid=c.uid " +
+    "SELECT c.id,c.uid,COALESCE(m.display_name,'Former member') AS display_name,c.pos_pct,c.chapter,c.label,c.body,c.created_at " +
+    "FROM comments c LEFT JOIN members m ON m.club_id=c.club_id AND m.uid=c.uid " +
     "WHERE c.club_id=?1 AND c.deleted=0 AND c.pos_pct<=?2 ORDER BY c.pos_pct ASC, c.created_at ASC"
   ).bind(clubId, me.progress_pct).all()).results as any[] || [];
   // Reactions for the comments this member is allowed to see (same gate).
@@ -265,7 +298,7 @@ async function clubComments(clubId: string, auth: { uid: string }, env: Env) {
   const lockedAhead = (await env.CLUBS_DB.prepare("SELECT COUNT(*) AS n FROM comments WHERE club_id=?1 AND deleted=0 AND pos_pct>?2").bind(clubId, me.progress_pct).first<any>()).n;
   return json({ comments, lockedAhead, myProgress: me.progress_pct });
 }
-async function clubPostComment(request: Request, clubId: string, auth: { uid: string }, env: Env) {
+async function clubPostComment(request: Request, clubId: string, auth: { uid: string }, env: Env, ctx: ExecutionContext) {
   const me = await clubMember(env, clubId, auth.uid);
   if (!me) return json({ error: "Not a member of this club." }, 403);
   const b = await request.json<any>().catch(() => ({}));
@@ -274,19 +307,19 @@ async function clubPostComment(request: Request, clubId: string, auth: { uid: st
   await env.CLUBS_DB.prepare("INSERT INTO comments (id,club_id,uid,pos_pct,chapter,label,body,created_at,deleted) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)")
     .bind(crypto.randomUUID(), clubId, auth.uid, clampPct(b.posPct), (b.chapter != null ? Number(b.chapter) : null), (b.label ? String(b.label).slice(0, 60) : null), body, new Date().toISOString()).run();
   await touchClub(env, clubId);
-  notifyClub(env, clubId, { type: "comment" });
+  notifyClub(env, ctx, clubId, { type: "comment" });
   return json({ ok: true });
 }
-async function clubProgress(request: Request, clubId: string, auth: { uid: string }, env: Env) {
+async function clubProgress(request: Request, clubId: string, auth: { uid: string }, env: Env, ctx: ExecutionContext) {
   const me = await clubMember(env, clubId, auth.uid);
   if (!me) return json({ error: "Not a member of this club." }, 403);
   const b = await request.json<any>().catch(() => ({}));
   // forward-only, so a re-read or sync hiccup can never un-reveal a spoiler
   await env.CLUBS_DB.prepare("UPDATE members SET progress_pct=MAX(progress_pct,?3) WHERE club_id=?1 AND uid=?2").bind(clubId, auth.uid, clampPct(b.progressPct)).run();
-  notifyClub(env, clubId, { type: "progress" });
+  notifyClub(env, ctx, clubId, { type: "progress" });
   return json({ ok: true });
 }
-async function clubReact(request: Request, clubId: string, auth: { uid: string }, env: Env) {
+async function clubReact(request: Request, clubId: string, auth: { uid: string }, env: Env, ctx: ExecutionContext) {
   const me = await clubMember(env, clubId, auth.uid);
   if (!me) return json({ error: "Not a member of this club." }, 403);
   const b = await request.json<any>().catch(() => ({}));
@@ -299,11 +332,11 @@ async function clubReact(request: Request, clubId: string, auth: { uid: string }
   const existing = await env.CLUBS_DB.prepare("SELECT 1 FROM reactions WHERE comment_id=?1 AND uid=?2 AND emoji=?3").bind(commentId, auth.uid, emoji).first<any>();
   if (existing) {
     await env.CLUBS_DB.prepare("DELETE FROM reactions WHERE comment_id=?1 AND uid=?2 AND emoji=?3").bind(commentId, auth.uid, emoji).run();
-    notifyClub(env, clubId, { type: "reaction" });
+    notifyClub(env, ctx, clubId, { type: "reaction" });
     return json({ ok: true, reacted: false });
   }
   await env.CLUBS_DB.prepare("INSERT INTO reactions (comment_id,uid,emoji,created_at) VALUES (?1,?2,?3,?4)").bind(commentId, auth.uid, emoji, new Date().toISOString()).run();
-  notifyClub(env, clubId, { type: "reaction" });
+  notifyClub(env, ctx, clubId, { type: "reaction" });
   return json({ ok: true, reacted: true });
 }
 async function clubLeave(clubId: string, auth: { uid: string }, env: Env) {
@@ -312,7 +345,7 @@ async function clubLeave(clubId: string, auth: { uid: string }, env: Env) {
   await env.CLUBS_DB.prepare("DELETE FROM members WHERE club_id=?1 AND uid=?2").bind(clubId, auth.uid).run();
   return json({ ok: true });
 }
-async function clubsRouter(url: URL, request: Request, env: Env) {
+async function clubsRouter(url: URL, request: Request, env: Env, ctx: ExecutionContext) {
   if (!env.CLUBS_DB) return json({ error: "Reading clubs aren't enabled on this server yet." }, 503);
   const parts = url.pathname.split("/").filter(Boolean); // ["api","clubs", id?, sub?]
   const id = parts[2], sub = parts[3];
@@ -332,11 +365,11 @@ async function clubsRouter(url: URL, request: Request, env: Env) {
   } else if (sub === "comments" && m === "GET") {
     return clubComments(id, auth, env);
   } else if (sub === "comments" && m === "POST") {
-    return clubPostComment(request, id, auth, env);
+    return clubPostComment(request, id, auth, env, ctx);
   } else if (sub === "progress" && m === "PUT") {
-    return clubProgress(request, id, auth, env);
+    return clubProgress(request, id, auth, env, ctx);
   } else if (sub === "reactions" && m === "POST") {
-    return clubReact(request, id, auth, env);
+    return clubReact(request, id, auth, env, ctx);
   } else if (sub === "leave" && m === "POST") {
     return clubLeave(id, auth, env);
   }
@@ -347,18 +380,27 @@ async function clubsRouter(url: URL, request: Request, env: Env) {
 // One global, public board. Reading the board needs no account; recommending
 // and voting do. Votes are 1 (worth reading) or -1 (not worth it), one per user
 // per book, and clicking the same vote again clears it (toggle off).
+// The board is public and unbounded, so page it: newest N, and tally votes for
+// just that page instead of GROUP BY-ing the whole rec_votes table.
+const RECS_PAGE = 200;
+const RECS_PER_HOUR = 20;
 async function recsList(env: Env, auth: { uid: string } | null) {
   const recs = (await env.CLUBS_DB.prepare(
-    "SELECT id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at FROM recs WHERE deleted=0"
-  ).all()).results as any[] || [];
+    "SELECT id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at FROM recs WHERE deleted=0 ORDER BY created_at DESC LIMIT ?1"
+  ).bind(RECS_PAGE).all()).results as any[] || [];
+  if (!recs.length) return json({ recs, signedIn: !!auth, capped: false });
+  const ids = recs.map((r) => r.id);
+  const holes = ids.map((_, i) => "?" + (i + 1)).join(",");
   const tallies = (await env.CLUBS_DB.prepare(
-    "SELECT rec_id, SUM(CASE WHEN vote=1 THEN 1 ELSE 0 END) AS up, SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END) AS down FROM rec_votes GROUP BY rec_id"
-  ).all()).results as any[] || [];
+    `SELECT rec_id, SUM(CASE WHEN vote=1 THEN 1 ELSE 0 END) AS up, SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END) AS down FROM rec_votes WHERE rec_id IN (${holes}) GROUP BY rec_id`
+  ).bind(...ids).all()).results as any[] || [];
   const byId: Record<string, { up: number; down: number }> = {};
   for (const t of tallies) byId[t.rec_id] = { up: Number(t.up) || 0, down: Number(t.down) || 0 };
   const mine: Record<string, number> = {};
   if (auth) {
-    const mv = (await env.CLUBS_DB.prepare("SELECT rec_id, vote FROM rec_votes WHERE uid=?1").bind(auth.uid).all()).results as any[] || [];
+    // uid is ?1, so this page's ids start at ?2.
+    const mineHoles = ids.map((_, i) => "?" + (i + 2)).join(",");
+    const mv = (await env.CLUBS_DB.prepare(`SELECT rec_id, vote FROM rec_votes WHERE uid=?1 AND rec_id IN (${mineHoles})`).bind(auth.uid, ...ids).all()).results as any[] || [];
     for (const v of mv) mine[v.rec_id] = v.vote;
   }
   for (const r of recs) {
@@ -367,15 +409,28 @@ async function recsList(env: Env, auth: { uid: string } | null) {
     r.myVote = mine[r.id] || 0;
     r.mine = auth ? r.created_by === auth.uid : false;
   }
-  return json({ recs, signedIn: !!auth });
+  // Tell the client when it's only seeing a page, so it can say so rather than
+  // implying the board is this small.
+  return json({ recs, signedIn: !!auth, capped: recs.length >= RECS_PAGE });
 }
 async function recsCreate(request: Request, auth: { uid: string }, env: Env) {
   const b = await request.json<any>().catch(() => ({}));
   const title = String(b.bookTitle || "").trim().slice(0, 200);
   const category = String(b.category || "").trim().slice(0, 60) || "General";
   if (!title) return json({ error: "A book title is required." }, 400);
-  const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  // Recommending the same book to the same shelf twice is a double-tap, not a
+  // second recommendation — hand back the original instead of cluttering the
+  // public board with duplicates.
+  const dup = await env.CLUBS_DB.prepare(
+    "SELECT id FROM recs WHERE deleted=0 AND created_by=?1 AND lower(book_title)=lower(?2) AND lower(category)=lower(?3)"
+  ).bind(auth.uid, title, category).first<any>();
+  if (dup) return json({ ok: true, id: dup.id, duplicate: true });
+  // The board is shared and public: cap how fast one account can fill it.
+  const since = new Date(Date.now() - 3600000).toISOString();
+  const recent = (await env.CLUBS_DB.prepare("SELECT COUNT(*) AS n FROM recs WHERE created_by=?1 AND created_at>?2").bind(auth.uid, since).first<any>()).n;
+  if (Number(recent) >= RECS_PER_HOUR) return json({ error: "That's a lot of recommendations at once — try again a little later." }, 429);
+  const id = crypto.randomUUID();
   await env.CLUBS_DB.prepare(
     "INSERT INTO recs (id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at,deleted) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0)"
   ).bind(id, category, title, String(b.bookAuthor || "").slice(0, 200), String(b.bookIsbn || "").slice(0, 20), String(b.coverUrl || "").slice(0, 500), String(b.note || "").slice(0, 500), auth.uid, String(b.displayName || "").slice(0, 60), now).run();
@@ -424,7 +479,7 @@ async function recsRouter(url: URL, request: Request, env: Env) {
 }
 
 export default {
-  async fetch(request: Request, env: Env) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
     if (!env.AUTH_SECRET) return json({ error: "Server not configured (missing AUTH_SECRET)." }, 500);
     const url = new URL(request.url);
@@ -433,11 +488,14 @@ export default {
       if (url.pathname === "/api/login" && request.method === "POST") return await login(request, env, env.AUTH_SECRET);
       if (url.pathname === "/api/data" && request.method === "GET") return await getData(request, env, env.AUTH_SECRET);
       if (url.pathname === "/api/data" && request.method === "PUT") return await putData(request, env, env.AUTH_SECRET);
-      if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return await clubsRouter(url, request, env);
+      if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return await clubsRouter(url, request, env, ctx);
       if (url.pathname === "/api/recs" || url.pathname.indexOf("/api/recs/") === 0) return await recsRouter(url, request, env);
       if (url.pathname === "/" || url.pathname === "/api") return json({ ok: true, service: "enkelas-bookshelf-sync", clubs: !!env.CLUBS_DB, recs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS });
       return json({ error: "Not found" }, 404);
     } catch (e) {
+      // Log the cause — a bare "Server error" with nothing in the tail log makes
+      // these impossible to diagnose (`wrangler tail` is free).
+      console.error("worker error", request.method, url.pathname, e instanceof Error ? (e.stack || e.message) : String(e));
       return json({ error: "Server error" }, 500);
     }
   },

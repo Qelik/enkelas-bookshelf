@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31b"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31c"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -3081,7 +3081,7 @@ async function postClubComment() {
 // recommend). Books the current reader has already finished are hidden by
 // default, filtered client-side against their own synced library.
 // ---------------------------------------------------------------------------
-let communityCategory = "", communitySort = "top", communityHideRead = true, lastRecs: RecRow[] | null = null, recsSignedIn = false;
+let communityCategory = "", communitySort = "top", communityHideRead = true, lastRecs: RecRow[] | null = null, recsSignedIn = false, recsCapped = false;
 function recsApi(path: string, opts?: RequestInit) { return apiFetch("/api/recs" + path, opts || {}); }
 function normStr(s: unknown) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
 function isbnDigits(s: unknown) { return String(s || "").replace(/\D/g, ""); }
@@ -3111,6 +3111,7 @@ async function renderCommunity() {
   if (!res.ok || !data) { body.innerHTML = `<p class="empty">Couldn't load recommendations — check your connection.</p>`; return; }
   lastRecs = data.recs || [];
   recsSignedIn = !!data.signedIn;
+  recsCapped = !!data.capped; // the server pages the board; say so rather than implying it's this small
   drawCommunity();
 }
 function drawCommunity() {
@@ -3133,9 +3134,10 @@ function drawCommunity() {
   const signInBanner = !recsSignedIn
     ? `<div class="community-signin">👋 <button class="linklike" data-community-signin>Sign in</button> to vote and add your own recommendations.</div>`
     : "";
-  const readNote = (communityHideRead && hiddenRead)
+  const readNote = ((communityHideRead && hiddenRead)
     ? `<p class="community-readnote muted">${hiddenRead} book${hiddenRead === 1 ? "" : "s"} you've read ${hiddenRead === 1 ? "is" : "are"} hidden. <button class="linklike" data-community-showread>Show ${hiddenRead === 1 ? "it" : "them"}</button></p>`
-    : "";
+    : "")
+    + (recsCapped ? `<p class="community-readnote muted">Showing the most recent recommendations — the board has more.</p>` : "");
 
   if (!recs.length) {
     body.innerHTML = signInBanner + `<p class="empty">${all.length ? "Nothing here yet in this view." : "No recommendations yet — be the first to share a book you loved."}</p>` + readNote;

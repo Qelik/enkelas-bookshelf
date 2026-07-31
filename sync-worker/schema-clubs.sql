@@ -1,6 +1,14 @@
 -- Enkela's Bookshelf — Reading Clubs (Cloudflare D1 / SQLite)
--- Apply with:  wrangler d1 execute enkelas-clubs --remote --file sync-worker/schema-clubs.sql
--- (drop --remote to seed the local dev DB instead)
+-- Apply to production with:
+--   wrangler d1 execute enkelas-clubs --remote --file sync-worker/schema-clubs.sql
+--
+-- To seed the LOCAL dev DB, you must pass --config as well, from sync-worker/:
+--   cd sync-worker && npx wrangler d1 execute enkelas-clubs --local --config wrangler.toml --file schema-clubs.sql
+-- Without --config, wrangler resolves the ROOT wrangler.jsonc and writes to
+-- ./.wrangler/state, while `wrangler dev --config wrangler.toml` reads
+-- sync-worker/.wrangler/state — two different SQLite files. Seeding the wrong
+-- one makes every clubs/recs endpoint answer "no such table: clubs" (a 500),
+-- which reads as nine broken tests rather than an unseeded database.
 
 CREATE TABLE IF NOT EXISTS clubs (
   id          TEXT PRIMARY KEY,             -- uuid
@@ -23,7 +31,12 @@ CREATE TABLE IF NOT EXISTS members (
   joined_at    TEXT NOT NULL,
   PRIMARY KEY (club_id, uid)
 );
-CREATE INDEX IF NOT EXISTS idx_members_club ON members(club_id);
+-- "which clubs am I in?" filters on uid alone, which the (club_id, uid) primary
+-- key can't serve — that was a full table scan on every clubs-list request.
+CREATE INDEX IF NOT EXISTS idx_members_uid ON members(uid);
+-- idx_members_club duplicated the primary key's leading column: it could never
+-- be chosen over the PK, and cost a write on every membership change.
+DROP INDEX IF EXISTS idx_members_club;
 
 CREATE TABLE IF NOT EXISTS invites (
   code       TEXT PRIMARY KEY,               -- short join code
@@ -86,3 +99,8 @@ CREATE TABLE IF NOT EXISTS rec_votes (
   PRIMARY KEY (rec_id, uid)
 );
 CREATE INDEX IF NOT EXISTS idx_rec_votes_rec ON rec_votes(rec_id);
+-- "how did I vote?" filters on uid alone — again unreachable via the
+-- (rec_id, uid) primary key, so it scanned every vote ever cast.
+CREATE INDEX IF NOT EXISTS idx_rec_votes_uid ON rec_votes(uid);
+-- The board is paged by recency, so give the ORDER BY an index to walk.
+CREATE INDEX IF NOT EXISTS idx_recs_created ON recs(created_at DESC);

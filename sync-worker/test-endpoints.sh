@@ -61,6 +61,18 @@ T1=$(printf '%s' "$R" | json "['token']")
 [ -n "$T1" ] && pass "login returns a token" || fail "login returns a token ($R)"
 R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data")
 check "data without a token → 401" "401" "$R"
+# A corrupt token must read as "not signed in", never a server error: the client
+# only re-prompts for login on a 401, so a 500 stranded it in "sync paused".
+for BAD in 'not-a-token' 'aaa.@@@@' '@@@.bbb' 'x.y.z'; do
+  R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $BAD")
+  check "malformed token \"$BAD\" → 401 (not 500)" "401" "$R"
+done
+# Unknown email and wrong password must be indistinguishable (no account probing).
+M1=$(curl -s -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U1\",\"password\":\"definitely-wrong\"}" | json "['error']")
+M2=$(curl -s -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d '{"email":"nobody-here-at-all@test.local","password":"definitely-wrong"}' | json "['error']")
+check "login doesn't reveal whether an email exists" "$M1" "$M2"
 
 say ""
 say "Data sync (optimistic concurrency)"
@@ -76,6 +88,10 @@ check "stale baseUpdatedAt → 409" "409" "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$BASE/api/data" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
   -d "{\"blob\":{\"version\":1,\"books\":[{\"id\":\"b2\",\"title\":\"Second\"}]},\"updatedAt\":\"2026-01-03T00:00:00Z\",\"baseUpdatedAt\":\"$SRV_AT\"}")
 check "matching baseUpdatedAt succeeds" "200" "$R"
+# Oversized blobs used to throw inside KV.put and surface as an opaque 500.
+BIG=$(python3 -c "print('{\"blob\":{\"pad\":\"' + 'x'*9000000 + '\"},\"updatedAt\":\"2026-01-04T00:00:00Z\",\"force\":true}')")
+R=$(printf '%s' "$BIG" | curl -s -o /dev/null -w '%{http_code}' -X PUT "$BASE/api/data" -H "authorization: Bearer $T1" -H 'content-type: application/json' --data-binary @-)
+check "oversized blob → 413 with a reason (not 500)" "413" "$R"
 
 say ""
 say "Per-account isolation"
@@ -108,6 +124,20 @@ if [ "$CLUBS_ON" = "True" ]; then
   curl -s -X PUT "$BASE/api/clubs/$CLUB/progress" -H "authorization: Bearer $T2" -H 'content-type: application/json' -d '{"progressPct":10}' >/dev/null
   R=$(curl -s "$BASE/api/clubs/$CLUB" -H "authorization: Bearer $T2")
   check "progress is forward-only" "70" "$(printf '%s' "$R" | json "['me']['progress_pct']")"
+  R=$(curl -s "$BASE/api/clubs" -H "authorization: Bearer $T2")
+  check "clubs list carries members" "2" "$(printf '%s' "$R" | python3 -c "import sys,json;d=json.load(sys.stdin);c=[x for x in d['clubs'] if x['id']=='$CLUB'][0];print(len(c['members']))" 2>/dev/null)"
+  # Leaving a club must not delete your words from everyone else's feed: the
+  # comments query inner-joined members, so a departure erased the discussion.
+  # Bob comments below Alice's progress, then leaves; Alice must still see it.
+  curl -s -X POST "$BASE/api/clubs/$CLUB/comments" -H "authorization: Bearer $T2" -H 'content-type: application/json' \
+    -d '{"body":"loving it so far","posPct":20}' >/dev/null
+  R=$(curl -s "$BASE/api/clubs/$CLUB/comments" -H "authorization: Bearer $T1")
+  check "Alice sees Bob's comment before he leaves" "2" "$(printf '%s' "$R" | json "['comments'].__len__()")"
+  curl -s -X POST "$BASE/api/clubs/$CLUB/leave" -H "authorization: Bearer $T2" >/dev/null
+  R=$(curl -s "$BASE/api/clubs/$CLUB/comments" -H "authorization: Bearer $T1")
+  check "…and still sees it after he leaves" "2" "$(printf '%s' "$R" | json "['comments'].__len__()")"
+  check "…attributed to a former member, not blank" "Former member" \
+    "$(printf '%s' "$R" | python3 -c "import sys,json;d=json.load(sys.stdin);print([c['display_name'] for c in d['comments'] if c['body']=='loving it so far'][0])" 2>/dev/null)"
 
   say ""
   say "Community recommendations"
@@ -123,9 +153,17 @@ if [ "$CLUBS_ON" = "True" ]; then
   check "another user can downvote" "-1" "$(printf '%s' "$R" | json "['myVote']")"
   R=$(curl -s -X POST "$BASE/api/recs/$REC/vote" -H "authorization: Bearer $T2" -H 'content-type: application/json' -d '{"vote":-1}')
   check "same vote again toggles off" "0" "$(printf '%s' "$R" | json "['myVote']")"
+  # Re-recommending the same book to the same shelf returns the original rather
+  # than duplicating it on the shared public board.
+  R=$(curl -s -X POST "$BASE/api/recs" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
+    -d '{"bookTitle":"Rec Book","bookAuthor":"Someone","category":"Fantasy","displayName":"Alice"}')
+  check "re-recommending returns the original id" "$REC" "$(printf '%s' "$R" | json "['id']")"
+  check "…and says so" "True" "$(printf '%s' "$R" | json "['duplicate']")"
 else
   say ""
-  say "▸ clubs/recs skipped (no local CLUBS_DB — run 'npx wrangler d1 execute enkelas-clubs --local --file schema-clubs.sql' first)"
+  say "▸ clubs/recs skipped (no local CLUBS_DB — seed it with:"
+  say "    npx wrangler d1 execute enkelas-clubs --local --config wrangler.toml --file schema-clubs.sql"
+  say "  --config is required: without it wrangler seeds the ROOT .wrangler state, not this one.)"
 fi
 
 say ""
