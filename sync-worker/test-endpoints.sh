@@ -51,8 +51,11 @@ fi
 # this did before) left npx/wrangler/workerd alive holding the port and the state
 # directory, and the NEXT run then silently talked to that stale worker.
 set -m
+# APP_URL has no default in the worker — a guessed base URL would mail out links
+# that 404 — so the reset tests have to supply one.
 ( cd "$DIR" && exec npx wrangler dev --local --config wrangler.toml --port "$PORT" \
-    --var AUTH_SECRET:test-secret-for-endpoint-tests-at-least-32-chars --var RESET_DEBUG:1 >"$LOG" 2>&1 ) &
+    --var AUTH_SECRET:test-secret-for-endpoint-tests-at-least-32-chars \
+    --var APP_URL:"$BASE" --var RESET_DEBUG:1 >"$LOG" 2>&1 ) &
 WRANGLER_PID=$!
 set +m
 trap 'kill -- -$WRANGLER_PID 2>/dev/null; kill $WRANGLER_PID 2>/dev/null; wait $WRANGLER_PID 2>/dev/null' EXIT
@@ -125,6 +128,10 @@ check "a password containing your email is rejected" "400" "$R"
 R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/register" -H 'content-type: application/json' \
   -d '{"email":"not-an-email","fullName":"X Y","password":"decent-passphrase-9"}')
 check "a bad email address is rejected" "400" "$R"
+# The reset link's base URL is required, not guessed: a wrong one mails a 404 to
+# someone already locked out. /api must therefore report reset as unavailable
+# until all three of RESEND_API_KEY, RESET_FROM and APP_URL are present.
+check "reset advertises itself as unconfigured without a mailer" "False" "$(printf '%s' "$HEALTH" | json "['passwordReset']")"
 
 say ""
 say "Change password (and session revocation)"

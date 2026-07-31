@@ -418,8 +418,10 @@ async function passwordForgot(request: Request, env: Env, ctx: ExecutionContext 
     { expirationTtl: RESET_TTL_S },
   );
   const link = resetLink(env, token);
-  if (!env.RESEND_API_KEY || !env.RESET_FROM) {
-    console.error("password reset requested for a real account but no mailer is configured — set RESEND_API_KEY and RESET_FROM (see DEPLOY.md). Link NOT delivered.");
+  if (!mailerReady(env)) {
+    console.error("password reset requested for a real account but reset is not fully configured — need RESEND_API_KEY, RESET_FROM and APP_URL (see DEPLOY.md). Missing: "
+      + [!env.RESEND_API_KEY && "RESEND_API_KEY", !env.RESET_FROM && "RESET_FROM", !env.APP_URL && "APP_URL"].filter(Boolean).join(", ")
+      + ". Link NOT delivered.");
     // Local dev only, and only while there is genuinely no mailer, so a
     // misconfigured production deploy can never quietly start handing these out.
     if (env.RESET_DEBUG === "1") return json({ ...neutral, devResetLink: link });
@@ -464,14 +466,26 @@ async function passwordReset(request: Request, env: Env, secret: string) {
   return json({ ok: true, token: await makeToken(user.id, secret, { iatMs: boundaryMs }), user: publicUser(user) });
 }
 
+/**
+ * Deliberately has NO default. A guessed base URL produces a link that looks
+ * right, arrives by email, and 404s — which reads to the person locked out as
+ * "reset is broken" with nothing to act on. Returning "" here instead makes the
+ * whole feature report itself unconfigured (see mailerReady), so the client hides
+ * "Forgot your password?" rather than mailing out dead links.
+ */
 function resetLink(env: Env, token: string) {
   const base = String(env.APP_URL || "").replace(/\/+$/, "");
+  if (!base) return "";
   // The token rides in the FRAGMENT, not the query string: fragments are never
   // sent to a server, so it stays out of access logs and Referer headers.
-  return (base || "https://enkela.github.io/enkelas-bookshelf") + "/#reset/" + token;
+  return base + "/#reset/" + token;
+}
+/** Reset needs all three: a key to send with, a verified sender, and a link target. */
+function mailerReady(env: Env) {
+  return !!(env.RESEND_API_KEY && env.RESET_FROM && env.APP_URL);
 }
 async function sendResetEmail(env: Env, user: any, link: string) {
-  if (!env.RESEND_API_KEY || !env.RESET_FROM) return false;
+  if (!mailerReady(env) || !link) return false;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -867,7 +881,7 @@ async function route(url: URL, request: Request, env: Env, ctx: ExecutionContext
       clubs: !!env.CLUBS_DB, recs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS,
       // The client hides "Forgot password?" when nothing can deliver the link,
       // rather than promising an email that will never arrive.
-      passwordReset: !!(env.RESEND_API_KEY && env.RESET_FROM),
+      passwordReset: mailerReady(env),
     });
   }
   return json({ error: "Not found" }, 404);

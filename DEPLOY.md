@@ -83,11 +83,14 @@ means a lost account — there is no admin backdoor by design. Reset uses
 cd sync-worker
 npx wrangler secret put RESEND_API_KEY          # re_... from the Resend dashboard
 npx wrangler secret put RESET_FROM              # e.g. Bookshelf <no-reply@yourdomain>
-npx wrangler secret put APP_URL                 # e.g. https://enkela.github.io/enkelas-bookshelf
+npx wrangler secret put APP_URL                 # https://qelik.github.io/enkelas-bookshelf
 ```
 
 - `RESET_FROM` must be on a domain verified in Resend, or delivery silently fails
   (the worker logs it — `npx wrangler tail`).
+- **All three are required.** `/api` reports `passwordReset: false` until every one
+  is set, and the app hides the link rather than mailing a URL that 404s — there is
+  deliberately no default `APP_URL` to guess with.
 - `APP_URL` builds the reset link. The token rides in the URL **fragment**
   (`#reset/<token>`), so it never reaches a server log or a `Referer` header, and
   the app strips it from the address bar as soon as it's read.
@@ -98,7 +101,7 @@ npx wrangler secret put APP_URL                 # e.g. https://enkela.github.io/
 ### ALLOWED_ORIGINS (optional)
 
 Comma-separated list of origins allowed to call the API, e.g.
-`https://enkela.github.io,http://localhost:8123`. Leave unset to allow any origin
+`https://qelik.github.io,http://localhost:8123`. Leave unset to allow any origin
 — safe here because auth is a `Bearer` header rather than an ambient cookie, so a
 hostile page has no credential to replay. Setting it is cheap defence in depth.
 
