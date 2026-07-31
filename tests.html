@@ -176,6 +176,46 @@
         eq(T.readNextPicks([rnBook({ status: "want" }), rnBook({ status: "want" })]), [], "no finished books → no picks");
       });
 
+      // --- calendar-day maths (daylight-saving safety) ------------------------
+      // Every per-day map/set is keyed by a local-midnight timestamp. Stepping
+      // those keys with ±86400000 drifts an hour across a DST change, after
+      // which every lookup misses — blank chart bars and broken streaks. These
+      // tests find a real transition in whatever timezone the browser is in and
+      // walk over it. (Zones without DST pass trivially — nothing to cross.)
+      function dstBoundary() {
+        var start = T.startOfDay(new Date(new Date().getFullYear(), 0, 1));
+        for (var i = 0; i < 400; i++) {
+          var a = T.shiftDay(start, i);
+          if (T.shiftDay(start, i + 1) - a !== 86400000) return a; // day AFTER a is the odd one
+        }
+        return null;
+      }
+      test("shiftDay lands on local midnight either side of a DST change", function () {
+        var edge = dstBoundary();
+        if (edge === null) { assert(true, "timezone has no DST — nothing to cross"); return; }
+        for (var n = -2; n <= 2; n++) {
+          var d = new Date(T.shiftDay(edge, n));
+          eq([d.getHours(), d.getMinutes(), d.getSeconds()], [0, 0, 0], "offset " + n + " is midnight");
+          eq(T.shiftDay(edge, n), T.startOfDay(d), "offset " + n + " agrees with startOfDay");
+        }
+      });
+      test("a streak counts through a DST change", function () {
+        var edge = dstBoundary();
+        if (edge === null) { assert(true, "timezone has no DST — nothing to cross"); return; }
+        var days = new Set([-1, 0, 1, 2].map(function (n) { return T.shiftDay(edge, n); }));
+        eq(T.streakFromDays(days).longest, 4, "4 consecutive calendar days = a 4-day streak");
+      });
+      test("the 30-day chart resolves every day across a DST change", function () {
+        var edge = dstBoundary();
+        var end = edge === null ? T.startOfDay(new Date()) : T.shiftDay(edge, 2);
+        var perDay = {};
+        for (var i = 0; i < 30; i++) perDay[T.shiftDay(end, -i)] = 10;
+        var items = T.dailyItems(perDay, end);
+        eq(items.length, 30, "30 buckets");
+        var missed = items.filter(function (it) { return it.value !== 10; }).length;
+        eq(missed, 0, "no bucket lost its day key");
+      });
+
       // --- full-backup base64 round-trip --------------------------------------
       test("bufToB64/b64ToBuf survive a binary round-trip", function () {
         var src = new Uint8Array(70000); // > one 0x8000 chunk

@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.24"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -118,6 +118,22 @@ function toLocalInput(iso) {
     return d.toISOString().slice(0, 16);
 }
 function startOfDay(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); return d.getTime(); }
+// A "day key" is a local-midnight timestamp (what startOfDay returns) and every
+// per-day map/set in here is keyed by one. Local days are NOT all DAY ms long —
+// a daylight-saving change makes one 23h and another 25h — so stepping keys with
+// ±DAY drifts an hour past the boundary and then every lookup misses (blank
+// chart bars, broken streaks). Step through the Date API instead: it knows the
+// calendar. setHours re-normalizes because the target day may sit in a different
+// UTC offset than the day we started from.
+function shiftDay(dayTs, days) {
+    const d = new Date(dayTs);
+    d.setDate(d.getDate() + days);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+}
+// Whole calendar days from one day key to another. Rounding absorbs the ±1h
+// wobble a DST change leaves in the raw millisecond difference.
+function dayspan(fromTs, toTs) { return Math.round((toTs - fromTs) / DAY); }
 function fmtDate(iso) {
     if (!iso)
         return "";
@@ -801,14 +817,14 @@ function readingDaySet() {
         days.add(startOfDay(d)); }));
     return days;
 }
-function readingStreak() {
-    const days = readingDaySet();
+// Split out from readingStreak so the day maths can be tested without a state.
+function streakFromDays(days) {
     if (days.size === 0)
         return { current: 0, longest: 0 };
     const sorted = Array.from(days).sort((a, b) => a - b);
     let longest = 1, run = 1;
     for (let i = 1; i < sorted.length; i++) {
-        if (sorted[i] - sorted[i - 1] === DAY) {
+        if (sorted[i] === shiftDay(sorted[i - 1], 1)) {
             run++;
             longest = Math.max(longest, run);
         }
@@ -816,16 +832,18 @@ function readingStreak() {
             run = 1;
     }
     const today = startOfDay(new Date());
+    const yesterday = shiftDay(today, -1);
     let current = 0;
-    if (days.has(today) || days.has(today - DAY)) {
-        let cursor = days.has(today) ? today : today - DAY;
+    if (days.has(today) || days.has(yesterday)) {
+        let cursor = days.has(today) ? today : yesterday;
         while (days.has(cursor)) {
             current++;
-            cursor -= DAY;
+            cursor = shiftDay(cursor, -1);
         }
     }
     return { current, longest };
 }
+function readingStreak() { return streakFromDays(readingDaySet()); }
 // Estimated finish date for a book being read, based on recent pace.
 function estimateFinish(book) {
     if (book.status !== "reading" || !book.totalPages)
@@ -837,7 +855,7 @@ function estimateFinish(book) {
     const days = Array.from(new Set(book.logs.map((l) => startOfDay(new Date(l.date))))).filter((n) => !isNaN(n)).sort((a, b) => a - b);
     if (days.length < 2)
         return null;
-    const spanDays = Math.max(1, Math.round((days[days.length - 1] - days[0]) / DAY) + 1);
+    const spanDays = Math.max(1, dayspan(days[0], days[days.length - 1]) + 1);
     const pace = read / spanDays;
     if (pace <= 0)
         return null;
@@ -1348,7 +1366,7 @@ function loanBadgeHTML(b) {
     const due = startOfDay(new Date(b.loanDue + "T12:00:00"));
     if (isNaN(due))
         return "";
-    const days = Math.round((due - startOfDay(new Date())) / DAY);
+    const days = dayspan(startOfDay(new Date()), due);
     const cls = days < 0 ? " overdue" : days <= 5 ? " soon" : "";
     const label = days < 0 ? `overdue by ${Math.abs(days)}d` : days === 0 ? "due back today" : days <= 14 ? `due back in ${days}d` : `due ${fmtDate(new Date(due).toISOString())}`;
     return `<span class="loan-badge${cls}" title="Borrowed copy — due back ${fmtDate(new Date(due).toISOString())}">📅 ${label}</span>`;
@@ -1831,7 +1849,7 @@ function renderGoalExtra() {
     if (isThisYear && g.target > 0) {
         const done = booksFinishedInYear(g.year);
         const now = new Date();
-        const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / DAY);
+        const dayOfYear = dayspan(startOfDay(new Date(now.getFullYear(), 0, 0)), startOfDay(now));
         const expected = g.target * (dayOfYear / 365);
         const diff = done - expected;
         const rounded = Math.abs(Math.round(diff * 10) / 10);
@@ -1884,10 +1902,12 @@ function renderStatsView() {
     const ri = ratingItems();
     $("#chart-ratings").innerHTML = ri.some((r) => r.value) ? svgBars(ri, "books") : `<p class="muted">Rate some books to see this.</p>`;
 }
-function dailyItems(perDay) {
-    const today = startOfDay(new Date()), items = [];
+// endDay overrides "today" — only the tests pass it, so the 30-day window can be
+// pinned either side of a DST change.
+function dailyItems(perDay, endDay) {
+    const today = endDay != null ? endDay : startOfDay(new Date()), items = [];
     for (let i = 29; i >= 0; i--) {
-        const t = today - i * DAY, d = new Date(t);
+        const t = shiftDay(today, -i), d = new Date(t);
         items.push({ full: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }), value: perDay[t] || 0, tick: i % 5 === 0 ? (d.getMonth() + 1) + "/" + d.getDate() : "" });
     }
     return items;
@@ -1946,14 +1966,14 @@ function svgBars(items, unit) {
 function svgCalendar(perDay) {
     const cell = 13, gap = 3, padT = 4, padL = 4, weeks = 26;
     const today = startOfDay(new Date());
-    let start = today - (weeks * 7 - 1) * DAY;
-    start -= new Date(start).getDay() * DAY; // align to Sunday
-    const cols = Math.floor((today - start) / (7 * DAY)) + 1;
+    let start = shiftDay(today, -(weeks * 7 - 1));
+    start = shiftDay(start, -new Date(start).getDay()); // align to Sunday
+    const cols = Math.floor(dayspan(start, today) / 7) + 1;
     const W = padL + cols * (cell + gap), H = padT + 7 * (cell + gap);
     let cells = "";
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < 7; r++) {
-            const t = start + (c * 7 + r) * DAY;
+            const t = shiftDay(start, c * 7 + r);
             if (t > today)
                 continue;
             const v = perDay[t] || 0;
@@ -6212,6 +6232,6 @@ export const BookshelfAPI = {
 };
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems };
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order

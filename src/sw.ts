@@ -5,7 +5,7 @@
 // service-worker scope so skipWaiting/clients/event types check correctly.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-const CACHE = "enkelas-bookshelf-v38";
+const CACHE = "enkelas-bookshelf-v39";
 const SHELL = [
   "./",
   "./index.html",
