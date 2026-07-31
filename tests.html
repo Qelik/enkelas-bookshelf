@@ -239,6 +239,26 @@
         eq(runs, 1, "0 is cached, not treated as a miss");
       });
 
+      // --- shelf order under a filter -----------------------------------------
+      // The wooden shelf renders the FILTERED library, so a drag only ever sees
+      // the visible books. Writing that list straight to state.shelfOrder threw
+      // away the position of everything the filter had hidden.
+      test("dragging a filtered shelf keeps hidden books' positions", function () {
+        var all = ["a", "b", "c", "d", "e"];
+        // Full order a,b,c,d,e; a genre filter shows only b,d; user swaps them.
+        eq(T.mergeShelfOrder(["a", "b", "c", "d", "e"], ["d", "b"], all),
+           ["a", "d", "b", "c", "e"], "hidden a, c, e keep their places");
+      });
+      test("shelf order drops books that no longer exist", function () {
+        eq(T.mergeShelfOrder(["a", "gone", "b"], ["b", "a"], ["a", "b"]), ["b", "a"], "stale id removed");
+      });
+      test("shelf order copes with no previous order", function () {
+        eq(T.mergeShelfOrder([], ["c", "a"], ["a", "b", "c"]), ["c", "a"], "visible run becomes the order");
+      });
+      test("shelf order is unchanged when nothing is filtered out", function () {
+        eq(T.mergeShelfOrder(["a", "b", "c"], ["c", "b", "a"], ["a", "b", "c"]), ["c", "b", "a"], "plain reorder");
+      });
+
       // --- full-backup base64 round-trip --------------------------------------
       test("bufToB64/b64ToBuf survive a binary round-trip", function () {
         var src = new Uint8Array(70000); // > one 0x8000 chunk

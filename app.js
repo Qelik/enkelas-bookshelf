@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31c"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31d"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -326,12 +326,30 @@ function derived(key, compute) {
         derivedCache.set(key, compute());
     return derivedCache.get(key);
 }
+// A failed local save used to be a console.warn and nothing else: the user kept
+// editing a bookshelf that wasn't being written anywhere. Say it out loud, once
+// (a toast per keystroke would be its own problem), and reflect it in the
+// header's status so the state is visible rather than momentary.
+let storageFull = false;
 async function persist() {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        // commit() renders BEFORE it persists, so clearing the flag has to repaint
+        // the status itself or the warning lingers for one more commit.
+        if (storageFull) {
+            storageFull = false;
+            renderStorageStatus();
+        }
     }
     catch (e) {
         console.warn(e);
+        const quota = e && (e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22);
+        if (!storageFull) {
+            storageFull = true;
+            toast("⚠️", quota ? "This device is out of storage" : "Couldn't save on this device", quota ? "Your latest changes aren't saved locally. Export a backup, then remove some ePubs or books."
+                : "Your latest changes aren't saved locally. Export a backup to be safe.");
+        }
+        renderStorageStatus();
     }
     if (fileHandle) {
         try {
@@ -1040,11 +1058,21 @@ async function searchOpenLibrary(title, author, isbn) {
 // OL title/author search first (best coverage), then the ISBN image
 // (validated), then Google Books (unauthenticated → rate-limited → last).
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A hung request fires neither onload nor onerror for as long as the browser
+// feels like waiting, and backfillCovers awaits this once per book in sequence —
+// so one stalled cover stalled the entire backfill. Give up after 5s.
 function imgOk(url) {
     return new Promise((resolve) => {
         const im = new Image();
-        im.onload = () => resolve(im.naturalWidth > 10); // OL's "missing" image is 1×1
-        im.onerror = () => resolve(false);
+        let settled = false;
+        const done = (v) => { if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(v);
+        } };
+        const timer = setTimeout(() => { im.src = ""; done(false); }, 5000);
+        im.onload = () => done(im.naturalWidth > 10); // OL's "missing" image is 1×1
+        im.onerror = () => done(false);
         im.src = url;
     });
 }
@@ -1709,8 +1737,35 @@ function shelfHTML(list) {
     return `<p class="shelf-hint muted">🖐 Drag books to arrange your shelf however you like — your order is saved.</p><div class="bookshelf">${slots}</div>`;
 }
 // Drag & drop shelf rearranging (mouse via HTML5 DnD, touch via long-press).
+// The shelf renders the FILTERED library, so the DOM only holds the books
+// currently visible. Writing that list straight to state.shelfOrder threw away
+// the position of everything a genre/search filter had hidden. Splice the
+// visible run back into the stored order instead, keeping hidden books where
+// they were relative to it.
+function mergeShelfOrder(prevOrder, visible, knownIds) {
+    const onShelf = new Set(visible);
+    const known = new Set(knownIds);
+    const prev = (prevOrder || []).filter((id) => known.has(id));
+    const out = [];
+    let placed = false;
+    for (const id of prev) {
+        if (onShelf.has(id)) {
+            if (!placed) {
+                out.push(...visible);
+                placed = true;
+            } // first slot the run occupied
+            continue;
+        }
+        out.push(id);
+    }
+    if (!placed)
+        out.push(...visible); // nothing was ordered yet, or none of these were
+    return out;
+}
 function saveShelfOrderFromDOM(shelf) {
-    state.shelfOrder = $$(".shelf-slot", shelf).map((s) => s.dataset.shelfId);
+    const visible = $$(".shelf-slot", shelf).map((s) => s.dataset.shelfId);
+    // Anything never ordered before keeps its implicit position at the end.
+    state.shelfOrder = mergeShelfOrder(state.shelfOrder || [], visible, state.books.map((b) => b.id));
     commit();
 }
 function setupShelfDnD(root) {
@@ -2245,8 +2300,17 @@ function leaveBookPage() {
     closeBookPage();
     histCleanHash();
 }
-function refreshDetail() {
+function refreshDetail(force) {
     if (!currentDetailId || activeView !== "book")
+        return;
+    // The book page holds the journal / quote / character / vocab forms, and this
+    // rebuilds all of #detail-body. A background commit — the eReader logs a
+    // session every minute, and a sync pull can adopt server data at any moment —
+    // would then wipe whatever was half-typed. If a field in there has focus, the
+    // page is already showing the user's own edit; leave it be. Anything that
+    // needs an immediate redraw (submitting the form) blurs or re-renders anyway.
+    const active = document.activeElement;
+    if (!force && active && $("#detail-body").contains(active) && /^(input|textarea|select)$/i.test(active.tagName))
         return;
     const b = state.books.find((x) => x.id === currentDetailId);
     if (b)
@@ -2356,13 +2420,20 @@ function openYearReview(year) {
 // ---------------------------------------------------------------------------
 // Keepsakes: downloads, markdown journals, shareable cards, monthly recap
 // ---------------------------------------------------------------------------
+// The anchor has to be IN the document for the click to count in Firefox, and
+// the object URL must outlive the click — revoking it synchronously afterwards
+// races the download and loses it in Safari/Firefox. Tear both down on a later
+// task instead.
 function downloadFileBlob(name, blob) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = name;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 30000);
 }
 function downloadText(name, text) { downloadFileBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" })); }
 function slugify(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "book"; }
@@ -3146,6 +3217,13 @@ function renderStorageStatus() {
     const el = $("#storage-status");
     if (!el)
         return;
+    // A device that can't write locally is the most important thing to say, even
+    // above sync state — cloud sync doesn't help if this device drops changes.
+    if (storageFull) {
+        el.textContent = "⚠️ Not saving on this device";
+        el.title = "This browser refused to store your latest changes (out of space). Export a backup, then free some room. Tap for settings.";
+        return;
+    }
     if (syncEnabled() && auth && auth.user) {
         const last = relTimeShort(loadLastSync());
         let txt, note;
@@ -4994,9 +5072,14 @@ async function openScan(onDetect) {
     catch (e) { /* ignore */ }
     showModal("scan-modal");
     const grabCanvas = document.createElement("canvas");
+    // Decoding a frame can take longer than the interval on a slow phone; without
+    // this guard the callbacks pile up and compete for the CPU, making the scanner
+    // progressively worse exactly when it's already struggling.
+    let scanning = false;
     scanLoop = setInterval(async () => {
-        if (!scanStream)
+        if (!scanStream || scanning)
             return;
+        scanning = true;
         try {
             let raw = "";
             if (scanDetector) {
@@ -5019,6 +5102,9 @@ async function openScan(onDetect) {
             }
         }
         catch (e) { /* keep scanning */ }
+        finally {
+            scanning = false;
+        }
     }, scanDetector ? 500 : 350);
 }
 function stopScan() {
@@ -5170,14 +5256,11 @@ function closeModals() {
 // ---------------------------------------------------------------------------
 // Data import / export / file connect / Goodreads
 // ---------------------------------------------------------------------------
+// NB: argument order is (text, filename) here but (name, blob) in
+// downloadFileBlob — the two were once confused for each other and broke the
+// share-card and markdown downloads. One implementation now does the work.
 function downloadBlob(text, filename) {
-    const blob = new Blob([text], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFileBlob(filename, new Blob([text], { type: "application/json" }));
 }
 function exportJSON() {
     downloadBlob(JSON.stringify(state, null, 2), "enkelas-bookshelf.json");
@@ -5753,6 +5836,7 @@ function init() {
             book.quotes = book.quotes || [];
             book.quotes.push({ id: uid(), text, page: $("#q-page").value ? Number($("#q-page").value) : null, at: new Date().toISOString() });
             commit();
+            refreshDetail(true); // the field still has focus; force past the guard
             toast("❝", "Quote saved", book.title);
         }
         else if (e.target.id === "journal-form") {
@@ -5763,6 +5847,7 @@ function init() {
             book.journal = book.journal || [];
             book.journal.push({ id: uid(), date: new Date().toISOString(), page: $("#j-page").value ? Number($("#j-page").value) : null, text });
             commit();
+            refreshDetail(true);
             toast("📓", "Journal entry added", book.title);
         }
         else if (e.target.id === "char-form") {
@@ -5773,6 +5858,7 @@ function init() {
             book.characters = book.characters || [];
             book.characters.push({ id: uid(), name, desc: $("#char-desc").value.trim() });
             commit();
+            refreshDetail(true);
         }
         else if (e.target.id === "vocab-form") {
             e.preventDefault();
@@ -5782,6 +5868,7 @@ function init() {
             book.vocab = book.vocab || [];
             book.vocab.push({ id: uid(), word, def: $("#vocab-def").value.trim(), page: $("#vocab-page").value ? Number($("#vocab-page").value) : null });
             commit();
+            refreshDetail(true);
         }
     });
     // Book modal
@@ -6282,6 +6369,6 @@ export const BookshelfAPI = {
 };
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder };
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order
