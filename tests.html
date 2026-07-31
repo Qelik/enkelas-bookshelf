@@ -283,6 +283,38 @@
         assert(same, "bytes identical");
       });
 
+      // --- password policy (mirrors the worker; see passwordProblem there) -----
+      // The server is the authority. These guard the CLIENT copy, whose job is to
+      // catch a bad password before the round trip — and, more importantly, to
+      // never reject one the server would have accepted.
+      test("passwordProblem accepts a reasonable passphrase", function () {
+        eq(T.passwordProblem("correct-horse-battery"), null, "long passphrase ok");
+        eq(T.passwordProblem("Tr0ubled-Waters!"), null, "mixed classes ok");
+      });
+      test("passwordProblem rejects short, common and repetitive passwords", function () {
+        assert(T.passwordProblem("short123"), "under 10 rejected");
+        assert(T.passwordProblem("password123"), "top-list rejected");
+        assert(T.passwordProblem("Password123"), "top-list is case-insensitive");
+        assert(T.passwordProblem("aaaaaaaaaaaa"), "one repeated character rejected");
+        assert(T.passwordProblem("ababababab"), "too few distinct characters rejected");
+        assert(T.passwordProblem(new Array(210).join("x") + "yz9!"), "over 200 rejected");
+      });
+      test("passwordProblem rejects the user's own email and name", function () {
+        assert(T.passwordProblem("enkela-reads-books", "enkela@example.com"), "contains email local part");
+        assert(T.passwordProblem("hasanaj-loves-books", "x@y.com", "Enkela Hasanaj"), "contains surname");
+        // A short name fragment must NOT poison an otherwise fine password —
+        // being called Bo shouldn't ban every password containing "bo".
+        eq(T.passwordProblem("bo-rowing-elephants", "x@y.com", "Bo Li"), null, "short name parts ignored");
+      });
+      test("passwordStrength scores from unusable to strong", function () {
+        eq(T.passwordStrength("").score, 0, "empty scores 0");
+        eq(T.passwordStrength("short").score, 1, "policy failure scores 1");
+        assert(T.passwordStrength("decent-passphrase").score >= 2, "acceptable scores 2+");
+        assert(T.passwordStrength("Th1s-Is-A-Long-One!").score === 4, "long and mixed scores 4");
+        // The meter must never call something "strong" that the policy refuses.
+        assert(T.passwordStrength("password123").score === 1, "blocklisted is never strong");
+      });
+
       // --- render results ----------------------------------------------------
       var box = document.getElementById("results");
       box.innerHTML = results.map(function (r) {

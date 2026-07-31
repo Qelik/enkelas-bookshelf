@@ -17,13 +17,45 @@ say()  { printf '%s\n' "$*"; }
 pass() { PASS=$((PASS+1)); say "  ✓ $1"; }
 fail() { FAIL=$((FAIL+1)); say "  ✗ $1"; }
 # check <name> <expected> <actual>
+# NOTE: always capture curl into a variable first (R=$(curl ...)) and pass "$R".
+# Inlining "$(curl ... -d "{\"k\":\"$v\"}")" as an argument mangles the escaped
+# quotes: the JSON body is truncated and the -H value splits into two arguments,
+# so curl quietly requests the wrong thing and the status code you assert on is
+# meaningless. That produced four "failures" that looked like worker bugs.
 check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected: $2, got: $3)"; fi; }
 json() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d$1)" 2>/dev/null; }
 
 say "▸ starting wrangler dev --local on :$PORT (log: $LOG)"
-( cd "$DIR" && npx wrangler dev --local --config wrangler.toml --port "$PORT" --var AUTH_SECRET:test-secret-for-endpoint-tests >"$LOG" 2>&1 ) &
+# Wipe the local KV state first. `wrangler dev --local` persists KV to
+# .wrangler/state/v3/kv BETWEEN runs, and locally there is no CF-Connecting-IP,
+# so every curl below shares one rate-limit bucket keyed "unknown". Left alone,
+# the per-IP login and register caps accumulate across runs until the suite
+# starts failing with 429s that look like real bugs. Only the kv directory goes:
+# d1/ holds the seeded clubs schema, which is expensive to recreate.
+rm -rf "$DIR/.wrangler/state/v3/kv"
+
+# AUTH_SECRET must clear the worker's 32-character floor or it refuses to serve.
+# RESET_DEBUG returns the reset link in the response so the flow is testable with
+# no mailer — local dev only, and the preflight check asserts it is never
+# committed to either wrangler config.
+# Refuse to start on an occupied port rather than silently testing whatever is
+# already listening there — a leftover worker running OLD code produces failures
+# that look like real regressions and survive every rebuild.
+if curl -sf "$BASE/" >/dev/null 2>&1; then
+  say "✗ something is already listening on :$PORT — stop it first (pkill -f 'wrangler dev'), or run with PORT=<free port>"
+  exit 1
+fi
+
+# `set -m` puts the background job in its own process group, so the trap can kill
+# wrangler AND its children with `kill -- -PID`. Killing only the subshell PID (as
+# this did before) left npx/wrangler/workerd alive holding the port and the state
+# directory, and the NEXT run then silently talked to that stale worker.
+set -m
+( cd "$DIR" && exec npx wrangler dev --local --config wrangler.toml --port "$PORT" \
+    --var AUTH_SECRET:test-secret-for-endpoint-tests-at-least-32-chars --var RESET_DEBUG:1 >"$LOG" 2>&1 ) &
 WRANGLER_PID=$!
-trap 'kill $WRANGLER_PID 2>/dev/null; wait $WRANGLER_PID 2>/dev/null' EXIT
+set +m
+trap 'kill -- -$WRANGLER_PID 2>/dev/null; kill $WRANGLER_PID 2>/dev/null; wait $WRANGLER_PID 2>/dev/null' EXIT
 
 # Wait (up to 60s) for the worker to answer.
 for i in $(seq 1 120); do
@@ -34,7 +66,7 @@ done
 if ! curl -sf "$BASE/" >/dev/null 2>&1; then say "worker never came up — log tail:"; tail -20 "$LOG"; exit 1; fi
 
 STAMP=$(date +%s)
-U1="alice-$STAMP@test.local"; U2="bob-$STAMP@test.local"
+U1="alice-$STAMP@test.local"; U2="bob-$STAMP@test.local"; U3="carol-$STAMP@test.local"
 
 say ""
 say "Health"
@@ -73,6 +105,121 @@ M1=$(curl -s -X POST "$BASE/api/login" -H 'content-type: application/json' \
 M2=$(curl -s -X POST "$BASE/api/login" -H 'content-type: application/json' \
   -d '{"email":"nobody-here-at-all@test.local","password":"definitely-wrong"}' | json "['error']")
 check "login doesn't reveal whether an email exists" "$M1" "$M2"
+# Security headers are attached once, in fetch(), so no handler can omit them.
+HDRS=$(curl -s -D - -o /dev/null "$BASE/" | tr 'A-Z' 'a-z')
+printf '%s' "$HDRS" | grep -q 'x-content-type-options: nosniff' && pass "responses set X-Content-Type-Options" || fail "responses set X-Content-Type-Options"
+printf '%s' "$HDRS" | grep -q 'cache-control: no-store' && pass "responses set Cache-Control: no-store" || fail "responses set Cache-Control: no-store"
+
+say ""
+say "Password policy (new passwords only — old accounts are never re-checked)"
+# check_reg <name> <password> — every case must be refused with a 400.
+reg_code() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"pol-$1-$STAMP@test.local\",\"fullName\":\"Poll Tester\",\"password\":\"$2\"}"; }
+check "under 10 characters is rejected" "400" "$(reg_code short 'short123')"
+check "a top-list password is rejected" "400" "$(reg_code common 'password123')"
+check "too few distinct characters is rejected" "400" "$(reg_code narrow 'ababababab')"
+check "a password containing your name is rejected" "400" "$(reg_code name 'PollTester99')"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"pol-mail-$STAMP@test.local\",\"fullName\":\"Mail Tester\",\"password\":\"pol-mail-$STAMP-x\"}")
+check "a password containing your email is rejected" "400" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/register" -H 'content-type: application/json' \
+  -d '{"email":"not-an-email","fullName":"X Y","password":"decent-passphrase-9"}')
+check "a bad email address is rejected" "400" "$R"
+
+say ""
+say "Change password (and session revocation)"
+R=$(curl -s -X POST "$BASE/api/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U3\",\"fullName\":\"Carol Test\",\"password\":\"first-passphrase-9\"}")
+T3=$(printf '%s' "$R" | json "['token']")
+[ -n "$T3" ] && pass "register a third account" || fail "register a third account ($R)"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/password/change" -H "authorization: Bearer $T3" -H 'content-type: application/json' \
+  -d '{"currentPassword":"wrong-passphrase-9","newPassword":"second-passphrase-9"}')
+check "wrong current password → 401" "401" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/password/change" -H "authorization: Bearer $T3" -H 'content-type: application/json' \
+  -d '{"currentPassword":"first-passphrase-9","newPassword":"password123"}')
+check "a weak new password → 400" "400" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/password/change" -H 'content-type: application/json' \
+  -d '{"currentPassword":"first-passphrase-9","newPassword":"second-passphrase-9"}')
+check "changing without a token → 401" "401" "$R"
+R=$(curl -s -X POST "$BASE/api/password/change" -H "authorization: Bearer $T3" -H 'content-type: application/json' \
+  -d '{"currentPassword":"first-passphrase-9","newPassword":"second-passphrase-9"}')
+T3B=$(printf '%s' "$R" | json "['token']")
+[ -n "$T3B" ] && pass "change succeeds and hands back a fresh token" || fail "change succeeds and hands back a fresh token ($R)"
+# THE point of the change: the token the old password minted must stop working,
+# or "change my password because I lost my laptop" doesn't actually do anything.
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $T3")
+check "the pre-change token is revoked" "401" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $T3B")
+check "…but the replacement token still works" "200" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U3\",\"password\":\"first-passphrase-9\"}")
+check "the old password no longer logs in" "401" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U3\",\"password\":\"second-passphrase-9\"}")
+check "the new password does" "200" "$R"
+
+# The email in the change-password body is a HINT, used only for accounts created
+# before the uid→email index existed (they get one on their next login). It must
+# never redirect the write: the signed token decides whose password changes. Point
+# it at someone else's address and their account has to come out untouched.
+R=$(curl -s -X POST "$BASE/api/password/change" -H "authorization: Bearer $T3B" -H 'content-type: application/json' \
+  -d "{\"currentPassword\":\"second-passphrase-9\",\"newPassword\":\"hijack-passphrase-9\",\"email\":\"$U1\"}")
+T3B=$(printf '%s' "$R" | json "['token']")
+[ -n "$T3B" ] && pass "a change with someone else's email hint still succeeds for the token owner" \
+  || fail "a change with someone else's email hint still succeeds for the token owner ($R)"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U1\",\"password\":\"hijack-passphrase-9\"}")
+check "…and the hinted account's password is untouched" "401" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U3\",\"password\":\"hijack-passphrase-9\"}")
+check "…while the token owner's password did change" "200" "$R"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$U1\",\"password\":\"correct-horse-1\"}")
+check "…and the hinted account still logs in normally" "200" "$R"
+
+say ""
+say "Forgot / reset password"
+# The response must be byte-identical for a real account and a made-up one, or
+# "forgot password" becomes a free lookup for who has an account here.
+F1=$(curl -s -X POST "$BASE/api/password/forgot" -H 'content-type: application/json' -d "{\"email\":\"$U2\"}" | json "['message']")
+F2=$(curl -s -X POST "$BASE/api/password/forgot" -H 'content-type: application/json' -d '{"email":"nobody-at-all@test.local"}' | json "['message']")
+check "forgot-password doesn't reveal whether an email exists" "$F1" "$F2"
+# …and not by the clock either. Mailing is handed to waitUntil so a registered
+# address doesn't pay for the outbound HTTP call while an unknown one doesn't.
+# Generous bound: this only has to catch "one path awaits a network round trip".
+TA=$(curl -s -o /dev/null -w '%{time_total}' -X POST "$BASE/api/password/forgot" -H 'content-type: application/json' -d "{\"email\":\"$U2\"}")
+TB=$(curl -s -o /dev/null -w '%{time_total}' -X POST "$BASE/api/password/forgot" -H 'content-type: application/json' -d '{"email":"nobody-at-all@test.local"}')
+CLOSE=$(python3 -c "print('yes' if abs($TA-$TB) < 0.5 else 'no ($TA vs $TB)')")
+check "…nor by how long it takes to answer" "yes" "$CLOSE"
+R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/password/reset" -H 'content-type: application/json' \
+  -d '{"token":"totally-made-up-token","newPassword":"third-passphrase-9"}')
+check "a junk reset token → 400" "400" "$R"
+# RESET_DEBUG hands the link back when no mailer is configured, so the rest of
+# the flow is testable locally. Never set in production.
+LINK=$(curl -s -X POST "$BASE/api/password/forgot" -H 'content-type: application/json' -d "{\"email\":\"$U3\"}" | json "['devResetLink']")
+RTOK="${LINK##*#reset/}"
+if [ -n "$RTOK" ] && [ "$RTOK" != "$LINK" ]; then
+  pass "a reset link is minted for a real account"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/password/reset" -H 'content-type: application/json' \
+    -d "{\"token\":\"$RTOK\",\"newPassword\":\"password123\"}")
+  check "a weak new password → 400 (and the link survives)" "400" "$R"
+  R=$(curl -s -X POST "$BASE/api/password/reset" -H 'content-type: application/json' \
+    -d "{\"token\":\"$RTOK\",\"newPassword\":\"third-passphrase-9\"}")
+  T3C=$(printf '%s' "$R" | json "['token']")
+  [ -n "$T3C" ] && pass "redeeming the link sets the password and signs you in" || fail "redeeming the link sets the password and signs you in ($R)"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/password/reset" -H 'content-type: application/json' \
+    -d "{\"token\":\"$RTOK\",\"newPassword\":\"fourth-passphrase-9\"}")
+  check "the link is single-use" "400" "$R"
+  # A reset is the "someone else knows my password" escape hatch — it has to
+  # evict their sessions too, not just change what the login form accepts.
+  check "the pre-reset token is revoked" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $T3B")"
+  check "the post-reset token works" "200" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $T3C")"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' \
+    -d "{\"email\":\"$U3\",\"password\":\"third-passphrase-9\"}")
+  check "the reset password logs in" "200" "$R"
+else
+  fail "a reset link is minted for a real account (no devResetLink — is RESET_DEBUG:1 set?)"
+fi
 
 say ""
 say "Data sync (optimistic concurrency)"
@@ -126,6 +273,23 @@ if [ "$CLUBS_ON" = "True" ]; then
   check "progress is forward-only" "70" "$(printf '%s' "$R" | json "['me']['progress_pct']")"
   R=$(curl -s "$BASE/api/clubs" -H "authorization: Bearer $T2")
   check "clubs list carries members" "2" "$(printf '%s' "$R" | python3 -c "import sys,json;d=json.load(sys.stdin);c=[x for x in d['clubs'] if x['id']=='$CLUB'][0];print(len(c['members']))" 2>/dev/null)"
+
+  # Realtime credentials. A WebSocket URL can't carry an Authorization header, so
+  # whatever it does carry ends up in proxy and access logs — which is why it's a
+  # 60-second club-scoped ticket rather than the 30-day session token.
+  TICKET=$(curl -s -X POST "$BASE/api/clubs/$CLUB/ws-ticket" -H "authorization: Bearer $T1" | json "['ticket']")
+  [ -n "$TICKET" ] && pass "a member can mint a WebSocket ticket" || fail "a member can mint a WebSocket ticket"
+  # The ticket must be useless against the REST API, or handing it over in a URL
+  # would be no better than handing over the session token.
+  check "a ws ticket can't read /api/data" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $TICKET")"
+  check "a ws ticket can't list clubs" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/clubs" -H "authorization: Bearer $TICKET")"
+  # …and the session token must be useless on the socket, so nobody is tempted
+  # to go back to putting it in the URL.
+  WSC=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/clubs/$CLUB/ws?ticket=$T1" \
+    -H 'connection: Upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==')
+  check "a session token is refused on the socket" "401" "$WSC"
+  # Non-members can't get a ticket for a club they aren't in.
+  check "a non-member can't mint a ticket" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/clubs/$CLUB/ws-ticket" -H "authorization: Bearer $T3C")"
   # Leaving a club must not delete your words from everyone else's feed: the
   # comments query inner-joined members, so a departure erased the discussion.
   # Bob comments below Alice's progress, then leaves; Alice must still see it.

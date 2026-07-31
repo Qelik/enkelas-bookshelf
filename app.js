@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31f"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.07.31g"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -537,6 +537,66 @@ async function doAuth(mode, creds) {
     saveSyncBase(null);
     return data.user;
 }
+// ---------------------------------------------------------------------------
+// Password rules — a mirror of the worker's policy so mistakes are caught as
+// you type instead of after a round trip. The SERVER is the authority: this
+// copy exists for the error message, never as the check that matters.
+// Keep in step with passwordProblem() in sync-worker/src/worker.ts.
+// ---------------------------------------------------------------------------
+const PW_MIN = 10, PW_MAX = 200;
+const PW_BLOCKLIST = new Set([
+    "password12", "password123", "password1234", "passw0rd123", "p@ssword123",
+    "1234567890", "12345678910", "qwertyuiop", "qwerty12345", "1q2w3e4r5t",
+    "letmein123", "iloveyou123", "welcome123", "admin12345", "adminadmin", "changeme123",
+    "abc12345678", "monkey12345", "dragon12345", "sunshine123", "princess123", "football123",
+    "baseball123", "trustno1234", "superman123", "starwars123", "whatever123", "qazwsxedc123",
+    "bookshelf1", "bookshelf123", "enkela1234", "readingbooks",
+]);
+function passwordProblem(password, email, fullName) {
+    if (password.length < PW_MIN)
+        return "Password must be at least " + PW_MIN + " characters.";
+    if (password.length > PW_MAX)
+        return "Password must be at most " + PW_MAX + " characters.";
+    const lower = password.toLowerCase();
+    if (PW_BLOCKLIST.has(lower))
+        return "That's one of the most commonly guessed passwords — please pick another.";
+    if (/^(.)\1+$/.test(password))
+        return "Please use more than one repeated character.";
+    if (new Set(lower).size < 5)
+        return "Please use a few more different characters.";
+    const local = String(email || "").split("@")[0].toLowerCase();
+    if (local.length >= 3 && lower.indexOf(local) >= 0)
+        return "Your password can't contain your email address.";
+    for (const part of String(fullName || "").toLowerCase().split(/\s+/)) {
+        if (part.length >= 4 && lower.indexOf(part) >= 0)
+            return "Your password can't contain your name.";
+    }
+    return null;
+}
+/** 0–4 for the meter. Length dominates, because in practice it does. */
+function passwordStrength(password) {
+    if (!password)
+        return { score: 0, label: "" };
+    if (passwordProblem(password))
+        return { score: 1, label: "too weak" };
+    let score = 2;
+    const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((re) => re.test(password)).length;
+    if (password.length >= 14 || (password.length >= 12 && classes >= 3))
+        score = 3;
+    if (password.length >= 18 || (password.length >= 14 && classes >= 3))
+        score = 4;
+    return { score, label: ["", "too weak", "okay", "good", "strong"][score] };
+}
+function renderStrength(prefix, password) {
+    const fill = document.getElementById(prefix + "-strength-fill");
+    const label = document.getElementById(prefix + "-strength-label");
+    if (!fill || !label)
+        return;
+    const { score, label: text } = passwordStrength(password);
+    fill.style.width = (score * 25) + "%";
+    fill.className = score >= 2 ? "s" + score : "";
+    label.textContent = text;
+}
 // Replace local state with the account's copy.
 function adoptServer(blob, updatedAt) {
     state = normalize(blob);
@@ -723,11 +783,15 @@ async function logout() {
 }
 function openAuthModal(mode) {
     setAuthMode(mode || "login");
+    clearPasswordFields("#auth-form");
     $("#auth-name").value = "";
     $("#auth-email").value = "";
-    $("#auth-password").value = "";
     $("#auth-error").textContent = "";
     showModal("auth-modal");
+    // Only offer "Forgot your password?" once we know the server can actually
+    // send the email — a link that never arrives is worse than no link.
+    serverCaps().then((caps) => { const b = $("#auth-forgot"); if (b)
+        b.hidden = authMode !== "login" || !caps.passwordReset; });
     setTimeout(() => $("#auth-email").focus(), 50);
 }
 function setAuthMode(mode) {
@@ -735,24 +799,265 @@ function setAuthMode(mode) {
     $("#tab-login").classList.toggle("active", mode === "login");
     $("#tab-register").classList.toggle("active", mode === "register");
     $("#auth-name-row").hidden = mode !== "register";
+    $("#auth-password2-row").hidden = mode !== "register";
+    $("#auth-strength").hidden = mode !== "register";
+    $("#auth-forgot").hidden = mode !== "login";
     $("#auth-title").textContent = mode === "register" ? "Create your account" : "Log in";
     $("#auth-submit").textContent = mode === "register" ? "Create account" : "Log in";
+    // Tells a password manager to offer a generated password rather than the one
+    // it has on file — the wrong hint here is why people reuse passwords.
+    $("#auth-password").autocomplete = mode === "register" ? "new-password" : "current-password";
     $("#auth-error").textContent = "";
+    if (mode === "login") {
+        $("#auth-password2").value = "";
+        renderStrength("auth", "");
+    }
+    else
+        serverCaps().then((caps) => { const b = $("#auth-forgot"); if (b && authMode === "register")
+            b.hidden = true;
+        else if (b)
+            b.hidden = !caps.passwordReset; });
+}
+/** Never leave a password sitting in a detached DOM node after the modal closes. */
+function clearPasswordFields(scope) {
+    const form = document.querySelector(scope);
+    if (!form)
+        return;
+    form.querySelectorAll('input[type="password"]').forEach((i) => { i.value = ""; i.type = "password"; });
+    form.querySelectorAll(".pw-reveal").forEach((b) => { b.classList.remove("on"); b.textContent = "👁️"; });
+    ["auth", "reset", "pw"].forEach((p) => renderStrength(p, ""));
+}
+// The health endpoint says which optional features this deployment has. Fetched
+// at most once per session, and a failure just means "assume not available".
+let serverCapsCache = null;
+function serverCaps() {
+    if (!serverCapsCache) {
+        serverCapsCache = apiFetch("/api", { method: "GET" })
+            .then(({ data }) => ({ passwordReset: !!(data && data.passwordReset) }))
+            .catch(() => ({ passwordReset: false }));
+    }
+    return serverCapsCache;
 }
 async function onAuthSubmit(e) {
     e.preventDefault();
     const creds = { email: $("#auth-email").value.trim(), password: $("#auth-password").value, fullName: $("#auth-name").value.trim() };
-    $("#auth-error").textContent = "";
+    const err = $("#auth-error");
+    err.textContent = "";
+    // Register-only checks. Login deliberately validates nothing beyond "not
+    // empty": an old account may hold a password that today's rules would reject,
+    // and refusing to even try would lock its owner out of their own shelf.
+    if (authMode === "register") {
+        if (!creds.email) {
+            err.textContent = "Please enter your email address.";
+            return;
+        }
+        if (!creds.fullName) {
+            err.textContent = "Please enter your full name.";
+            return;
+        }
+        const bad = passwordProblem(creds.password, creds.email, creds.fullName);
+        if (bad) {
+            err.textContent = bad;
+            return;
+        }
+        if (creds.password !== $("#auth-password2").value) {
+            err.textContent = "The two passwords don't match.";
+            return;
+        }
+    }
+    else if (!creds.email || !creds.password) {
+        err.textContent = "Please enter your email and password.";
+        return;
+    }
     const submit = $("#auth-submit");
     submit.disabled = true;
     try {
         const user = await doAuth(authMode, creds);
+        const mode = authMode;
+        clearPasswordFields("#auth-form");
         closeModals();
-        await afterSignIn(authMode);
-        toast("✅", authMode === "register" ? "Account created" : "Signed in", user.fullName);
+        await afterSignIn(mode);
+        toast("✅", mode === "register" ? "Account created" : "Signed in", user.fullName);
     }
-    catch (err) {
-        $("#auth-error").textContent = err.message || "Something went wrong.";
+    catch (err2) {
+        err.textContent = err2.message || "Something went wrong.";
+    }
+    finally {
+        submit.disabled = false;
+    }
+}
+// ---- forgot / reset password ------------------------------------------------
+// Two panels in #reset-modal: "ask" mails a link, "set" redeems one. The token
+// arrives in the URL FRAGMENT (#reset/<token>) so it never reaches a server log,
+// and init() strips it from the address bar the moment it's been read.
+let pendingResetToken = null;
+function openForgotModal(prefillEmail) {
+    closeModals();
+    pendingResetToken = null;
+    $("#reset-title").textContent = "Reset your password";
+    $("#reset-ask-form").hidden = false;
+    $("#reset-set-form").hidden = true;
+    $("#reset-ask-error").textContent = "";
+    $("#reset-ask-done").hidden = true;
+    $("#reset-ask-submit").disabled = false;
+    $("#reset-email").value = prefillEmail || "";
+    clearPasswordFields("#reset-set-form");
+    showModal("reset-modal");
+    setTimeout(() => $("#reset-email").focus(), 50);
+}
+function openResetModal(token) {
+    closeModals();
+    pendingResetToken = token;
+    $("#reset-title").textContent = "Choose a new password";
+    $("#reset-ask-form").hidden = true;
+    $("#reset-set-form").hidden = false;
+    $("#reset-set-error").textContent = "";
+    clearPasswordFields("#reset-set-form");
+    showModal("reset-modal");
+    setTimeout(() => $("#reset-password").focus(), 50);
+}
+async function onForgotSubmit(e) {
+    e.preventDefault();
+    const email = $("#reset-email").value.trim();
+    const err = $("#reset-ask-error");
+    err.textContent = "";
+    if (!email) {
+        err.textContent = "Please enter your email address.";
+        return;
+    }
+    const submit = $("#reset-ask-submit");
+    submit.disabled = true;
+    try {
+        const { res, data } = await apiFetch("/api/password/forgot", { method: "POST", body: JSON.stringify({ email }) });
+        if (!res.ok) {
+            err.textContent = (data && data.error) || "Something went wrong. Please try again.";
+            submit.disabled = false;
+            return;
+        }
+        // The server answers the same way whether or not that address has an
+        // account, so this message can't confirm one either.
+        const done = $("#reset-ask-done");
+        done.textContent = (data && data.message) || "If that email has an account, a reset link is on its way.";
+        done.hidden = false;
+        // Local dev without a mailer hands the link back so the flow is testable.
+        if (data && data.devResetLink) {
+            done.textContent += " (dev: " + data.devResetLink + ")";
+        }
+    }
+    catch (e2) {
+        err.textContent = "Couldn't reach the server. Check your connection and try again.";
+        submit.disabled = false;
+    }
+}
+async function onResetSubmit(e) {
+    e.preventDefault();
+    const err = $("#reset-set-error");
+    err.textContent = "";
+    const pw = $("#reset-password").value;
+    if (!pendingResetToken) {
+        err.textContent = "That reset link is invalid. Please request a new one.";
+        return;
+    }
+    const bad = passwordProblem(pw);
+    if (bad) {
+        err.textContent = bad;
+        return;
+    }
+    if (pw !== $("#reset-password2").value) {
+        err.textContent = "The two passwords don't match.";
+        return;
+    }
+    const submit = $("#reset-set-submit");
+    submit.disabled = true;
+    try {
+        const { res, data } = await apiFetch("/api/password/reset", { method: "POST", body: JSON.stringify({ token: pendingResetToken, newPassword: pw }) });
+        if (!res.ok) {
+            err.textContent = (data && data.error) || "Something went wrong. Please try again.";
+            return;
+        }
+        pendingResetToken = null;
+        saveAuth({ token: data.token, user: data.user });
+        saveSyncBase(null);
+        clearPasswordFields("#reset-set-form");
+        closeModals();
+        await afterSignIn("login");
+        toast("🔑", "Password changed", "You're signed in on this device. Other devices need the new password.");
+    }
+    catch (e2) {
+        err.textContent = "Couldn't reach the server. Check your connection and try again.";
+    }
+    finally {
+        submit.disabled = false;
+    }
+}
+// ---- change password (signed in) --------------------------------------------
+function openPasswordModal() {
+    closeAccountMenu();
+    if (!auth) {
+        openAuthModal("login");
+        return;
+    }
+    clearPasswordFields("#password-form");
+    $("#password-error").textContent = "";
+    showModal("password-modal");
+    setTimeout(() => $("#pw-current").focus(), 50);
+}
+async function onPasswordSubmit(e) {
+    e.preventDefault();
+    const err = $("#password-error");
+    err.textContent = "";
+    const current = $("#pw-current").value;
+    const next = $("#pw-new").value;
+    if (!current) {
+        err.textContent = "Please enter your current password.";
+        return;
+    }
+    const bad = passwordProblem(next, auth && auth.user ? auth.user.email : "", auth && auth.user ? auth.user.fullName : "");
+    if (bad) {
+        err.textContent = bad;
+        return;
+    }
+    if (next === current) {
+        err.textContent = "That's the password you already have.";
+        return;
+    }
+    if (next !== $("#pw-new2").value) {
+        err.textContent = "The two passwords don't match.";
+        return;
+    }
+    const submit = $("#password-submit");
+    submit.disabled = true;
+    try {
+        // The email is a hint, not a credential: accounts created before the server
+        // kept a uid→email index can't be looked up from the token alone until their
+        // next login, and without this every existing signed-in user would get
+        // "we couldn't find your account". The server still requires the record's id
+        // to match the signed token, so naming someone else's address gets nowhere.
+        const body = { currentPassword: current, newPassword: next, email: (auth && auth.user && auth.user.email) || "" };
+        const { res, data } = await apiFetch("/api/password/change", { method: "POST", body: JSON.stringify(body) });
+        if (res.status === 401 && data && data.error && /current password/i.test(data.error)) {
+            err.textContent = data.error;
+            return;
+        }
+        if (res.status === 401) {
+            handleAuthExpired();
+            closeModals();
+            return;
+        }
+        if (!res.ok) {
+            err.textContent = (data && data.error) || "Something went wrong. Please try again.";
+            return;
+        }
+        // The server revoked every older token, including the one we were using —
+        // adopt the replacement it just issued or this device signs itself out.
+        saveAuth({ token: data.token, user: data.user });
+        clearPasswordFields("#password-form");
+        closeModals();
+        renderAccount();
+        toast("🔑", "Password changed", "Your other devices have been signed out.");
+    }
+    catch (e2) {
+        err.textContent = "Couldn't reach the server. Check your connection and try again.";
     }
     finally {
         submit.disabled = false;
@@ -3293,6 +3598,7 @@ function renderSettings() {
     if (syncEnabled() && auth && auth.user) {
         acct.textContent = "Signed in as " + auth.user.fullName + " (" + auth.user.email + ")";
         actions.innerHTML = '<button class="ghost" data-settings-action="syncnow">🔄 Sync now</button>'
+            + '<button class="ghost" data-settings-action="password">🔑 Change password</button>'
             + '<button class="ghost danger" data-settings-action="signout">Sign out</button>';
     }
     else if (syncEnabled()) {
@@ -3596,13 +3902,22 @@ function closeClubWs() { if (clubSocket) {
     catch (e) { /* already closed */ }
     clubSocket = null;
 } }
-function openClubWs(clubId) {
+// A WebSocket handshake can't carry an Authorization header, so the credential
+// has to go in the URL — where it lands in proxy logs and browser history. Trade
+// the 30-day session token for a 60-second, single-club ticket first; the REST
+// API rejects that ticket outright, so a leaked URL is worth almost nothing.
+async function openClubWs(clubId) {
     closeClubWs();
     if (!("WebSocket" in window) || !SYNC_API || !auth)
         return;
     try {
+        const { res, data } = await clubApi("/" + encodeURIComponent(clubId) + "/ws-ticket", { method: "POST" });
+        if (!res.ok || !data || !data.ticket)
+            return; // no realtime; polling covers it
+        if (currentClubId !== clubId)
+            return; // moved on while the ticket was in flight
         const base = SYNC_API.replace(/\/$/, "").replace(/^http/, "ws");
-        const ws = new WebSocket(base + "/api/clubs/" + encodeURIComponent(clubId) + "/ws?token=" + encodeURIComponent(auth.token || ""));
+        const ws = new WebSocket(base + "/api/clubs/" + encodeURIComponent(clubId) + "/ws?ticket=" + encodeURIComponent(data.ticket));
         clubSocket = ws;
         ws.onmessage = () => { if (currentClubId === clubId && !$("#clubs-modal").hidden)
             refreshClub(true); };
@@ -5274,6 +5589,8 @@ function closeModals() {
     stopClubPoll(); // also closes any open club WebSocket
     $$(".modal-backdrop").forEach((m) => (m.hidden = true));
     $("#finish-modal-title").textContent = "Finish this book";
+    // Don't leave a typed password (or a revealed one) behind in a hidden modal.
+    ["#auth-form", "#reset-set-form", "#password-form"].forEach(clearPasswordFields);
 }
 // ---------------------------------------------------------------------------
 // Data import / export / file connect / Goodreads
@@ -6204,6 +6521,8 @@ function init() {
             closeModals();
             openAuthModal("login");
         }
+        else if (act === "password")
+            openPasswordModal();
         else if (act === "signout")
             logout();
         else if (act === "syncnow") {
@@ -6243,10 +6562,35 @@ function init() {
         });
         $("#am-sync").addEventListener("click", () => { closeAccountMenu(); toast("🔄", "Syncing…", ""); pullData(); });
         $("#am-settings").addEventListener("click", openSettings);
+        $("#am-password").addEventListener("click", openPasswordModal);
         $("#am-signout").addEventListener("click", logout);
         $("#tab-login").addEventListener("click", () => setAuthMode("login"));
         $("#tab-register").addEventListener("click", () => setAuthMode("register"));
         $("#auth-form").addEventListener("submit", onAuthSubmit);
+        $("#auth-forgot").addEventListener("click", () => openForgotModal($("#auth-email").value.trim()));
+        $("#reset-ask-form").addEventListener("submit", onForgotSubmit);
+        $("#reset-set-form").addEventListener("submit", onResetSubmit);
+        $("#password-form").addEventListener("submit", onPasswordSubmit);
+        // Live strength read-out on every field that takes a NEW password.
+        [["#auth-password", "auth"], ["#reset-password", "reset"], ["#pw-new", "pw"]].forEach(([sel, prefix]) => {
+            $(sel).addEventListener("input", (e) => renderStrength(prefix, e.target.value));
+        });
+        // Reveal toggles. Seeing what you typed is the cheapest way to stop a typo
+        // becoming a lockout, and on a phone keyboard it's the difference between
+        // a strong password and a short one.
+        document.addEventListener("click", (e) => {
+            const b = e.target.closest(".pw-reveal");
+            if (!b || !b.dataset.reveal)
+                return;
+            const input = document.getElementById(b.dataset.reveal);
+            if (!input)
+                return;
+            const show = input.type === "password";
+            input.type = show ? "text" : "password";
+            b.classList.toggle("on", show);
+            b.textContent = show ? "🙈" : "👁️";
+            b.setAttribute("aria-label", show ? "Hide password" : "Show password");
+        });
         document.addEventListener("click", (e) => { if (!e.target.closest("#account-wrap"))
             closeAccountMenu(); });
     }
@@ -6294,6 +6638,15 @@ function init() {
         histCleanHash();
     // Deep link: a #gift/<payload> URL opens a friend's read-only wishlist.
     maybeOpenGiftLink();
+    // Deep link: a #reset/<token> URL from a password-reset email. Read the token,
+    // then scrub it out of the address bar immediately — it's a live credential and
+    // it has no business surviving in browser history or a shared screenshot.
+    const resetLink = (location.hash || "").match(/^#reset\/([A-Za-z0-9_-]{20,200})$/);
+    if (resetLink) {
+        const token = resetLink[1];
+        histCleanHash();
+        openResetModal(token);
+    }
     // Deep link: a #join/CODE invite URL joins that club (after sign-in if needed).
     const joinLink = (location.hash || "").match(/^#join\/([A-Za-z0-9]{4,12})$/i);
     if (joinLink) {
@@ -6391,6 +6744,6 @@ export const BookshelfAPI = {
 };
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl, passwordProblem, passwordStrength };
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order

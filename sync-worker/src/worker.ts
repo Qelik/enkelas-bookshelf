@@ -3,27 +3,63 @@
  * Per-user accounts (email + full name + password) and a private data blob per user.
  * No third-party libraries: password hashing via PBKDF2 (WebCrypto), sessions via
  * HMAC-signed tokens. KV keys:
- *   user:<email-lowercased>  -> { id, email, fullName, salt, hash, iterations, createdAt }
+ *   user:<email-lowercased>  -> { id, email, fullName, salt, hash, iterations, createdAt, pwChangedAt }
+ *   uid:<userId>             -> <email>   reverse index; a token carries only a uid,
+ *                                         so without this we can't load the account
+ *                                         behind it (change-password needs to).
  *   data:<userId>            -> { blob, updatedAt }
+ *   rev:<userId>             -> unix seconds; every token issued before this is dead
+ *   reset:<sha256(token)>    -> { email, uid, at }   single-use, 30 min
+ *   throttle:<email>         -> failed logins for that account   (15 min)
+ *   ipfail:<ip>              -> failed logins from that IP       (15 min)
+ *   ipreg:<ip>               -> accounts created from that IP    (24 h)
+ *   resetreq:<email>         -> reset emails requested           (1 h)
+ *   ipreset:<ip>             -> reset requests from that IP      (1 h)
+ *   pwchange:<userId>        -> wrong current-password guesses   (15 min)
  */
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-// ---- CORS -------------------------------------------------------------------
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*", // token auth, no cookies → wildcard is safe
+// ---- CORS + security headers ------------------------------------------------
+// Applied once, to every response, in fetch() — so no handler can forget them.
+const SECURITY_HEADERS: Record<string, string> = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  // Every response here is either a credential, private data, or a rate-limit
+  // verdict. None of it should sit in a shared cache.
+  "Cache-Control": "no-store",
+};
+function corsHeaders(request: Request, env: Env) {
+  const h: Record<string, string> = {
     "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+    ...SECURITY_HEADERS,
   };
+  const allowed = String(env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const origin = request.headers.get("Origin") || "";
+  // Tokens travel in a header, not a cookie, so a wildcard can't be replayed by
+  // a hostile page the way an ambient cookie can — but naming the real origins
+  // still stops other sites from casually driving this API, so honour the list
+  // when it's set. Unset keeps the old behaviour (and local dev working).
+  if (!allowed.length) h["Access-Control-Allow-Origin"] = "*";
+  else if (origin && allowed.indexOf(origin) >= 0) h["Access-Control-Allow-Origin"] = origin;
+  // A disallowed Origin gets no ACAO header at all: the browser blocks the read.
+  return h;
 }
-function json(data: unknown, status = 200) {
+function json(data: unknown, status = 200, extra?: Record<string, string>) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json", ...corsHeaders() },
+    headers: { "content-type": "application/json", ...(extra || {}) },
   });
+}
+/** Bodies for the auth endpoints are a few hundred bytes; refuse anything absurd. */
+const SMALL_BODY_BYTES = 64 * 1024;
+async function smallJson(request: Request): Promise<any> {
+  if (Number(request.headers.get("content-length") || 0) > SMALL_BODY_BYTES) return {};
+  return request.json<any>().catch(() => ({}));
 }
 
 // ---- base64url --------------------------------------------------------------
@@ -42,6 +78,30 @@ function b64urlToBytes(str: string) {
   return arr;
 }
 function randomBytes(n: number) { const a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
+async function sha256b64(s: string) { return b64url(await crypto.subtle.digest("SHA-256", enc.encode(s))); }
+
+// ---- rate limiting (KV counters) --------------------------------------------
+// Best-effort by design: KV is eventually consistent and this is a read-then-write,
+// so a burst of truly simultaneous requests can each see the same count. It raises
+// the cost of guessing by orders of magnitude, which is the point — it is not a
+// hard gate, and nothing downstream assumes it is.
+function clientIp(request: Request) { return request.headers.get("CF-Connecting-IP") || "unknown"; }
+async function hits(env: Env, key: string) { return Number(await env.BOOKSHELF.get(key)) || 0; }
+async function bumpHits(env: Env, key: string, ttlSeconds: number) {
+  const n = (await hits(env, key)) + 1;
+  await env.BOOKSHELF.put(key, String(n), { expirationTtl: ttlSeconds });
+  return n;
+}
+const FAIL_WINDOW_S = 900;          // 15 min
+const MAX_FAILS_PER_EMAIL = 10;     // one account under attack
+const MAX_FAILS_PER_IP = 30;        // credential stuffing: one password, many emails.
+                                    // Higher than the per-email cap because a household,
+                                    // office or carrier NAT shares a single address.
+const MAX_REGISTER_PER_IP = 10;     // per day
+const MAX_RESET_PER_EMAIL = 5;      // per hour
+const MAX_RESET_PER_IP = 10;        // per hour
+const MAX_RESET_USES_PER_IP = 20;   // per hour — guessing at reset tokens
+const MAX_PW_CHANGE_FAILS = 5;      // per 15 min — a stolen token guessing the password
 
 // ---- password hashing (PBKDF2-SHA256) ---------------------------------------
 async function pbkdf2(password: string, salt: Uint8Array, iterations: number) {
@@ -64,18 +124,100 @@ async function verifyPassword(password: string, rec: { salt: string; hash: strin
   for (let i = 0; i < hash.length; i++) diff |= hash[i] ^ expected[i];
   return diff === 0;
 }
+// A stand-in record to hash against when the email has no account, so a missing
+// user costs the same ~100ms of PBKDF2 as a wrong password. Without it, response
+// time alone told you which addresses are registered here — which is exactly what
+// the deliberately identical "Wrong email or password" message exists to hide.
+const DUMMY_PASSWORD_RECORD = { salt: b64url(new Uint8Array(16)), hash: b64url(new Uint8Array(32)), iterations: 100000 };
+/** Re-hash a password onto an existing account record and refresh the uid index. */
+async function saveNewPassword(env: Env, user: any, password: string) {
+  const next = { ...user, ...(await makePasswordRecord(password)), pwChangedAt: new Date().toISOString() };
+  await env.BOOKSHELF.put("user:" + user.email, JSON.stringify(next));
+  await env.BOOKSHELF.put("uid:" + user.id, user.email);
+  return next;
+}
+
+// ---- password policy --------------------------------------------------------
+const PW_MIN = 10, PW_MAX = 200;
+// The handful of passwords that actually dominate credential-stuffing lists. A
+// full dictionary belongs on a server with a database; this is the cheap 90%.
+// Compared lowercased, so "Password123" is caught too.
+// Every entry is ≥ PW_MIN characters; anything shorter is already rejected on length.
+const PW_BLOCKLIST = new Set([
+  "password12", "password123", "password1234", "passw0rd123", "p@ssword123",
+  "1234567890", "12345678910", "qwertyuiop", "qwerty12345", "1q2w3e4r5t",
+  "letmein123", "iloveyou123", "welcome123", "admin12345", "adminadmin", "changeme123",
+  "abc12345678", "monkey12345", "dragon12345", "sunshine123", "princess123", "football123",
+  "baseball123", "trustno1234", "superman123", "starwars123", "whatever123", "qazwsxedc123",
+  "bookshelf1", "bookshelf123", "enkela1234", "readingbooks",
+]);
+/**
+ * Why a policy at all, when length is what really matters: the three passwords
+ * that actually get accounts taken over here are "password123" (a list), the
+ * user's own email local-part (trivially known to anyone who has the address),
+ * and their name. Everything else is left to length.
+ * Existing accounts are never re-checked — this gates new passwords only, so
+ * nobody gets locked out of a shelf they can still open today.
+ */
+function passwordProblem(password: string, email?: string, fullName?: string): string | null {
+  if (password.length < PW_MIN) return "Password must be at least " + PW_MIN + " characters.";
+  if (password.length > PW_MAX) return "Password must be at most " + PW_MAX + " characters.";
+  const lower = password.toLowerCase();
+  if (PW_BLOCKLIST.has(lower)) return "That's one of the most commonly guessed passwords — please pick another.";
+  if (/^(.)\1+$/.test(password)) return "Please use more than one repeated character.";
+  if (new Set(lower).size < 5) return "Please use a few more different characters.";
+  const local = String(email || "").split("@")[0].toLowerCase();
+  if (local.length >= 3 && lower.indexOf(local) >= 0) return "Your password can't contain your email address.";
+  for (const part of String(fullName || "").toLowerCase().split(/\s+/)) {
+    if (part.length >= 4 && lower.indexOf(part) >= 0) return "Your password can't contain your name.";
+  }
+  return null;
+}
+
+const EMAIL_RE = /^[^@\s,;:<>"'\\/]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+function normEmail(v: unknown) { return String(v == null ? "" : v).trim().toLowerCase(); }
+function emailProblem(email: string): string | null {
+  if (!email) return "Please enter your email address.";
+  if (email.length > 254) return "That email address is too long."; // RFC 5321 ceiling
+  if (email.indexOf("..") >= 0 || !EMAIL_RE.test(email)) return "Please enter a valid email address.";
+  return null;
+}
+/** Names land in other people's club feeds, so strip control characters and cap the length. */
+function cleanName(v: unknown) {
+  return String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\ufeff]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+function publicUser(u: any) { return { id: u.id, email: u.email, fullName: u.fullName }; }
 
 // ---- HMAC session tokens ----------------------------------------------------
+const TOKEN_DAYS = 30;
+const WS_TICKET_S = 60;
 async function hmacKey(secret: string) {
   return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
-async function makeToken(uid: string, secret: string, days = 30) {
-  const payload = { uid, exp: Math.floor(Date.now() / 1000) + days * 86400 };
+/**
+ * `iat` (MILLISECONDS) is what makes revocation possible: a password change
+ * stamps rev:<uid>, and any token issued before that stops verifying. It has to
+ * be milliseconds — at second granularity, a session opened in the same second
+ * as the change survives it.
+ * `jti` is random, so two tokens are never byte-identical. Without it the payload
+ * is fully deterministic and two logins in the same instant produce literally the
+ * same string, which makes "is this the old token or the new one?" unanswerable.
+ * `aud` keeps a WebSocket ticket from being replayed against the REST API.
+ */
+async function makeToken(uid: string, secret: string, opts?: { seconds?: number; aud?: string; club?: string; iatMs?: number }) {
+  const iat = opts && opts.iatMs ? opts.iatMs : Date.now();
+  const payload: Record<string, unknown> = {
+    uid, iat,
+    exp: Math.floor(iat / 1000) + (opts && opts.seconds ? opts.seconds : TOKEN_DAYS * 86400),
+    aud: (opts && opts.aud) || "api",
+    jti: b64url(randomBytes(9)),
+  };
+  if (opts && opts.club) payload.club = opts.club;
   const body = b64url(enc.encode(JSON.stringify(payload)));
   const sig = await crypto.subtle.sign("HMAC", await hmacKey(secret), enc.encode(body));
   return body + "." + b64url(sig);
 }
-async function verifyToken(token: string, secret: string) {
+async function verifyToken(token: string, env: Env, aud = "api") {
   if (!token || token.indexOf(".") < 0) return null;
   // Everything here runs inside the try on purpose: b64urlToBytes calls atob,
   // which THROWS on malformed base64url, and it was being evaluated as an
@@ -83,70 +225,284 @@ async function verifyToken(token: string, secret: string) {
   // back as a 500 "Server error" instead of a 401, and the client only offers
   // re-login on a 401, so the app parked itself in a permanent "sync paused"
   // state with no way out. A broken token simply means "not signed in".
+  let payload: any;
   try {
     const [body, sig] = token.split(".");
-    const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), b64urlToBytes(sig), enc.encode(body));
+    const ok = await crypto.subtle.verify("HMAC", await hmacKey(env.AUTH_SECRET), b64urlToBytes(sig), enc.encode(body));
     if (!ok) return null;
-    const payload = JSON.parse(dec.decode(b64urlToBytes(body)));
+    payload = JSON.parse(dec.decode(b64urlToBytes(body)));
+    if (!payload || !payload.uid) return null;
     if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
+    // Tokens minted before `aud` existed are API session tokens.
+    if ((payload.aud || "api") !== aud) return null;
   } catch (e) { return null; }
+  // Revocation. One KV read per authenticated request buys "changing my password
+  // signs my other devices out", which is the whole point of changing it after a
+  // laptop goes missing. The key only exists once someone has actually revoked,
+  // and it expires with the longest-lived token it could invalidate.
+  // A token predating `iat` (issued before this code shipped) counts as 0, so a
+  // revocation evicts it — which is the safe direction to fail.
+  const notBefore = Number(await env.BOOKSHELF.get("rev:" + payload.uid)) || 0;
+  if (notBefore && Number(payload.iat || 0) < notBefore) return null;
+  return payload;
 }
-async function requireAuth(request: Request, secret: string) {
+/**
+ * Kills every token issued before now, and returns the boundary so the caller can
+ * mint the replacement exactly ON it. Passing that boundary back into makeToken is
+ * what removes the race: with `<` in verifyToken the replacement is the earliest
+ * surviving token, so there is no window in which an attacker's freshly minted
+ * token slips through alongside it.
+ */
+async function revokeSessions(env: Env, uid: string) {
+  const boundaryMs = Date.now();
+  await env.BOOKSHELF.put("rev:" + uid, String(boundaryMs), { expirationTtl: TOKEN_DAYS * 86400 + 3600 });
+  return boundaryMs;
+}
+async function requireAuth(request: Request, env: Env) {
   const h = request.headers.get("Authorization") || "";
   const token = h.indexOf("Bearer ") === 0 ? h.slice(7) : "";
-  return verifyToken(token, secret);
+  return verifyToken(token, env);
+}
+/**
+ * A session token carries only a uid; the account record is keyed by email, hence
+ * the uid: index.
+ *
+ * `claimedEmail` is the fallback for accounts that predate that index: they only
+ * get one written on their next login, and until then change-password would 404 on
+ * a perfectly valid session. The client sends the email it already has on screen,
+ * and it is treated as a HINT only — the loaded record's id must still equal the
+ * uid the signed token asserts, so a caller can't reach another person's account
+ * by naming their address.
+ */
+async function userByUid(env: Env, uid: string, claimedEmail?: string) {
+  const email = await env.BOOKSHELF.get("uid:" + uid);
+  if (email) {
+    const raw = await env.BOOKSHELF.get("user:" + email);
+    if (raw) return JSON.parse(raw);
+  }
+  const hinted = normEmail(claimedEmail);
+  if (!hinted || emailProblem(hinted)) return null;
+  const raw = await env.BOOKSHELF.get("user:" + hinted);
+  if (!raw) return null;
+  const user = JSON.parse(raw);
+  if (user.id !== uid) return null; // the token, not the hint, decides whose account this is
+  await env.BOOKSHELF.put("uid:" + uid, hinted); // heal the index while we're here
+  return user;
 }
 
 // ---- handlers ---------------------------------------------------------------
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 async function register(request: Request, env: Env, secret: string) {
-  const b = await request.json<any>().catch(() => ({}));
-  const email = String(b.email || "").trim().toLowerCase();
-  const fullName = String(b.fullName || "").trim();
+  const b = await smallJson(request);
+  const email = normEmail(b.email);
+  const fullName = cleanName(b.fullName);
   const password = String(b.password || "");
-  if (!EMAIL_RE.test(email)) return json({ error: "Please enter a valid email address." }, 400);
+  const ip = clientIp(request);
+  // Signing up writes to KV, and the free tier allows ~1k writes a day. Without
+  // a cap, one script can spend the whole budget before breakfast and take
+  // everyone else's sync down with it.
+  if (await hits(env, "ipreg:" + ip) >= MAX_REGISTER_PER_IP) {
+    return json({ error: "Too many accounts created from here recently. Please try again tomorrow." }, 429, { "Retry-After": "3600" });
+  }
+  const emailBad = emailProblem(email);
+  if (emailBad) return json({ error: emailBad }, 400);
   if (!fullName) return json({ error: "Please enter your full name." }, 400);
-  if (password.length < 8) return json({ error: "Password must be at least 8 characters." }, 400);
+  const pwBad = passwordProblem(password, email, fullName);
+  if (pwBad) return json({ error: pwBad }, 400);
   if (await env.BOOKSHELF.get("user:" + email)) return json({ error: "An account with this email already exists." }, 409);
   const rec = await makePasswordRecord(password);
   const id = crypto.randomUUID();
-  await env.BOOKSHELF.put("user:" + email, JSON.stringify({ id, email, fullName, ...rec, createdAt: new Date().toISOString() }));
+  const now = new Date().toISOString();
+  // KV has no compare-and-set, so two truly simultaneous signups for the same
+  // address can both pass the check above and the second wins. Rare, and the
+  // loser simply can't log in — worth knowing, not worth a distributed lock.
+  await env.BOOKSHELF.put("user:" + email, JSON.stringify({ id, email, fullName, ...rec, createdAt: now, pwChangedAt: now }));
+  await env.BOOKSHELF.put("uid:" + id, email);
+  await bumpHits(env, "ipreg:" + ip, 86400);
   return json({ token: await makeToken(id, secret), user: { id, email, fullName } });
 }
 
 async function login(request: Request, env: Env, secret: string) {
-  const b = await request.json<any>().catch(() => ({}));
-  const email = String(b.email || "").trim().toLowerCase();
+  const b = await smallJson(request);
+  const email = normEmail(b.email);
   const password = String(b.password || "");
-  // Light throttle: max 10 failed attempts per email per 15 min.
-  const tKey = "throttle:" + email;
-  const attempts = Number(await env.BOOKSHELF.get(tKey)) || 0;
-  if (attempts >= 10) return json({ error: "Too many attempts. Please wait a few minutes." }, 429);
-  const raw = await env.BOOKSHELF.get("user:" + email);
+  const ip = clientIp(request);
+  const emailKey = "throttle:" + email, ipKey = "ipfail:" + ip;
+  // Two counters, because they stop different attacks: per-email stops guessing
+  // at one account, per-IP stops spraying one leaked password across thousands
+  // of addresses (which the per-email counter never even notices).
+  const [byEmail, byIp] = await Promise.all([hits(env, emailKey), hits(env, ipKey)]);
+  if (byEmail >= MAX_FAILS_PER_EMAIL || byIp >= MAX_FAILS_PER_IP) {
+    return json({ error: "Too many sign-in attempts. Please wait a few minutes and try again." }, 429, { "Retry-After": String(FAIL_WINDOW_S) });
+  }
+  const raw = email ? await env.BOOKSHELF.get("user:" + email) : null;
   const user = raw ? JSON.parse(raw) : null;
-  const ok = user ? await verifyPassword(password, user) : false;
-  if (!ok) {
-    await env.BOOKSHELF.put(tKey, String(attempts + 1), { expirationTtl: 900 });
+  // Always hash, even with no account, so both paths cost the same wall-clock time.
+  const matched = await verifyPassword(password, user || DUMMY_PASSWORD_RECORD);
+  if (!user || !matched) {
+    await Promise.all([bumpHits(env, emailKey, FAIL_WINDOW_S), bumpHits(env, ipKey, FAIL_WINDOW_S)]);
     // One message for both "no such account" and "wrong password": telling them
     // apart let anyone probe which email addresses have accounts here.
     return json({ error: "Wrong email or password." }, 401);
   }
-  return json({ token: await makeToken(user.id, secret), user: { id: user.id, email: user.email, fullName: user.fullName } });
+  // Clear the counters on success — otherwise someone who fat-fingers it nine
+  // times and then gets it right stays one typo from a 15-minute lockout.
+  await Promise.all([
+    env.BOOKSHELF.delete(emailKey),
+    env.BOOKSHELF.delete(ipKey),
+    // Backfill the reverse index for accounts created before it existed, so
+    // change-password works for them without a migration script.
+    env.BOOKSHELF.put("uid:" + user.id, user.email),
+  ]);
+  return json({ token: await makeToken(user.id, secret), user: publicUser(user) });
+}
+
+// ---- password change + reset ------------------------------------------------
+const RESET_TTL_S = 30 * 60;
+
+/** Signed in and knows the current password: rotate it and evict every other session. */
+async function passwordChange(request: Request, env: Env, secret: string) {
+  const auth = await requireAuth(request, env);
+  if (!auth) return json({ error: "Not signed in." }, 401);
+  const b = await smallJson(request);
+  const current = String(b.currentPassword || "");
+  const next = String(b.newPassword || "");
+  const user = await userByUid(env, auth.uid, b.email);
+  if (!user) return json({ error: "We couldn't find your account. Please sign out and back in, then try again." }, 404);
+  // A stolen token can already read the shelf; it must not get unlimited guesses
+  // at the password that would let it lock the real owner out for good.
+  const guessKey = "pwchange:" + auth.uid;
+  if (await hits(env, guessKey) >= MAX_PW_CHANGE_FAILS) {
+    return json({ error: "Too many attempts. Please wait a few minutes." }, 429, { "Retry-After": String(FAIL_WINDOW_S) });
+  }
+  if (!(await verifyPassword(current, user))) {
+    await bumpHits(env, guessKey, FAIL_WINDOW_S);
+    return json({ error: "Your current password isn't right." }, 401);
+  }
+  const pwBad = passwordProblem(next, user.email, user.fullName);
+  if (pwBad) return json({ error: pwBad }, 400);
+  if (next === current) return json({ error: "That's the password you already have." }, 400);
+  await saveNewPassword(env, user, next);
+  const boundaryMs = await revokeSessions(env, user.id);
+  await env.BOOKSHELF.delete(guessKey);
+  // Fresh token so THIS device stays signed in while the others get logged out.
+  return json({ ok: true, token: await makeToken(user.id, secret, { iatMs: boundaryMs }), user: publicUser(user) });
+}
+
+/** Mail a single-use reset link. Answers identically whether or not the account exists. */
+async function passwordForgot(request: Request, env: Env, ctx: ExecutionContext | null) {
+  const b = await smallJson(request);
+  const email = normEmail(b.email);
+  const ip = clientIp(request);
+  // The ONLY response this endpoint ever gives on the happy path. Varying it by
+  // whether the address is registered would turn "forgot password" into a
+  // free membership lookup for anyone with a list of emails.
+  const neutral = { ok: true, message: "If that email has an account, a reset link is on its way. Check your inbox — and your spam folder." };
+  if (await hits(env, "ipreset:" + ip) >= MAX_RESET_PER_IP) {
+    return json({ error: "Too many requests. Please wait a while and try again." }, 429, { "Retry-After": "3600" });
+  }
+  await bumpHits(env, "ipreset:" + ip, 3600);
+  if (emailProblem(email)) return json(neutral);
+  // Per-address cap so this can't be used to mail-bomb someone who does have an account.
+  if (await hits(env, "resetreq:" + email) >= MAX_RESET_PER_EMAIL) return json(neutral);
+  await bumpHits(env, "resetreq:" + email, 3600);
+  const raw = await env.BOOKSHELF.get("user:" + email);
+  if (!raw) return json(neutral);
+  const user = JSON.parse(raw);
+  const token = b64url(randomBytes(32));
+  // Only the HASH is stored. A dump of KV then yields no working reset links —
+  // the same reasoning that has the passwords beside it hashed rather than stored.
+  await env.BOOKSHELF.put(
+    "reset:" + (await sha256b64(token)),
+    JSON.stringify({ email, uid: user.id, at: new Date().toISOString() }),
+    { expirationTtl: RESET_TTL_S },
+  );
+  const link = resetLink(env, token);
+  if (!env.RESEND_API_KEY || !env.RESET_FROM) {
+    console.error("password reset requested for a real account but no mailer is configured — set RESEND_API_KEY and RESET_FROM (see DEPLOY.md). Link NOT delivered.");
+    // Local dev only, and only while there is genuinely no mailer, so a
+    // misconfigured production deploy can never quietly start handing these out.
+    if (env.RESET_DEBUG === "1") return json({ ...neutral, devResetLink: link });
+    return json(neutral);
+  }
+  // Hand the send to waitUntil rather than awaiting it. Awaiting made a
+  // registered address take several hundred milliseconds longer than an unknown
+  // one — the response text is identical, but the clock told them apart, which
+  // is the whole thing this endpoint is built to avoid.
+  const sending = sendResetEmail(env, user, link);
+  if (ctx) ctx.waitUntil(sending); else await sending;
+  return json(neutral);
+}
+
+/** Redeem a reset link. Consumes the token, then evicts every existing session. */
+async function passwordReset(request: Request, env: Env, secret: string) {
+  const b = await smallJson(request);
+  const token = String(b.token || "");
+  const next = String(b.newPassword || "");
+  const ip = clientIp(request);
+  if (await hits(env, "ipresetuse:" + ip) >= MAX_RESET_USES_PER_IP) {
+    return json({ error: "Too many attempts. Please wait a while and try again." }, 429, { "Retry-After": "3600" });
+  }
+  await bumpHits(env, "ipresetuse:" + ip, 3600);
+  const expired = { error: "That reset link is invalid or has expired. Please request a new one." };
+  if (!token) return json(expired, 400);
+  const key = "reset:" + (await sha256b64(token));
+  const raw = await env.BOOKSHELF.get(key);
+  if (!raw) return json(expired, 400);
+  const rec = JSON.parse(raw);
+  const userRaw = await env.BOOKSHELF.get("user:" + rec.email);
+  if (!userRaw) { await env.BOOKSHELF.delete(key); return json(expired, 400); }
+  const user = JSON.parse(userRaw);
+  const pwBad = passwordProblem(next, user.email, user.fullName);
+  // Deliberately BEFORE the token is consumed: a rejected password shouldn't
+  // cost someone their one link and send them back to the inbox.
+  if (pwBad) return json({ error: pwBad }, 400);
+  await saveNewPassword(env, user, next);
+  await env.BOOKSHELF.delete(key);                        // single use
+  const boundaryMs = await revokeSessions(env, user.id);  // whoever knew the old password is out
+  await env.BOOKSHELF.delete("throttle:" + user.email);   // don't leave them locked out by the attempts that led here
+  return json({ ok: true, token: await makeToken(user.id, secret, { iatMs: boundaryMs }), user: publicUser(user) });
+}
+
+function resetLink(env: Env, token: string) {
+  const base = String(env.APP_URL || "").replace(/\/+$/, "");
+  // The token rides in the FRAGMENT, not the query string: fragments are never
+  // sent to a server, so it stays out of access logs and Referer headers.
+  return (base || "https://enkela.github.io/enkelas-bookshelf") + "/#reset/" + token;
+}
+async function sendResetEmail(env: Env, user: any, link: string) {
+  if (!env.RESEND_API_KEY || !env.RESET_FROM) return false;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: env.RESET_FROM,
+        to: [user.email],
+        subject: "Reset your Bookshelf password",
+        text: "Hi " + (String(user.fullName || "").split(" ")[0] || "there") + ",\n\n"
+          + "Someone asked to reset the password on this Bookshelf account. If that was you, "
+          + "open this link within 30 minutes:\n\n" + link + "\n\n"
+          + "The link works once. If it wasn't you, you can ignore this email — nothing has changed, "
+          + "and your books are untouched.\n",
+      }),
+    });
+    if (!res.ok) { console.error("reset email rejected", res.status, await res.text().catch(() => "")); return false; }
+    return true;
+  } catch (e) { console.error("reset email failed", e); return false; }
 }
 
 const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 
-async function getData(request: Request, env: Env, secret: string) {
-  const auth = await requireAuth(request, secret);
+async function getData(request: Request, env: Env) {
+  const auth = await requireAuth(request, env);
   if (!auth) return json({ error: "Not signed in." }, 401);
   const raw = await env.BOOKSHELF.get("data:" + auth.uid);
   return json(raw ? JSON.parse(raw) : { blob: null, updatedAt: null });
 }
 
-async function putData(request: Request, env: Env, secret: string) {
-  const auth = await requireAuth(request, secret);
+async function putData(request: Request, env: Env) {
+  const auth = await requireAuth(request, env);
   if (!auth) return json({ error: "Not signed in." }, 401);
   const b = await request.json<any>().catch(() => ({}));
   if (b.blob == null) return json({ error: "No data." }, 400);
@@ -201,10 +557,20 @@ function notifyClub(env: Env, ctx: ExecutionContext | null, clubId: string, payl
     if (ctx) ctx.waitUntil(p.catch(() => { /* room asleep or gone */ }));
   } catch (e) { /* realtime unavailable — clients still poll */ }
 }
+// A browser can't set an Authorization header on a WebSocket handshake, so the
+// credential has to ride in the URL — and URLs end up in proxy logs, Cloudflare
+// access logs and browser history. So don't send the 30-day session token: trade
+// it for a 60-second ticket that only opens this one club's socket and is
+// rejected outright by every REST endpoint (aud: "ws").
+async function clubWsTicket(clubId: string, auth: { uid: string }, env: Env) {
+  if (!(await clubMember(env, clubId, auth.uid))) return json({ error: "Not a member of this club." }, 403);
+  return json({ ticket: await makeToken(auth.uid, env.AUTH_SECRET, { seconds: WS_TICKET_S, aud: "ws", club: clubId }) });
+}
 async function clubWs(url: URL, request: Request, env: Env, clubId: string) {
   if (!env.CLUB_ROOMS) return new Response("realtime unavailable", { status: 503 });
-  const auth = await verifyToken(url.searchParams.get("token") || "", env.AUTH_SECRET);
-  if (!auth) return new Response("unauthorized", { status: 401 });
+  const auth = await verifyToken(url.searchParams.get("ticket") || "", env, "ws");
+  // Scoped to one club, so a ticket leaked from one room can't open another.
+  if (!auth || auth.club !== clubId) return new Response("unauthorized", { status: 401 });
   if (!(await clubMember(env, clubId, auth.uid))) return new Response("forbidden", { status: 403 });
   const stub = env.CLUB_ROOMS.get(env.CLUB_ROOMS.idFromName(clubId));
   return stub.fetch(new Request("https://club/ws", request));
@@ -353,8 +719,9 @@ async function clubsRouter(url: URL, request: Request, env: Env, ctx: ExecutionC
   // Realtime WebSocket — a browser can't set an Authorization header on the WS
   // handshake, so the token arrives as a query param and is verified in clubWs.
   if (id && sub === "ws") return clubWs(url, request, env, id);
-  const auth = await requireAuth(request, env.AUTH_SECRET);
+  const auth = await requireAuth(request, env);
   if (!auth) return json({ error: "Not signed in." }, 401);
+  if (id && sub === "ws-ticket" && m === "POST") return clubWsTicket(id, auth, env);
   if (!id) {
     if (m === "GET") return clubsList(auth, env);
     if (m === "POST") return clubCreate(request, auth, env);
@@ -466,7 +833,7 @@ async function recsRouter(url: URL, request: Request, env: Env) {
   const parts = url.pathname.split("/").filter(Boolean); // ["api","recs", id?, sub?]
   const id = parts[2], sub = parts[3];
   const m = request.method;
-  const auth = await requireAuth(request, env.AUTH_SECRET); // may be null — viewing is public
+  const auth = await requireAuth(request, env); // may be null — viewing is public
   if (!id) {
     if (m === "GET") return recsList(env, auth);
     if (m === "POST") return auth ? recsCreate(request, auth, env) : json({ error: "Not signed in." }, 401);
@@ -478,26 +845,60 @@ async function recsRouter(url: URL, request: Request, env: Env) {
   return json({ error: "Not found" }, 404);
 }
 
+// A 30-day token is only as strong as the key that signs it: with a short secret,
+// forging one is a brute force away and every account is open. `openssl rand -hex 32`
+// gives 64 chars — refuse to serve rather than pretend to be authenticated.
+const MIN_SECRET_CHARS = 32;
+
+async function route(url: URL, request: Request, env: Env, ctx: ExecutionContext) {
+  const m = request.method;
+  if (url.pathname === "/api/register" && m === "POST") return register(request, env, env.AUTH_SECRET);
+  if (url.pathname === "/api/login" && m === "POST") return login(request, env, env.AUTH_SECRET);
+  if (url.pathname === "/api/password/change" && m === "POST") return passwordChange(request, env, env.AUTH_SECRET);
+  if (url.pathname === "/api/password/forgot" && m === "POST") return passwordForgot(request, env, ctx);
+  if (url.pathname === "/api/password/reset" && m === "POST") return passwordReset(request, env, env.AUTH_SECRET);
+  if (url.pathname === "/api/data" && m === "GET") return getData(request, env);
+  if (url.pathname === "/api/data" && m === "PUT") return putData(request, env);
+  if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return clubsRouter(url, request, env, ctx);
+  if (url.pathname === "/api/recs" || url.pathname.indexOf("/api/recs/") === 0) return recsRouter(url, request, env);
+  if (url.pathname === "/" || url.pathname === "/api") {
+    return json({
+      ok: true, service: "enkelas-bookshelf-sync",
+      clubs: !!env.CLUBS_DB, recs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS,
+      // The client hides "Forgot password?" when nothing can deliver the link,
+      // rather than promising an email that will never arrive.
+      passwordReset: !!(env.RESEND_API_KEY && env.RESET_FROM),
+    });
+  }
+  return json({ error: "Not found" }, 404);
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
-    if (!env.AUTH_SECRET) return json({ error: "Server not configured (missing AUTH_SECRET)." }, 500);
+    const cors = corsHeaders(request, env);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    if (!env.AUTH_SECRET) return json({ error: "Server not configured (missing AUTH_SECRET)." }, 500, cors);
+    if (env.AUTH_SECRET.length < MIN_SECRET_CHARS) {
+      console.error("AUTH_SECRET is only " + env.AUTH_SECRET.length + " characters; need at least " + MIN_SECRET_CHARS + ". See DEPLOY.md.");
+      return json({ error: "Server misconfigured (weak AUTH_SECRET) — see the deploy notes." }, 500, cors);
+    }
     const url = new URL(request.url);
+    let res: Response;
     try {
-      if (url.pathname === "/api/register" && request.method === "POST") return await register(request, env, env.AUTH_SECRET);
-      if (url.pathname === "/api/login" && request.method === "POST") return await login(request, env, env.AUTH_SECRET);
-      if (url.pathname === "/api/data" && request.method === "GET") return await getData(request, env, env.AUTH_SECRET);
-      if (url.pathname === "/api/data" && request.method === "PUT") return await putData(request, env, env.AUTH_SECRET);
-      if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return await clubsRouter(url, request, env, ctx);
-      if (url.pathname === "/api/recs" || url.pathname.indexOf("/api/recs/") === 0) return await recsRouter(url, request, env);
-      if (url.pathname === "/" || url.pathname === "/api") return json({ ok: true, service: "enkelas-bookshelf-sync", clubs: !!env.CLUBS_DB, recs: !!env.CLUBS_DB, realtime: !!env.CLUB_ROOMS });
-      return json({ error: "Not found" }, 404);
+      res = await route(url, request, env, ctx);
     } catch (e) {
       // Log the cause — a bare "Server error" with nothing in the tail log makes
       // these impossible to diagnose (`wrangler tail` is free).
       console.error("worker error", request.method, url.pathname, e instanceof Error ? (e.stack || e.message) : String(e));
-      return json({ error: "Server error" }, 500);
+      res = json({ error: "Server error" }, 500);
     }
+    // CORS and the security headers get bolted on here, once, so a handler can't
+    // ship a response without them. A 101 carries a live socket and must be
+    // returned untouched — rebuilding it would drop the WebSocket.
+    if (res.status === 101 || (res as any).webSocket) return res;
+    const out = new Response(res.body, res);
+    for (const k in cors) out.headers.set(k, cors[k]);
+    return out;
   },
 };
 

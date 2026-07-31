@@ -109,6 +109,34 @@ if (existsSync(join(root, "wrangler.jsonc")) && existsSync(join(root, "sync-work
   else fail('root wrangler.jsonc "main" must be "sync-worker/src/worker.ts"');
 } else warn("wrangler configs not found — skipped");
 
+// --- Auth safety ------------------------------------------------------------------
+// RESET_DEBUG makes /api/password/forgot hand the reset link back in the response
+// body, so the endpoint self-tests without a mailer. In production that is a full
+// account-takeover primitive for anyone who knows an email address: it belongs in
+// a `wrangler dev --var` flag and nowhere else.
+console.log("\nAuth safety");
+{
+  const configs = ["wrangler.jsonc", "sync-worker/wrangler.toml"].filter((f) => existsSync(join(root, f)));
+  // Both configs discuss these names in prose, so match ASSIGNMENTS only —
+  // `NAME = ...` / `"NAME": ...` — with comment lines stripped first. Grepping
+  // for the bare identifier flags the explanatory comments instead.
+  const assigns = (file, name) => {
+    const body = read(file)
+      .split("\n")
+      .filter((l) => !/^\s*(\/\/|#)/.test(l))
+      .join("\n");
+    return new RegExp(`["']?${name}["']?\\s*[:=]`).test(body);
+  };
+  const leaked = configs.filter((f) => assigns(f, "RESET_DEBUG"));
+  if (leaked.length) fail(`RESET_DEBUG is set in ${leaked.join(", ")} — it hands out password-reset links over the API. Remove it; pass --var RESET_DEBUG:1 to \`wrangler dev\` instead.`);
+  else ok("RESET_DEBUG is not set in any committed wrangler config");
+  // A short or committed AUTH_SECRET makes the 30-day session tokens forgeable.
+  // The worker refuses to serve below 32 chars; this catches a committed one.
+  const weak = configs.filter((f) => assigns(f, "AUTH_SECRET"));
+  if (weak.length) fail(`AUTH_SECRET is set in ${weak.join(", ")} — it must be a Cloudflare secret (\`wrangler secret put AUTH_SECRET\`), never committed.`);
+  else ok("AUTH_SECRET is not set in any committed wrangler config");
+}
+
 // --- Reminders --------------------------------------------------------------------
 console.log("\nManual steps this script can't cover");
 console.log("  • open tests.html on the served app — all browser tests must pass");

@@ -1136,9 +1136,27 @@ html[data-theme="dark"] .lent-badge.overdue { background: #40291a; color: #e0a07
 .auth-tabs { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
 .auth-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--ink-soft); font-weight: 600; font-size: 14px; padding: 8px 12px; }
 .auth-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-#auth-form label { margin-top: 10px; }
+#auth-form label, #reset-modal label, #password-form label { margin-top: 10px; }
 .auth-error { color: #b3352c; font-size: 13px; min-height: 18px; margin: 8px 0 0; }
 .auth-note { margin: 14px 0 0; text-align: center; }
+.auth-links { display: flex; justify-content: center; margin-top: 4px; }
+.linkish { background: transparent; border: none; color: var(--accent); font-size: 13px; font-weight: 600; padding: 4px 2px; text-decoration: underline; }
+
+/* Password fields: a reveal button tucked inside, plus a strength read-out.
+   Showing the password is a real security feature on a phone keyboard — a
+   mistyped password the user can't see is the most common reason they end up
+   in the reset flow at all. */
+.pw-field { position: relative; display: flex; align-items: center; }
+.pw-field .input { flex: 1; padding-right: 40px; }
+.pw-reveal { position: absolute; right: 4px; background: transparent; border: none; font-size: 15px; line-height: 1; padding: 6px; opacity: .55; }
+.pw-reveal:hover, .pw-reveal.on { opacity: 1; }
+.pw-strength { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; }
+.pw-bar { flex: 1; height: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.pw-bar span { display: block; height: 100%; width: 0; border-radius: 3px; background: #b3352c; transition: width .18s ease, background .18s ease; }
+.pw-bar span.s2 { background: #c98a2e; }
+.pw-bar span.s3 { background: #7a9a3e; }
+.pw-bar span.s4 { background: #3f8a4f; }
+.pw-strength .muted { flex: 0 0 auto; min-width: 66px; text-align: right; }
 
 /* ---------- Gift list ---------- */
 .giftlist-books { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; max-height: 46vh; overflow-y: auto; }

@@ -3,6 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- Content Security Policy. GitHub Pages can't send response headers, so this
+       goes in a meta tag — which means `frame-ancestors` is ignored here (it only
+       works as a real header) and is left out rather than implying protection.
+       Everything that matters still applies:
+         script-src 'self'  — the whole app is same-origin; no CDN, no inline JS,
+                              so an injected <script> or a javascript: URL is dead.
+         object-src 'none', base-uri 'self' — no plugin embeds, no <base> hijack.
+         style-src 'unsafe-inline' — needed: the app sets element.style directly.
+         img-src https: data: blob: — covers come from arbitrary book-cover hosts
+                              and the ePub reader renders images out of blobs.
+         connect-src https: wss: — the sync worker's URL is overridable in
+                              localStorage for self-hosting, so it can't be pinned
+                              to one host; forbidding http: and other schemes is
+                              still worth having. localhost is listed too, or
+                              pointing the app at a local `wrangler dev` worker
+                              (the documented dev loop) would be blocked. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: wss: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
   <title>Enkela's Bookshelf</title>
   <link rel="preconnect" href="https://covers.openlibrary.org" />
   <link rel="preconnect" href="https://openlibrary.org" />
@@ -33,6 +50,7 @@
           <div class="am-name" id="am-name"></div>
           <button class="am-item" id="am-sync">🔄 Sync now</button>
           <button class="am-item" id="am-settings">⚙️ Settings &amp; backups</button>
+          <button class="am-item" id="am-password">🔑 Change password</button>
           <button class="am-item" id="am-signout">Sign out</button>
         </div>
       </div>
@@ -546,16 +564,106 @@
         <form id="auth-form">
           <div id="auth-name-row" hidden>
             <label for="auth-name">Full name</label>
-            <input type="text" id="auth-name" class="input" autocomplete="name" />
+            <input type="text" id="auth-name" class="input" autocomplete="name" maxlength="80" />
           </div>
           <label for="auth-email">Email</label>
-          <input type="email" id="auth-email" class="input" autocomplete="email" />
+          <input type="email" id="auth-email" class="input" autocomplete="email" maxlength="254" required />
           <label for="auth-password">Password</label>
-          <input type="password" id="auth-password" class="input" autocomplete="current-password" />
+          <div class="pw-field">
+            <input type="password" id="auth-password" class="input" autocomplete="current-password" maxlength="200" required />
+            <button type="button" class="pw-reveal" data-reveal="auth-password" aria-label="Show password" title="Show password">👁️</button>
+          </div>
+          <div id="auth-strength" class="pw-strength" hidden>
+            <div class="pw-bar"><span id="auth-strength-fill"></span></div>
+            <span id="auth-strength-label" class="muted"></span>
+          </div>
+          <div id="auth-password2-row" hidden>
+            <label for="auth-password2">Confirm password</label>
+            <input type="password" id="auth-password2" class="input" autocomplete="new-password" maxlength="200" />
+          </div>
           <p class="auth-error" id="auth-error"></p>
+          <div class="auth-links">
+            <button type="button" class="linkish" id="auth-forgot" hidden>Forgot your password?</button>
+          </div>
           <div class="modal-foot">
             <button type="button" class="ghost" data-close-modal>Cancel</button>
             <button type="submit" class="primary" id="auth-submit">Log in</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- FORGOT / RESET PASSWORD — two panels in one modal:
+       "ask" requests the emailed link, "set" redeems it (opened by a #reset/<token> URL). -->
+  <div class="modal-backdrop" id="reset-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+      <div class="modal-head">
+        <h3 id="reset-title">Reset your password</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="reset-ask-form">
+          <p class="auth-note muted">We'll email you a link that works once, for the next 30 minutes.</p>
+          <label for="reset-email">Email</label>
+          <input type="email" id="reset-email" class="input" autocomplete="email" maxlength="254" required />
+          <p class="auth-error" id="reset-ask-error"></p>
+          <p class="auth-note muted" id="reset-ask-done" hidden></p>
+          <div class="modal-foot">
+            <button type="button" class="ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="primary" id="reset-ask-submit">Email me a link</button>
+          </div>
+        </form>
+        <form id="reset-set-form" hidden>
+          <p class="auth-note muted">Pick a new password. Signing in with it will sign you out everywhere else.</p>
+          <label for="reset-password">New password</label>
+          <div class="pw-field">
+            <input type="password" id="reset-password" class="input" autocomplete="new-password" maxlength="200" required />
+            <button type="button" class="pw-reveal" data-reveal="reset-password" aria-label="Show password" title="Show password">👁️</button>
+          </div>
+          <div class="pw-strength" id="reset-strength">
+            <div class="pw-bar"><span id="reset-strength-fill"></span></div>
+            <span id="reset-strength-label" class="muted"></span>
+          </div>
+          <label for="reset-password2">Confirm new password</label>
+          <input type="password" id="reset-password2" class="input" autocomplete="new-password" maxlength="200" required />
+          <p class="auth-error" id="reset-set-error"></p>
+          <div class="modal-foot">
+            <button type="button" class="ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="primary" id="reset-set-submit">Set new password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHANGE PASSWORD (signed in) -->
+  <div class="modal-backdrop" id="password-modal" hidden>
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="password-title">
+      <div class="modal-head">
+        <h3 id="password-title">🔑 Change your password</h3>
+        <button class="icon-btn" data-close-modal aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="password-form">
+          <p class="auth-note muted">Your other devices will be signed out — use this if one of them went missing.</p>
+          <label for="pw-current">Current password</label>
+          <input type="password" id="pw-current" class="input" autocomplete="current-password" maxlength="200" required />
+          <label for="pw-new">New password</label>
+          <div class="pw-field">
+            <input type="password" id="pw-new" class="input" autocomplete="new-password" maxlength="200" required />
+            <button type="button" class="pw-reveal" data-reveal="pw-new" aria-label="Show password" title="Show password">👁️</button>
+          </div>
+          <div class="pw-strength" id="pw-strength">
+            <div class="pw-bar"><span id="pw-strength-fill"></span></div>
+            <span id="pw-strength-label" class="muted"></span>
+          </div>
+          <label for="pw-new2">Confirm new password</label>
+          <input type="password" id="pw-new2" class="input" autocomplete="new-password" maxlength="200" required />
+          <p class="auth-error" id="password-error"></p>
+          <div class="modal-foot">
+            <button type="button" class="ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="primary" id="password-submit">Change password</button>
           </div>
         </form>
       </div>
