@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Outside BookshelfWidgets/ for the same reason the app's is outside
+  BookshelfApp/: that folder is a synchronized root group, so anything in it is
+  picked up as a source or a resource and would land in the bundle twice.
+
+  This one cannot be generated from INFOPLIST_KEY_* settings — there is no
+  passthrough for NSExtension, and without it the built .appex is not an
+  extension at all: installing it fails with "Failed to create app extension
+  placeholder".
+-->
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>
