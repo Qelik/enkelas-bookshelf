@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Lives outside BookshelfApp/ on purpose: that folder is a synchronized root
+  group, so anything inside it is picked up as a source or a resource, and an
+  Info.plist would be copied into the bundle twice.
+
+  Keys Xcode can generate from INFOPLIST_KEY_* build settings are left to it and
+  merged in at build time; this file carries the ones it has no passthrough for.
+-->
+<plist version="1.0">
+<dict>
+	<!-- Both are needed for the app's Documents folder to appear in Files under
+	     "On My iPhone", which is how a bookshelf export or an ePub gets onto the
+	     phone without a round trip through iCloud. Only the second has an
+	     INFOPLIST_KEY_ equivalent, which is why this file exists. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+
+	<!-- Barcode scanning. Says what it's for and nothing more: iOS shows this
+	     string verbatim in the permission prompt, and a vague one gets denied. -->
+	<key>NSCameraUsageDescription</key>
+	<string>To add a book by scanning the barcode on its back cover.</string>
+
+	<!-- ActivityKit refuses to start an activity without this, and does so
+	     silently — the call returns an error rather than the Lock Screen simply
+	     not updating, which is why it is easy to miss. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+
+	<!-- Permits cleartext to local and link-local addresses only, so a
+	     self-hosted Worker or `wrangler dev` on a laptop can be pointed at with
+	     the enkelas-sync-api override. Does not weaken anything for the public
+	     internet: remote hosts still require HTTPS. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+
+	<!-- A widget cannot open a screen, only a URL, so without this every widget
+	     tap is a dead tap that lands on the Reading tab. Private to the app —
+	     nothing outside it is expected to link here. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.enkela.bookshelf.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>bookshelf</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Bookshelf exports, so "Open in Bookshelf" appears in Files, Mail and
+	     Safari rather than the user having to find the import screen first. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Bookshelf export</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.json</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

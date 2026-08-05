@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The one directory the app and its widget extension can both see. An
+	     extension is sandboxed separately, so without this the widget cannot
+	     read a single byte the app has written. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.enkela.bookshelf</string>
+	</array>
+</dict>
+</plist>

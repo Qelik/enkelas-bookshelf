@@ -1,0 +1,196 @@
+import BookshelfCore
+import SwiftUI
+
+/// The shelf, as a shelf.
+///
+/// Every other screen in this app is a list, which is the right shape for logging
+/// and searching and the wrong shape for the thing a bookshelf is actually *for* —
+/// standing back and looking at what you own. Spine thickness comes from the page
+/// count, so a row of books reads at a glance the way a real one does.
+struct BookshelfWallView: View {
+    @Environment(\.themeAccent) private var accent
+
+    let books: [WireBook]
+    var onSelect: (String) -> Void
+
+    /// Inset from the pane edge to the inside of the case.
+    private let caseInset = 14.0
+
+    var body: some View {
+        GeometryReader { geo in
+            let usable = geo.size.width - caseInset * 2
+            let rows = ShelfLayout.rows(books.map(ShelfLayout.spine(for:)), width: usable)
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        shelf(row, width: usable)
+                    }
+                }
+                .padding(.horizontal, caseInset)
+                .padding(.vertical, 10)
+                // Fill the pane even with two books on it: a case that stops
+                // where the books stop reads as a floating strip, not
+                // furniture with room to grow into.
+                .frame(minHeight: geo.size.height, alignment: .top)
+                .background(caseBack)
+            }
+            // The tab bar floats over content, so the bottom shelf needs room
+            // to clear it — otherwise the last row of books is half-hidden.
+            .safeAreaPadding(.bottom, 8)
+            .scrollIndicators(.hidden)
+            .background(Color(.systemGroupedBackground))
+        }
+    }
+
+    // MARK: - One shelf
+
+    private func shelf(_ row: [ShelfLayout.Spine], width: Double) -> some View {
+        VStack(spacing: 0) {
+            // Bottom-aligned: books stand on the plank, they don't hang from it.
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(row) { spine in
+                    SpineView(spine: spine, accent: accent)
+                        .onTapGesture {
+                            Haptics.pageTurn()
+                            onSelect(spine.id)
+                        }
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(width: width, alignment: .leading)
+            plank
+        }
+    }
+
+    private var plank: some View {
+        ZStack(alignment: .top) {
+            LinearGradient(
+                colors: [Color(red: 0.42, green: 0.30, blue: 0.21),
+                         Color(red: 0.28, green: 0.19, blue: 0.13)],
+                startPoint: .top, endPoint: .bottom
+            )
+            // A lit front edge, which is most of what makes it read as a board
+            // with thickness rather than a brown line.
+            LinearGradient(
+                colors: [.white.opacity(0.28), .clear],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 3)
+        }
+        .frame(height: 13)
+        .clipShape(.rect(cornerRadius: 1.5))
+        // Grounds the books instead of leaving them floating above the board.
+        .shadow(color: .black.opacity(0.35), radius: 4, y: 3)
+        .padding(.bottom, 14)
+    }
+
+    /// The back of the case, behind the books.
+    private var caseBack: some View {
+        LinearGradient(
+            colors: [Color(red: 0.20, green: 0.14, blue: 0.11),
+                     Color(red: 0.13, green: 0.09, blue: 0.07)],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
+    }
+}
+
+/// One book, seen edge-on.
+private struct SpineView: View {
+    let spine: ShelfLayout.Spine
+    let accent: Color
+
+    private var base: Color {
+        Color(hue: Double(spine.hue) / 360, saturation: 0.42, brightness: 0.52)
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(
+                    LinearGradient(
+                        // Lighter on the left, darker on the right: a cylinder of
+                        // paper catching light, which is what stops a row of
+                        // spines looking like flat coloured bars.
+                        colors: [base.opacity(0.95), base, base.opacity(0.62)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                )
+
+            // Head and tail bands, the way a bound spine is printed.
+            VStack {
+                band
+                Spacer()
+                band
+            }
+            .padding(.vertical, 7)
+
+            title
+
+            // A finished book gets a foil dot; one in progress gets a ribbon down
+            // the spine showing how far in you are. Both are readable side-on,
+            // which a progress bar wouldn't be.
+            if spine.finished {
+                VStack {
+                    Spacer()
+                    Circle()
+                        .fill(.white.opacity(0.75))
+                        .frame(width: min(7, spine.width * 0.28))
+                        .padding(.bottom, 13)
+                }
+            } else if spine.progress > 0.01 {
+                // A bookmark hanging from the top down to where you've reached.
+                // Drawn from the top rather than the bottom because that's the
+                // direction a ribbon actually falls, and it makes "barely
+                // started" a short tab instead of a nearly-full bar.
+                VStack(spacing: 0) {
+                    UnevenRoundedRectangle(bottomLeadingRadius: 1.5, bottomTrailingRadius: 1.5)
+                        .fill(accent.opacity(0.85))
+                        .frame(width: 2.5, height: max(8, spine.height * min(1, spine.progress) * 0.7))
+                    Spacer(minLength: 0)
+                }
+                .frame(width: 2.5, alignment: .top)
+                .offset(x: spine.width / 2 - 6)
+            }
+        }
+        .frame(width: spine.width, height: spine.height)
+        .clipShape(.rect(cornerRadius: 2))
+        .overlay {
+            RoundedRectangle(cornerRadius: 2)
+                .strokeBorder(.black.opacity(0.35), lineWidth: 0.5)
+        }
+        .rotationEffect(.degrees(spine.lean), anchor: .bottom)
+        .shadow(color: .black.opacity(0.4), radius: 2, x: 1)
+        .accessibilityElement()
+        .accessibilityLabel(spine.title)
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var band: some View {
+        Rectangle()
+            .fill(.white.opacity(0.22))
+            .frame(height: 2)
+            .padding(.horizontal, 3)
+    }
+
+    /// Rotated to run up the spine, the way a real one is printed.
+    private var title: some View {
+        Text(spine.title)
+            .font(.system(size: min(11, spine.width * 0.32), weight: .semibold, design: .serif))
+            .foregroundStyle(.white.opacity(0.94))
+            .lineLimit(1)
+            // Sized to the spine's *height* before rotating, so a long title
+            // truncates along the book rather than overflowing it.
+            .frame(width: spine.height - 26)
+            .rotationEffect(.degrees(-90))
+            // Read bottom-up, as almost every English-language spine is printed.
+            .fixedSize()
+    }
+
+    private var accessibilityValue: String {
+        if spine.finished { return "Finished" }
+        if spine.progress > 0.01 { return "\(Int(spine.progress * 100))% read" }
+        return spine.author.isEmpty ? "Not started" : spine.author
+    }
+}
