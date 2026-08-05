@@ -5,10 +5,13 @@ enkelas-bookshelf.json
 goodreads_library_export.*
 *.csv
 *.numbers
-# Sync worker build artifacts + local secret
+# Sync worker build artifacts + local secrets
 sync-worker/node_modules/
 sync-worker/.wrangler/
 sync-worker/.dev.vars
+# Wrangler 4 reads local dev vars from .env, not .dev.vars — both are secrets.
+sync-worker/.env
+sync-worker/.env.*
 
 # wrangler (root deploys via Workers Builds)
 .wrangler/
@@ -19,3 +22,14 @@ sync-worker/.dev.vars
 node_modules/
 *.tsbuildinfo
 .vscode/
+
+# iOS build artifacts. The generated golden file stays COMMITTED — the Swift
+# tests diff against it, and regenerating needs Chrome plus the built app.js.
+ios/**/.build/
+ios/**/.swiftpm/
+ios/**/DerivedData/
+ios/**/xcuserdata/
+# `xcodebuild -derivedDataPath build` writes here — 4,000+ files of module cache
+# and index, none of it source.
+ios/build/
+ios/**/*.xcworkspace/xcshareddata/swiftpm/configuration/

@@ -42,9 +42,17 @@ if [ -z "$SUMMARY" ]; then
 fi
 echo "tests.html → $SUMMARY"
 # List any failures with their messages.
-printf '%s' "$DOM" | python3 - <<'PY'
-import re, sys
-dom = sys.stdin.read()
+#
+# The DOM goes via a file, NOT a pipe: `python3 - <<'PY'` already takes the
+# program from stdin, so a piped DOM is discarded and sys.stdin.read() returns
+# what is left of the heredoc — empty. This block silently printed nothing for
+# every failure until that was spotted.
+DOMFILE="$(mktemp)"
+trap 'kill $SERVER_PID 2>/dev/null; rm -f "$DOMFILE"' EXIT
+printf '%s' "$DOM" > "$DOMFILE"
+DOMFILE="$DOMFILE" python3 - <<'PY'
+import os, re
+dom = open(os.environ["DOMFILE"], encoding="utf-8").read()
 for m in re.finditer(r'<div class="t fail"><span class="mark">FAIL</span><span>(.*?)</span><span class="msg">(.*?)</span>', dom):
     print("  ✗ %s — %s" % (m.group(1), m.group(2)))
 PY
