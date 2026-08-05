@@ -585,6 +585,12 @@
           <div class="auth-links">
             <button type="button" class="linkish" id="auth-forgot" hidden>Forgot your password?</button>
           </div>
+          <!-- Register only. Opens in a new tab on purpose: reading the rules
+               must not throw away a half-filled signup form. -->
+          <p class="auth-terms muted" id="auth-terms" hidden>
+            By creating an account you agree to the
+            <a href="terms.html" target="_blank" rel="noopener">Terms &amp; Community Rules</a>.
+          </p>
           <div class="modal-foot">
             <button type="button" class="ghost" data-close-modal>Cancel</button>
             <button type="submit" class="primary" id="auth-submit">Log in</button>

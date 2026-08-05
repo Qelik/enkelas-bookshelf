@@ -1140,6 +1140,8 @@ html[data-theme="dark"] .lent-badge.overdue { background: #40291a; color: #e0a07
 .auth-error { color: #b3352c; font-size: 13px; min-height: 18px; margin: 8px 0 0; }
 .auth-note { margin: 14px 0 0; text-align: center; }
 .auth-links { display: flex; justify-content: center; margin-top: 4px; }
+.auth-terms { margin: 10px 0 0; text-align: center; font-size: 13px; line-height: 1.45; }
+.auth-terms a { color: var(--accent); font-weight: 600; }
 .linkish { background: transparent; border: none; color: var(--accent); font-size: 13px; font-weight: 600; padding: 4px 2px; text-decoration: underline; }
 
 /* Password fields: a reveal button tucked inside, plus a strength read-out.

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+  /* Inherit the theme the reader already chose in the app, so following a link
+     out of a dark bookshelf doesn't flash a cream page at them. Inline and in
+     <head> on purpose — deferred, this runs after first paint and the flash is
+     exactly what it exists to prevent. Falls back to the OS setting. */
+  try {
+    var t = localStorage.getItem("enkelas-bookshelf-theme");
+    if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) { /* private mode: the media query still handles it */ }
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terms & Community Rules — Enkela's Bookshelf</title>
+<meta name="description" content="Terms of use and community rules for Enkela's Bookshelf, including how to report content and delete your account.">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root {
+    --paper: #f6f1e7; --paper-2: #fbf7ef; --ink: #2c2722; --ink-soft: #6b6258;
+    --accent: #9c5b3a; --accent-soft: #e7d3bd; --line: #e3d8c6;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Georgia", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  /* Dark palette, applied either by the OS setting or by the app's own 🌙 toggle
+     (which stamps data-theme on <html> — see the script at the end of the body).
+     The explicit light attribute has to win over the media query, or someone who
+     chose light in the app still lands on a dark page because their phone is dark. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #1b1714; --paper-2: #242019; --ink: #ece3d4; --ink-soft: #a89c89;
+      --accent: #d98b5f; --accent-soft: #4a3b2c; --line: #3a3026;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #1b1714; --paper-2: #242019; --ink: #ece3d4; --ink-soft: #a89c89;
+    --accent: #d98b5f; --accent-soft: #4a3b2c; --line: #3a3026;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 72px;
+    font-family: var(--sans); font-size: 17px; line-height: 1.65;
+    color: var(--ink); background: var(--paper);
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-family: var(--serif); font-size: 30px; line-height: 1.25; margin: 0 0 4px; }
+  h2 { font-family: var(--serif); font-size: 21px; margin: 34px 0 8px; }
+  .sub { color: var(--ink-soft); margin: 0 0 28px; font-size: 15px; }
+  a { color: var(--accent); }
+  ul { padding-left: 22px; }
+  li { margin: 5px 0; }
+  .card {
+    background: var(--paper-2); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px 20px; margin: 18px 0;
+  }
+  .card h2 { margin-top: 4px; }
+  .card p:last-child, .card ul:last-child { margin-bottom: 4px; }
+  .back { display: inline-block; margin-bottom: 22px; font-size: 15px; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+  footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 14.5px; }
+  code { background: var(--accent-soft); padding: 1px 6px; border-radius: 5px; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">← Back to the bookshelf</a>
+
+  <h1>Terms &amp; Community Rules</h1>
+  <p class="sub">Last updated: 4 August 2026</p>
+
+  <p>
+    Enkela's Bookshelf is a reading tracker. Most of it runs entirely on your own device
+    and needs no account at all. Two parts are shared with other people — the
+    <strong>Community board</strong>, where readers recommend books, and
+    <strong>Reading clubs</strong>, where a handful of friends discuss one book together.
+    These rules cover those shared parts, and they apply to everyone who signs in.
+  </p>
+
+  <h2>Your account and your data</h2>
+  <ul>
+    <li>An account is optional. Without one, your books never leave your device.</li>
+    <li>With one, your bookshelf syncs privately between your own devices. Nobody else
+      can read it — not other users, and it isn't sold, shared or used for advertising.</li>
+    <li>You can <strong>delete your account at any time</strong>, from within the app.
+      Deleting is immediate and permanent: your bookshelf, your recommendations and your
+      club comments are erased. Export a backup first if you want to keep your reading history.</li>
+    <li>Keep your password to yourself, and use one you don't use anywhere else.</li>
+  </ul>
+
+  <div class="card">
+    <h2>No objectionable content — zero tolerance</h2>
+    <p>Anything you post to the Community board or to a reading club must not be:</p>
+    <ul>
+      <li>harassment, threats, or abuse directed at another person;</li>
+      <li>hate speech or slurs targeting anyone's race, ethnicity, religion, disability,
+        gender, or sexual orientation;</li>
+      <li>sexual content involving minors, or sexually explicit material generally;</li>
+      <li>content promoting violence or self-harm;</li>
+      <li>spam, advertising, affiliate links, or scams;</li>
+      <li>someone else's private information;</li>
+      <li>deliberate spoilers posted outside the progress point they belong to.</li>
+    </ul>
+    <p>
+      Accounts that post this material are removed. There is no warning system and no
+      appeal queue — this is a small book app run by one person, and the bar for staying
+      is simply not doing the above.
+    </p>
+  </div>
+
+  <h2>Reporting something</h2>
+  <p>
+    Every recommendation and every club comment has a <strong>Report</strong> action.
+    Reports are reviewed, and objectionable content and the accounts responsible are
+    removed <strong>within 24 hours</strong>.
+  </p>
+  <p>
+    Content reported by several different readers is <strong>hidden automatically</strong>,
+    straight away, without waiting for that review — so the worst posts come down in
+    minutes rather than hours.
+  </p>
+  <p>
+    You can also <strong>block</strong> any reader. Blocking is immediate and private:
+    their posts stop appearing for you everywhere in the app, they are never told, and
+    nothing changes for anyone else.
+  </p>
+
+  <div class="card">
+    <h2>Contact</h2>
+    <p>
+      To report abuse, ask about your data, or raise anything else:
+      <!-- TODO: replace with the real abuse-contact address before submitting to the App Store.
+           Apple requires a working contact on this page; a placeholder is a rejection. -->
+      <a href="mailto:REPLACE-WITH-ABUSE-CONTACT@example.com">REPLACE-WITH-ABUSE-CONTACT@example.com</a>.
+    </p>
+    <p>We aim to answer reports of objectionable content within 24 hours.</p>
+  </div>
+
+  <h2>The boring necessary part</h2>
+  <ul>
+    <li>You keep ownership of what you write. By posting to the Community board or a
+      reading club you allow it to be shown to other readers of the app — nothing more.</li>
+    <li>Book covers and details come from <a href="https://openlibrary.org">Open Library</a>
+      and Google Books, and belong to their respective owners.</li>
+    <li>The app is provided as-is, with no warranty. It's a free reading tracker made for
+      the love of it. Keep your own backups — <code>⚙️ Settings → Export</code> takes a second.</li>
+    <li>These rules may change; the date at the top says when they last did.</li>
+  </ul>
+
+  <footer>
+    Enkela's Bookshelf · <a href="./">Open the app</a>
+  </footer>
+</main>
+</body>
+</html>

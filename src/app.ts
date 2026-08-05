@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.07.31g"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.08.04a"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -653,6 +653,7 @@ function setAuthMode(mode: "login" | "register") {
   $("#auth-password2-row").hidden = mode !== "register";
   $("#auth-strength").hidden = mode !== "register";
   $("#auth-forgot").hidden = mode !== "login";
+  $("#auth-terms").hidden = mode !== "register";
   $("#auth-title").textContent = mode === "register" ? "Create your account" : "Log in";
   $<HTMLButtonElement>("#auth-submit").textContent = mode === "register" ? "Create account" : "Log in";
   // Tells a password manager to offer a generated password rather than the one

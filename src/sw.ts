@@ -5,10 +5,14 @@
 // service-worker scope so skipWaiting/clients/event types check correctly.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-const CACHE = "enkelas-bookshelf-v45";
+const CACHE = "enkelas-bookshelf-v46";
 const SHELL = [
   "./",
   "./index.html",
+  // Linked from the register form, so it has to survive offline too — without
+  // it the HTML fallback hands back index.html and tapping "Terms" silently
+  // reopens the app.
+  "./terms.html",
   "./styles.css",
   "./app.js",
   "./reader.js",
