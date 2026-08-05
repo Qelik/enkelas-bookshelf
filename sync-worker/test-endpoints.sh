@@ -330,11 +330,151 @@ if [ "$CLUBS_ON" = "True" ]; then
     -d '{"bookTitle":"Rec Book","bookAuthor":"Someone","category":"Fantasy","displayName":"Alice"}')
   check "re-recommending returns the original id" "$REC" "$(printf '%s' "$R" | json "['id']")"
   check "…and says so" "True" "$(printf '%s' "$R" | json "['duplicate']")"
+
+  say ""
+  say "Moderation (content filter · report · block)"
+  # The filter is deliberately narrow: it must not eat an honest note about a
+  # book with an ugly title or a blunt review.
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/recs" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
+    -d '{"bookTitle":"Buy Now","category":"Spam","note":"grab it at https://cheap-books.example"}')
+  check "a link in the note → 422" "422" "$R"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/recs" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
+    -d '{"bookTitle":"A Scunthorpe Childhood","category":"Memoir","note":"Classic stuff about Dick Francis, honestly bleak but brilliant."}')
+  check "…but ordinary prose passes the filter" "200" "$R"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/clubs/$CLUB/comments" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
+    -d '{"body":"read more at www.spam.example","posPct":10}')
+  check "the filter covers club comments too" "422" "$R"
+
+  # Reporting. Three DISTINCT reporters hide an item; one account reporting three
+  # times must not, or a single user owns a takedown button.
+  REP=$(curl -s -X POST "$BASE/api/recs" -H "authorization: Bearer $T2" -H 'content-type: application/json' \
+    -d '{"bookTitle":"Reported Book","category":"Fantasy","displayName":"Bob"}' | json "['id']")
+  [ -n "$REP" ] && pass "a rec to report exists" || fail "a rec to report exists"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/recs/$REP/report" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
+    -d '{"reason":"nonsense-reason"}')
+  check "an unknown report reason → 400" "400" "$R"
+  R=$(curl -s -X POST "$BASE/api/recs/$REP/report" -H "authorization: Bearer $T1" -H 'content-type: application/json' -d '{"reason":"spam"}')
+  check "first report is accepted" "False" "$(printf '%s' "$R" | json "['hidden']")"
+  R=$(curl -s -X POST "$BASE/api/recs/$REP/report" -H "authorization: Bearer $T1" -H 'content-type: application/json' -d '{"reason":"spam"}')
+  check "the same person reporting twice doesn't count twice" "False" "$(printf '%s' "$R" | json "['hidden']")"
+  R=$(curl -s -X POST "$BASE/api/recs/$REP/report" -H "authorization: Bearer $T3C" -H 'content-type: application/json' -d '{"reason":"spam"}')
+  check "a second reporter still isn't enough" "False" "$(printf '%s' "$R" | json "['hidden']")"
+  R=$(curl -s -X POST "$BASE/api/recs/$REP/report" -H "authorization: Bearer $T2" -H 'content-type: application/json' -d '{"reason":"other"}')
+  check "the third distinct reporter auto-hides it" "True" "$(printf '%s' "$R" | json "['hidden']")"
+  R=$(curl -s "$BASE/api/recs")
+  GONE=$(printf '%s' "$R" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len([x for x in d['recs'] if x['id']=='$REP']))" 2>/dev/null)
+  check "…and it leaves the public board" "0" "$GONE"
+  # Reporting a comment must not become an oracle for the spoiler gate: the same
+  # 404 for "doesn't exist" and "is written past your progress".
+  # Alice has to be at 100% first — the gate applies to her own feed too, so at
+  # 60% she can't read back the id of the comment she just wrote at 95%.
+  curl -s -X PUT "$BASE/api/clubs/$CLUB/progress" -H "authorization: Bearer $T1" -H 'content-type: application/json' -d '{"progressPct":100}' >/dev/null
+  curl -s -X POST "$BASE/api/clubs/$CLUB/comments" -H "authorization: Bearer $T1" -H 'content-type: application/json' \
+    -d '{"body":"way ahead of you","posPct":95}' >/dev/null
+  AHEAD=$(curl -s "$BASE/api/clubs/$CLUB/comments" -H "authorization: Bearer $T1" | python3 -c "import sys,json;d=json.load(sys.stdin);print([c['id'] for c in d['comments'] if c['body']=='way ahead of you'][0])" 2>/dev/null)
+  [ -n "$AHEAD" ] && pass "a comment exists ahead of Carol's progress" || fail "a comment exists ahead of Carol's progress"
+  curl -s -X POST "$BASE/api/clubs/join" -H "authorization: Bearer $T3C" -H 'content-type: application/json' -d "{\"joinCode\":\"$CODE\",\"displayName\":\"Carol\"}" >/dev/null
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/clubs/$CLUB/comments/$AHEAD/report" -H "authorization: Bearer $T3C" -H 'content-type: application/json' -d '{"reason":"spoiler"}')
+  check "reporting a comment past your progress → 404 (no spoiler oracle)" "404" "$R"
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/clubs/$CLUB/comments/$AHEAD/report" -H "authorization: Bearer $T2" -H 'content-type: application/json' -d '{"reason":"spoiler"}')
+  check "…and a non-member can't report into a club at all" "403" "$R"
+
+  # Blocking is per-viewer: the blocked person's posts vanish for the blocker and
+  # for nobody else, and nothing is deleted.
+  ALICE_UID=$(curl -s -X POST "$BASE/api/login" -H 'content-type: application/json' \
+    -d "{\"email\":\"$U1\",\"password\":\"correct-horse-1\"}" | json "['user']['id']")
+  check "blocking yourself is refused" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/blocks" -H "authorization: Bearer $T1" -H 'content-type: application/json' -d "{\"uid\":\"$ALICE_UID\"}")"
+  BEFORE=$(curl -s "$BASE/api/recs" -H "authorization: Bearer $T2" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len([x for x in d['recs'] if x['created_by']=='$ALICE_UID']))" 2>/dev/null)
+  R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/blocks" -H "authorization: Bearer $T2" -H 'content-type: application/json' -d "{\"uid\":\"$ALICE_UID\"}")
+  check "Bob blocks Alice" "200" "$R"
+  AFTER=$(curl -s "$BASE/api/recs" -H "authorization: Bearer $T2" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len([x for x in d['recs'] if x['created_by']=='$ALICE_UID']))" 2>/dev/null)
+  [ "$BEFORE" -gt 0 ] && [ "$AFTER" = "0" ] && pass "Alice's recs disappear from Bob's board" || fail "Alice's recs disappear from Bob's board (before=$BEFORE after=$AFTER)"
+  STILL=$(curl -s "$BASE/api/recs" -H "authorization: Bearer $T3C" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len([x for x in d['recs'] if x['created_by']=='$ALICE_UID']))" 2>/dev/null)
+  [ "$STILL" -gt 0 ] && pass "…but not from anyone else's" || fail "…but not from anyone else's (got $STILL)"
+  check "the block is listed" "1" "$(curl -s "$BASE/api/blocks" -H "authorization: Bearer $T2" | json "['blocks'].__len__()")"
+  curl -s -X DELETE "$BASE/api/blocks/$ALICE_UID" -H "authorization: Bearer $T2" >/dev/null
+  BACK=$(curl -s "$BASE/api/recs" -H "authorization: Bearer $T2" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len([x for x in d['recs'] if x['created_by']=='$ALICE_UID']))" 2>/dev/null)
+  [ "$BACK" -gt 0 ] && pass "unblocking brings them back" || fail "unblocking brings them back (got $BACK)"
+  # The queue must not confirm it exists to someone who isn't an admin.
+  check "the moderation queue 404s for non-admins" "404" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/moderation/reports" -H "authorization: Bearer $T1")"
+  check "…and for anonymous callers" "404" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/moderation/reports")"
 else
   say ""
   say "▸ clubs/recs skipped (no local CLUBS_DB — seed it with:"
   say "    npx wrangler d1 execute enkelas-clubs --local --config wrangler.toml --file schema-clubs.sql"
   say "  --config is required: without it wrangler seeds the ROOT .wrangler state, not this one.)"
+fi
+
+say ""
+say "Delete account"
+# Fresh accounts throughout: everything below is destroyed on purpose, and
+# reusing the fixtures above would take the earlier assertions with it.
+DEL="del-$STAMP@test.local"
+TD=$(curl -s -X POST "$BASE/api/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"$DEL\",\"fullName\":\"Dee Leet\",\"password\":\"delete-passphrase-9\"}" | json "['token']")
+[ -n "$TD" ] && pass "register an account to delete" || fail "register an account to delete"
+curl -s -X PUT "$BASE/api/data" -H "authorization: Bearer $TD" -H 'content-type: application/json' \
+  -d '{"blob":{"version":1,"books":[{"id":"z1","title":"Doomed"}]},"updatedAt":"2026-02-01T00:00:00Z","force":true}' >/dev/null
+check "…with a bookshelf on it" "Doomed" "$(curl -s "$BASE/api/data" -H "authorization: Bearer $TD" | json "['blob']['books'][0]['title']")"
+check "deleting without a token → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/account" -H 'content-type: application/json' -d '{"password":"delete-passphrase-9"}')"
+# A stolen token alone must not be enough to erase somebody's shelf.
+check "deleting with no password → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/account" -H "authorization: Bearer $TD" -H 'content-type: application/json' -d '{}')"
+check "deleting with the wrong password → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/account" -H "authorization: Bearer $TD" -H 'content-type: application/json' -d '{"password":"not-the-passphrase-9"}')"
+check "…and the shelf is still there" "Doomed" "$(curl -s "$BASE/api/data" -H "authorization: Bearer $TD" | json "['blob']['books'][0]['title']")"
+R=$(curl -s -X DELETE "$BASE/api/account" -H "authorization: Bearer $TD" -H 'content-type: application/json' -d '{"password":"delete-passphrase-9"}')
+check "deleting with the right password succeeds" "True" "$(printf '%s' "$R" | json "['ok']")"
+check "the token dies with the account" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/data" -H "authorization: Bearer $TD")"
+check "the password no longer logs in" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/login" -H 'content-type: application/json' -d "{\"email\":\"$DEL\",\"password\":\"delete-passphrase-9\"}")"
+# Re-registering proves the user record itself is gone, not just hidden — and the
+# new account must NOT inherit the old shelf, which is the failure that would
+# matter most (someone else's books arriving with a recycled address).
+R=$(curl -s -X POST "$BASE/api/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"$DEL\",\"fullName\":\"Dee Again\",\"password\":\"second-life-passphrase-9\"}")
+TD2=$(printf '%s' "$R" | json "['token']")
+[ -n "$TD2" ] && pass "the address can be registered again" || fail "the address can be registered again ($R)"
+check "…and the new account inherits nothing" "None" "$(curl -s "$BASE/api/data" -H "authorization: Bearer $TD2" | json "['blob']")"
+
+if [ "$CLUBS_ON" = "True" ]; then
+  # Hosting is not ownership of the conversation. A host who deletes their account
+  # must hand the club to the earliest-joined member, not take five other people's
+  # half-read book with them.
+  # Names and passwords are kept unrelated on purpose: the password policy
+  # rejects any password containing a 4+ character word from your own name, so
+  # "Host Person" / "host-passphrase-9" is a 400 — and an empty token then fails
+  # every assertion below with a blank response instead of a useful message.
+  TH=$(curl -s -X POST "$BASE/api/register" -H 'content-type: application/json' \
+    -d "{\"email\":\"host-$STAMP@test.local\",\"fullName\":\"Quill Marlow\",\"password\":\"granite-lantern-7\"}" | json "['token']")
+  [ -n "$TH" ] && pass "register a club host" || fail "register a club host"
+  TM=$(curl -s -X POST "$BASE/api/register" -H 'content-type: application/json' \
+    -d "{\"email\":\"heir-$STAMP@test.local\",\"fullName\":\"Bram Teller\",\"password\":\"meadow-cipher-3\"}" | json "['token']")
+  [ -n "$TM" ] && pass "register a second member" || fail "register a second member"
+  R=$(curl -s -X POST "$BASE/api/clubs" -H "authorization: Bearer $TH" -H 'content-type: application/json' \
+    -d '{"bookTitle":"Inherited Book","displayName":"Host"}')
+  HCLUB=$(printf '%s' "$R" | json "['clubId']"); HCODE=$(printf '%s' "$R" | json "['joinCode']")
+  curl -s -X POST "$BASE/api/clubs/join" -H "authorization: Bearer $TM" -H 'content-type: application/json' -d "{\"joinCode\":\"$HCODE\",\"displayName\":\"Heir\"}" >/dev/null
+  curl -s -X POST "$BASE/api/clubs/$HCLUB/comments" -H "authorization: Bearer $TH" -H 'content-type: application/json' -d '{"body":"host says hello","posPct":0}' >/dev/null
+  curl -s -X DELETE "$BASE/api/account" -H "authorization: Bearer $TH" -H 'content-type: application/json' -d '{"password":"granite-lantern-7"}' >/dev/null
+  R=$(curl -s "$BASE/api/clubs/$HCLUB" -H "authorization: Bearer $TM")
+  check "the club outlives its host" "Inherited Book" "$(printf '%s' "$R" | json "['club']['book_title']")"
+  check "…and the remaining member inherits it" "host" "$(printf '%s' "$R" | json "['me']['role']")"
+  check "…with the departed host gone from the roster" "1" "$(printf '%s' "$R" | json "['members'].__len__()")"
+  # Deleting an account is a request for erasure, unlike leaving a club — so the
+  # comments go too. (Leaving keeps them, attributed to "Former member".)
+  check "…and their comments are erased, not orphaned" "0" "$(curl -s "$BASE/api/clubs/$HCLUB/comments" -H "authorization: Bearer $TM" | json "['comments'].__len__()")"
+
+  # A club with nobody left in it should not linger as a joinable husk.
+  TS=$(curl -s -X POST "$BASE/api/register" -H 'content-type: application/json' \
+    -d "{\"email\":\"solo-$STAMP@test.local\",\"fullName\":\"Wren Ashby\",\"password\":\"harbour-thistle-5\"}" | json "['token']")
+  [ -n "$TS" ] && pass "register a sole-member host" || fail "register a sole-member host"
+  SCODE=$(curl -s -X POST "$BASE/api/clubs" -H "authorization: Bearer $TS" -H 'content-type: application/json' \
+    -d '{"bookTitle":"Lonely Book","displayName":"Solo"}' | json "['joinCode']")
+  SREC=$(curl -s -X POST "$BASE/api/recs" -H "authorization: Bearer $TS" -H 'content-type: application/json' \
+    -d '{"bookTitle":"Solo Rec","category":"Fantasy","displayName":"Solo"}' | json "['id']")
+  [ -n "$SREC" ] && pass "…who has posted a recommendation" || fail "…who has posted a recommendation"
+  curl -s -X DELETE "$BASE/api/account" -H "authorization: Bearer $TS" -H 'content-type: application/json' -d '{"password":"harbour-thistle-5"}' >/dev/null
+  check "a sole-member club is deleted outright" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/clubs/join" -H "authorization: Bearer $TM" -H 'content-type: application/json' -d "{\"joinCode\":\"$SCODE\"}")"
+  LEFT=$(curl -s "$BASE/api/recs" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len([x for x in d['recs'] if x['id']=='$SREC']))" 2>/dev/null)
+  check "…and their recommendations leave the public board" "0" "$LEFT"
 fi
 
 say ""

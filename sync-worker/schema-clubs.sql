@@ -104,3 +104,40 @@ CREATE INDEX IF NOT EXISTS idx_rec_votes_rec ON rec_votes(rec_id);
 CREATE INDEX IF NOT EXISTS idx_rec_votes_uid ON rec_votes(uid);
 -- The board is paged by recency, so give the ORDER BY an index to walk.
 CREATE INDEX IF NOT EXISTS idx_recs_created ON recs(created_at DESC);
+
+-- Moderation ----------------------------------------------------------------
+-- The community board is public user-generated content, so it needs the three
+-- things any such board needs: a way to flag something, a way to never see a
+-- particular person again, and a takedown that doesn't wait for a human to
+-- wake up. Reports drive an automatic hide at REPORT_AUTOHIDE distinct
+-- reporters; blocks are applied at read time, per viewer.
+
+CREATE TABLE IF NOT EXISTS reports (
+  id           TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL,            -- 'rec' | 'comment'
+  target_id    TEXT NOT NULL,
+  target_uid   TEXT,                      -- author at report time, for the review queue
+  reporter_uid TEXT NOT NULL,
+  reason       TEXT NOT NULL,            -- spam|harassment|sexual|violence|hate|spoiler|other
+  detail       TEXT,
+  created_at   TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'open',   -- open|actioned|dismissed
+  -- One report per person per item. Without this, a single account could hit
+  -- the auto-hide threshold alone and take down anything it disliked.
+  UNIQUE (kind, target_id, reporter_uid)
+);
+-- The review queue is "open reports, newest first"; the auto-hide count is
+-- "how many reports does THIS item have?". One index each.
+CREATE INDEX IF NOT EXISTS idx_reports_open ON reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(kind, target_id);
+
+-- Blocking is one-directional and silent: the blocked person is never told, and
+-- nothing they already posted is deleted — it just stops being sent to the
+-- blocker. Applied as a NOT IN subquery on every read of a public feed.
+CREATE TABLE IF NOT EXISTS blocks (
+  uid         TEXT NOT NULL,             -- who is doing the blocking
+  blocked_uid TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (uid, blocked_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_blocks_uid ON blocks(uid);

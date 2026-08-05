@@ -13,4 +13,10 @@ interface Env {
   RESET_FROM?: string;
   /** LOCAL DEV ONLY: "1" returns the reset link in the API response. Never set in production. */
   RESET_DEBUG?: string;
+  /**
+   * Comma-separated user ids allowed to read and action the moderation queue.
+   * Unset means nobody can — the queue is simply unavailable, which is the safe
+   * default: reports still accumulate and auto-hide still fires without it.
+   */
+  ADMIN_UIDS?: string;
 }

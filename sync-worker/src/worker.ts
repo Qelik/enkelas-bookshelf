@@ -16,6 +16,7 @@
  *   resetreq:<email>         -> reset emails requested           (1 h)
  *   ipreset:<ip>             -> reset requests from that IP      (1 h)
  *   pwchange:<userId>        -> wrong current-password guesses   (15 min)
+ *   pwdelete:<userId>        -> wrong password guesses on delete (15 min)
  */
 
 const enc = new TextEncoder();
@@ -32,7 +33,11 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 function corsHeaders(request: Request, env: Env) {
   const h: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+    // DELETE is here for /api/account and /api/blocks/<uid>. A browser preflights
+    // any method outside the simple set, and an unlisted one is refused before
+    // the request is ever made — so omitting it breaks those two routes in the
+    // web client only, while curl keeps working. Easy to lose an afternoon to.
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
@@ -540,6 +545,127 @@ async function putData(request: Request, env: Env) {
   return json({ ok: true, updatedAt });
 }
 
+// ---- Account deletion -------------------------------------------------------
+/**
+ * Erase an account and everything attached to it. Until now the only way out was
+ * emailing whoever runs the server, which is not a way out.
+ *
+ * Re-authentication with the current password is deliberate. This is total and
+ * irreversible, so a token lifted off a borrowed laptop must not be enough on its
+ * own — the same reasoning that guards change-password, and the guesses are
+ * throttled on their own counter for the same reason.
+ */
+async function accountDelete(request: Request, env: Env, ctx: ExecutionContext | null) {
+  const auth = await requireAuth(request, env);
+  if (!auth) return json({ error: "Not signed in." }, 401);
+  const b = await smallJson(request);
+  const user = await userByUid(env, auth.uid, b.email);
+  if (!user) return json({ error: "We couldn't find your account. Please sign out and back in, then try again." }, 404);
+  const guessKey = "pwdelete:" + auth.uid;
+  if (await hits(env, guessKey) >= MAX_PW_CHANGE_FAILS) {
+    return json({ error: "Too many attempts. Please wait a few minutes." }, 429, { "Retry-After": String(FAIL_WINDOW_S) });
+  }
+  if (!(await verifyPassword(String(b.password || ""), user))) {
+    await bumpHits(env, guessKey, FAIL_WINDOW_S);
+    return json({ error: "That password isn't right." }, 401);
+  }
+
+  // The order below is the whole design, and it is chosen so that a failure at
+  // any point leaves the account still signed-in-able and the delete retryable.
+  // Every step is idempotent.
+
+  // 1. Sessions first. Another device mid-sync would otherwise PUT /api/data a
+  //    moment after step 2 and quietly resurrect the blob we just erased.
+  //    Revocation does not block a fresh login (a new token's iat is after the
+  //    boundary), which is exactly what makes a retry possible.
+  await revokeSessions(env, user.id);
+  // 2. The private data, before the account record. Deleting the account first
+  //    would strand the blob with no credential left to authenticate a retry.
+  await env.BOOKSHELF.delete("data:" + user.id);
+  // 3. Clubs, comments, recs, votes, blocks, reports.
+  const removed = await purgeUserFromCommunity(env, ctx, user.id);
+  // 4. The account itself, last — this is the step that makes it unrecoverable.
+  //    rev:<uid> deliberately stays: it has to outlive the account so any token
+  //    still in the wild remains dead. It expires on its own TTL.
+  await Promise.all([
+    env.BOOKSHELF.delete("user:" + user.email),
+    env.BOOKSHELF.delete("uid:" + user.id),
+    env.BOOKSHELF.delete("throttle:" + user.email),
+    env.BOOKSHELF.delete("pwchange:" + user.id),
+    env.BOOKSHELF.delete(guessKey),
+  ]);
+  // 5. Sweep the blob once more. KV is eventually consistent, so a request
+  //    already in flight when step 1 landed could still have written one.
+  await env.BOOKSHELF.delete("data:" + user.id);
+  // Outstanding reset: records need no sweep — they're keyed by token hash and
+  // aren't enumerable by uid, and passwordReset already re-reads user:<email>,
+  // finds it gone, deletes the record and reports the link as expired.
+  return json({ ok: true, deleted: removed });
+}
+
+/**
+ * Remove a user from the shared D1 side of the app. Runs as one batch so a
+ * partial failure can't leave a club with no host or a comment with no author.
+ *
+ * Leaving a club and deleting your account are deliberately different: leaving
+ * keeps your words in everyone else's feed (attributed to "Former member"),
+ * because the discussion outlives the membership. Deleting the account is a
+ * request for erasure, so the comments go too.
+ */
+async function purgeUserFromCommunity(env: Env, ctx: ExecutionContext | null, uid: string) {
+  if (!env.CLUBS_DB) return { clubs: 0, recs: 0 };
+  const memberships = (await env.CLUBS_DB.prepare("SELECT club_id, role FROM members WHERE uid=?1").bind(uid).all()).results as any[] || [];
+  const recCount = Number((await env.CLUBS_DB.prepare("SELECT COUNT(*) AS n FROM recs WHERE created_by=?1 AND deleted=0").bind(uid).first<any>()).n) || 0;
+  const stmts: any[] = [];
+  const orphaned: string[] = [];
+  for (const m of memberships) {
+    if (m.role !== "host") continue;
+    // Hosting is not ownership of the conversation. Deleting a club out from
+    // under five other people who are halfway through the book is worse than
+    // losing its founder, so the earliest-joined member inherits it.
+    const heir = await env.CLUBS_DB.prepare(
+      "SELECT uid FROM members WHERE club_id=?1 AND uid<>?2 ORDER BY joined_at ASC LIMIT 1"
+    ).bind(m.club_id, uid).first<any>();
+    if (heir) {
+      stmts.push(
+        env.CLUBS_DB.prepare("UPDATE members SET role='host' WHERE club_id=?1 AND uid=?2").bind(m.club_id, heir.uid),
+        env.CLUBS_DB.prepare("UPDATE clubs SET host_uid=?2 WHERE id=?1").bind(m.club_id, heir.uid),
+      );
+    } else {
+      orphaned.push(m.club_id); // sole member: nothing survives, take it all
+    }
+  }
+  for (const clubId of orphaned) {
+    stmts.push(
+      env.CLUBS_DB.prepare("DELETE FROM reactions WHERE comment_id IN (SELECT id FROM comments WHERE club_id=?1)").bind(clubId),
+      env.CLUBS_DB.prepare("DELETE FROM comments WHERE club_id=?1").bind(clubId),
+      env.CLUBS_DB.prepare("DELETE FROM invites WHERE club_id=?1").bind(clubId),
+      env.CLUBS_DB.prepare("DELETE FROM members WHERE club_id=?1").bind(clubId),
+      env.CLUBS_DB.prepare("DELETE FROM clubs WHERE id=?1").bind(clubId),
+    );
+  }
+  stmts.push(
+    env.CLUBS_DB.prepare("DELETE FROM members WHERE uid=?1").bind(uid),
+    env.CLUBS_DB.prepare("UPDATE comments SET deleted=1 WHERE uid=?1").bind(uid),
+    env.CLUBS_DB.prepare("DELETE FROM reactions WHERE uid=?1").bind(uid),
+    env.CLUBS_DB.prepare("UPDATE recs SET deleted=1 WHERE created_by=?1").bind(uid),
+    // Their own auto-cast vote AND everyone else's votes on the recs that just
+    // went away — otherwise rec_votes grows rows pointing at nothing forever.
+    env.CLUBS_DB.prepare("DELETE FROM rec_votes WHERE rec_id IN (SELECT id FROM recs WHERE created_by=?1)").bind(uid),
+    env.CLUBS_DB.prepare("DELETE FROM rec_votes WHERE uid=?1").bind(uid),
+    env.CLUBS_DB.prepare("DELETE FROM invites WHERE created_by=?1").bind(uid),
+    // Blocks in both directions: theirs are meaningless now, and a block *of*
+    // them is a filter against a uid that will never post again.
+    env.CLUBS_DB.prepare("DELETE FROM blocks WHERE uid=?1 OR blocked_uid=?1").bind(uid),
+    env.CLUBS_DB.prepare("DELETE FROM reports WHERE reporter_uid=?1").bind(uid),
+  );
+  await env.CLUBS_DB.batch(stmts);
+  // Nudge every club they were in, so anyone with it open sees the member list
+  // change instead of a ghost sitting at 40%.
+  for (const m of memberships) notifyClub(env, ctx, m.club_id, { type: "members" });
+  return { clubs: memberships.length, recs: recCount };
+}
+
 // ---- Reading Clubs (D1) -----------------------------------------------------
 // Small, private, spoiler-safe book clubs. The spoiler gate is a server-side
 // integer compare: you only ever receive comments at or below YOUR progress_pct.
@@ -658,11 +784,17 @@ async function clubComments(clubId: string, auth: { uid: string }, env: Env) {
   // LEFT JOIN, not JOIN: leaving a club deletes the member row, and an inner
   // join then dropped every comment that person had written out of everyone
   // else's feed. The discussion outlives the membership.
+  // The blocked-author filter rides alongside the spoiler gate. A club is six
+  // people who chose each other, so this is rarer here than on the public board
+  // — but "I don't want to read this person any more" shouldn't force you to
+  // abandon the book.
   const comments = (await env.CLUBS_DB.prepare(
     "SELECT c.id,c.uid,COALESCE(m.display_name,'Former member') AS display_name,c.pos_pct,c.chapter,c.label,c.body,c.created_at " +
     "FROM comments c LEFT JOIN members m ON m.club_id=c.club_id AND m.uid=c.uid " +
-    "WHERE c.club_id=?1 AND c.deleted=0 AND c.pos_pct<=?2 ORDER BY c.pos_pct ASC, c.created_at ASC"
-  ).bind(clubId, me.progress_pct).all()).results as any[] || [];
+    "WHERE c.club_id=?1 AND c.deleted=0 AND c.pos_pct<=?2 " +
+    "AND c.uid NOT IN (SELECT blocked_uid FROM blocks WHERE uid=?3) " +
+    "ORDER BY c.pos_pct ASC, c.created_at ASC"
+  ).bind(clubId, me.progress_pct, auth.uid).all()).results as any[] || [];
   // Reactions for the comments this member is allowed to see (same gate).
   const reacts = (await env.CLUBS_DB.prepare(
     "SELECT r.comment_id, r.emoji, r.uid FROM reactions r JOIN comments c ON c.id=r.comment_id " +
@@ -684,6 +816,8 @@ async function clubPostComment(request: Request, clubId: string, auth: { uid: st
   const b = await request.json<any>().catch(() => ({}));
   const body = String(b.body || "").trim().slice(0, 2000);
   if (!body) return json({ error: "Empty comment." }, 400);
+  const bad = contentProblem(body);
+  if (bad) return json({ error: bad }, 422);
   await env.CLUBS_DB.prepare("INSERT INTO comments (id,club_id,uid,pos_pct,chapter,label,body,created_at,deleted) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)")
     .bind(crypto.randomUUID(), clubId, auth.uid, clampPct(b.posPct), (b.chapter != null ? Number(b.chapter) : null), (b.label ? String(b.label).slice(0, 60) : null), body, new Date().toISOString()).run();
   await touchClub(env, clubId);
@@ -727,8 +861,8 @@ async function clubLeave(clubId: string, auth: { uid: string }, env: Env) {
 }
 async function clubsRouter(url: URL, request: Request, env: Env, ctx: ExecutionContext) {
   if (!env.CLUBS_DB) return json({ error: "Reading clubs aren't enabled on this server yet." }, 503);
-  const parts = url.pathname.split("/").filter(Boolean); // ["api","clubs", id?, sub?]
-  const id = parts[2], sub = parts[3];
+  const parts = url.pathname.split("/").filter(Boolean); // ["api","clubs", id?, sub?, sub2?, sub3?]
+  const id = parts[2], sub = parts[3], sub2 = parts[4], sub3 = parts[5];
   const m = request.method;
   // Realtime WebSocket — a browser can't set an Authorization header on the WS
   // handshake, so the token arrives as a query param and is verified in clubWs.
@@ -745,6 +879,8 @@ async function clubsRouter(url: URL, request: Request, env: Env, ctx: ExecutionC
     return clubDetail(id, auth, env);
   } else if (sub === "comments" && m === "GET") {
     return clubComments(id, auth, env);
+  } else if (sub === "comments" && sub2 && sub3 === "report" && m === "POST") {
+    return reportCreate(request, "comment", sub2, id, auth, env);
   } else if (sub === "comments" && m === "POST") {
     return clubPostComment(request, id, auth, env, ctx);
   } else if (sub === "progress" && m === "PUT") {
@@ -766,9 +902,14 @@ async function clubsRouter(url: URL, request: Request, env: Env, ctx: ExecutionC
 const RECS_PAGE = 200;
 const RECS_PER_HOUR = 20;
 async function recsList(env: Env, auth: { uid: string } | null) {
-  const recs = (await env.CLUBS_DB.prepare(
-    "SELECT id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at FROM recs WHERE deleted=0 ORDER BY created_at DESC LIMIT ?1"
-  ).bind(RECS_PAGE).all()).results as any[] || [];
+  // Blocking is applied here, per viewer, rather than by deleting anything: the
+  // blocked person's recs stay on everyone else's board and they're never told.
+  const cols = "SELECT id,category,book_title,book_author,book_isbn,cover_url,note,created_by,created_name,created_at FROM recs WHERE deleted=0";
+  const tail = " ORDER BY created_at DESC LIMIT ?1";
+  const q = auth
+    ? env.CLUBS_DB.prepare(cols + " AND created_by NOT IN (SELECT blocked_uid FROM blocks WHERE uid=?2)" + tail).bind(RECS_PAGE, auth.uid)
+    : env.CLUBS_DB.prepare(cols + tail).bind(RECS_PAGE);
+  const recs = (await q.all()).results as any[] || [];
   if (!recs.length) return json({ recs, signedIn: !!auth, capped: false });
   const ids = recs.map((r) => r.id);
   const holes = ids.map((_, i) => "?" + (i + 1)).join(",");
@@ -799,6 +940,9 @@ async function recsCreate(request: Request, auth: { uid: string }, env: Env) {
   const title = String(b.bookTitle || "").trim().slice(0, 200);
   const category = String(b.category || "").trim().slice(0, 60) || "General";
   if (!title) return json({ error: "A book title is required." }, 400);
+  // The board is public and permanent-ish; check what a stranger will read.
+  const bad = contentProblem(title) || contentProblem(String(b.note || "")) || contentProblem(String(b.bookAuthor || ""));
+  if (bad) return json({ error: bad }, 422);
   const now = new Date().toISOString();
   // Recommending the same book to the same shelf twice is a double-tap, not a
   // second recommendation — hand back the original instead of cluttering the
@@ -855,7 +999,189 @@ async function recsRouter(url: URL, request: Request, env: Env) {
     return auth ? recsVote(request, id, auth, env) : json({ error: "Not signed in." }, 401);
   } else if (sub === "delete" && m === "POST") {
     return auth ? recsDelete(id, auth, env) : json({ error: "Not signed in." }, 401);
+  } else if (sub === "report" && m === "POST") {
+    return auth ? reportCreate(request, "rec", id, null, auth, env) : json({ error: "Not signed in." }, 401);
   }
+  return json({ error: "Not found" }, 404);
+}
+
+// ---- Moderation: filter, report, block --------------------------------------
+// The community board is public, unmoderated, user-generated content, which needs
+// three things that didn't exist: something stopping the worst posts at the door,
+// a way to flag what gets through, and a way to never see one person again.
+//
+// The three are deliberately different in kind. The filter is narrow and dumb.
+// Reports are the real mechanism, and they take an item down automatically —
+// waiting for a human to wake up is not a takedown policy for a project with no
+// one on call. Blocking is per-viewer and changes nothing for anyone else.
+
+const REPORT_REASONS = new Set(["spam", "harassment", "sexual", "violence", "hate", "spoiler", "other"]);
+/** Distinct reporters that hide an item outright, pending review. */
+const REPORT_AUTOHIDE = 3;
+const REPORTS_PER_HOUR = 20;
+
+/**
+ * The write-side filter, kept deliberately narrow.
+ *
+ * A book board is precisely where a frank note about Lolita, Beloved or American
+ * Psycho is the whole point, so this does not try to be a profanity net —
+ * over-filtering a recommendation board is its own failure, and a false positive
+ * on someone's honest review is worse than a slur that three people then report.
+ * It catches the two things that are never a real recommendation: unambiguous
+ * slurs used as slurs, and links.
+ */
+const BLOCKED_TERMS = [
+  "nigger", "niggers", "faggot", "faggots", "kike", "kikes",
+  "spic", "spics", "chink", "chinks", "tranny", "trannies", "retard", "retards",
+];
+const LINK_RE = /(?:https?:\/\/|\bwww\.)\S/i;
+function contentProblem(text: string): string | null {
+  const raw = String(text || "");
+  if (!raw.trim()) return null;
+  // Links: the board has a cover-image field of its own, so a URL in prose is
+  // either spam or an affiliate tag. One rule, easy to explain, no judgement call.
+  if (LINK_RE.test(raw)) return "Please leave out web links — just tell people about the book.";
+  // Collapse to letters-and-spaces and match on whole words, so Scunthorpe,
+  // "Dick Francis" and "classic" all survive.
+  const padded = " " + raw.toLowerCase().replace(/[^a-z]+/g, " ").trim() + " ";
+  for (const term of BLOCKED_TERMS) {
+    if (padded.indexOf(" " + term + " ") >= 0) return "That wording isn't allowed here. Please rephrase.";
+  }
+  return null;
+}
+
+/**
+ * File a report against a rec or a club comment.
+ *
+ * The visibility check is not a formality: without it, "report comment X" answers
+ * whether comment X exists, which hands anyone an oracle for the spoiler gate the
+ * clubs feature is built around. You can only report what you can already see.
+ */
+async function reportCreate(request: Request, kind: "rec" | "comment", targetId: string, clubId: string | null, auth: { uid: string }, env: Env) {
+  const b = await smallJson(request);
+  const reason = String(b.reason || "").trim().toLowerCase();
+  if (!REPORT_REASONS.has(reason)) return json({ error: "Please choose a reason for the report." }, 400);
+  const detail = String(b.detail || "").slice(0, 500);
+  // Reporting is itself abusable — a script filing three reports on everything
+  // would be a takedown button. Cap it, and require distinct accounts to hide.
+  const since = new Date(Date.now() - 3600000).toISOString();
+  const recent = Number((await env.CLUBS_DB.prepare("SELECT COUNT(*) AS n FROM reports WHERE reporter_uid=?1 AND created_at>?2").bind(auth.uid, since).first<any>()).n) || 0;
+  if (recent >= REPORTS_PER_HOUR) return json({ error: "That's a lot of reports at once — please try again a little later." }, 429);
+
+  let targetUid = "";
+  if (kind === "rec") {
+    const rec = await env.CLUBS_DB.prepare("SELECT created_by FROM recs WHERE id=?1 AND deleted=0").bind(targetId).first<any>();
+    if (!rec) return json({ error: "That post no longer exists." }, 404);
+    targetUid = rec.created_by;
+  } else {
+    const me = await clubMember(env, String(clubId), auth.uid);
+    if (!me) return json({ error: "Not a member of this club." }, 403);
+    const c = await env.CLUBS_DB.prepare("SELECT uid, pos_pct FROM comments WHERE id=?1 AND club_id=?2 AND deleted=0").bind(targetId, clubId).first<any>();
+    // Same answer for "doesn't exist" and "is past your progress", so the 404
+    // can't be used to probe what's written ahead of you.
+    if (!c || c.pos_pct > me.progress_pct) return json({ error: "That comment isn't available." }, 404);
+    targetUid = c.uid;
+  }
+
+  // INSERT OR IGNORE plus the UNIQUE(kind,target_id,reporter_uid) constraint makes
+  // reporting idempotent, and the response is identical either way — telling
+  // someone "you already reported this" is noise, not information.
+  await env.CLUBS_DB.prepare(
+    "INSERT OR IGNORE INTO reports (id,kind,target_id,target_uid,reporter_uid,reason,detail,created_at,status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'open')"
+  ).bind(crypto.randomUUID(), kind, targetId, targetUid, auth.uid, reason, detail, new Date().toISOString()).run();
+
+  const n = Number((await env.CLUBS_DB.prepare("SELECT COUNT(*) AS n FROM reports WHERE kind=?1 AND target_id=?2").bind(kind, targetId).first<any>()).n) || 0;
+  let hidden = false;
+  if (n >= REPORT_AUTOHIDE) {
+    hidden = true;
+    await env.CLUBS_DB.prepare(
+      kind === "rec" ? "UPDATE recs SET deleted=1 WHERE id=?1" : "UPDATE comments SET deleted=1 WHERE id=?1"
+    ).bind(targetId).run();
+  }
+  return json({ ok: true, hidden });
+}
+
+async function blocksList(auth: { uid: string }, env: Env) {
+  const blocks = (await env.CLUBS_DB.prepare("SELECT blocked_uid, created_at FROM blocks WHERE uid=?1 ORDER BY created_at DESC").bind(auth.uid).all()).results as any[] || [];
+  return json({ blocks });
+}
+async function blockCreate(request: Request, auth: { uid: string }, env: Env) {
+  const b = await smallJson(request);
+  const target = String(b.uid || "").trim().slice(0, 64);
+  if (!target) return json({ error: "Nobody to block." }, 400);
+  if (target === auth.uid) return json({ error: "You can't block yourself." }, 400);
+  // No existence check on purpose: confirming whether a uid is real would turn
+  // this into a membership lookup, and blocking a stranger costs one dead row.
+  await env.CLUBS_DB.prepare("INSERT OR IGNORE INTO blocks (uid,blocked_uid,created_at) VALUES (?1,?2,?3)")
+    .bind(auth.uid, target, new Date().toISOString()).run();
+  return json({ ok: true });
+}
+async function blockDelete(target: string, auth: { uid: string }, env: Env) {
+  await env.CLUBS_DB.prepare("DELETE FROM blocks WHERE uid=?1 AND blocked_uid=?2").bind(auth.uid, target).run();
+  return json({ ok: true });
+}
+async function blocksRouter(url: URL, request: Request, env: Env) {
+  if (!env.CLUBS_DB) return json({ error: "Not available on this server yet." }, 503);
+  const parts = url.pathname.split("/").filter(Boolean); // ["api","blocks", uid?]
+  const auth = await requireAuth(request, env);
+  if (!auth) return json({ error: "Not signed in." }, 401);
+  const m = request.method;
+  if (!parts[2]) {
+    if (m === "GET") return blocksList(auth, env);
+    if (m === "POST") return blockCreate(request, auth, env);
+  } else if (m === "DELETE") {
+    return blockDelete(parts[2], auth, env);
+  }
+  return json({ error: "Not found" }, 404);
+}
+
+/**
+ * The review queue. Gated on ADMIN_UIDS, and answers 404 rather than 403 to
+ * anyone else — a 403 confirms the endpoint is here and worth attacking.
+ * Unset ADMIN_UIDS means nobody can review, which is a deliberate default:
+ * reports still accumulate and auto-hide still fires without it.
+ */
+function isAdmin(env: Env, uid: string) {
+  return String(env.ADMIN_UIDS || "").split(",").map((s) => s.trim()).filter(Boolean).indexOf(uid) >= 0;
+}
+async function moderationList(auth: { uid: string }, env: Env) {
+  if (!isAdmin(env, auth.uid)) return json({ error: "Not found" }, 404);
+  // Join the content in, so reviewing doesn't mean a second query per row.
+  const reports = (await env.CLUBS_DB.prepare(
+    "SELECT r.*, COALESCE(rc.book_title, '') AS rec_title, COALESCE(rc.note, '') AS rec_note, " +
+    "COALESCE(cm.body, '') AS comment_body, COALESCE(rc.deleted, cm.deleted, 0) AS target_hidden " +
+    "FROM reports r LEFT JOIN recs rc ON r.kind='rec' AND rc.id=r.target_id " +
+    "LEFT JOIN comments cm ON r.kind='comment' AND cm.id=r.target_id " +
+    "WHERE r.status='open' ORDER BY r.created_at DESC LIMIT 200"
+  ).all()).results as any[] || [];
+  return json({ reports, autoHideAt: REPORT_AUTOHIDE });
+}
+async function moderationAction(request: Request, id: string, auth: { uid: string }, env: Env) {
+  if (!isAdmin(env, auth.uid)) return json({ error: "Not found" }, 404);
+  const b = await smallJson(request);
+  const action = String(b.action || "");
+  if (["hide", "restore", "dismiss"].indexOf(action) < 0) return json({ error: "Unknown action." }, 400);
+  const rep = await env.CLUBS_DB.prepare("SELECT kind, target_id FROM reports WHERE id=?1").bind(id).first<any>();
+  if (!rep) return json({ error: "Not found." }, 404);
+  const table = rep.kind === "rec" ? "recs" : "comments";
+  const stmts: any[] = [];
+  if (action === "hide") stmts.push(env.CLUBS_DB.prepare(`UPDATE ${table} SET deleted=1 WHERE id=?1`).bind(rep.target_id));
+  if (action === "restore") stmts.push(env.CLUBS_DB.prepare(`UPDATE ${table} SET deleted=0 WHERE id=?1`).bind(rep.target_id));
+  // Resolve every report on the same item, not just the one that was clicked —
+  // otherwise a reviewed item comes back up the queue once per reporter.
+  stmts.push(env.CLUBS_DB.prepare("UPDATE reports SET status=?3 WHERE kind=?1 AND target_id=?2")
+    .bind(rep.kind, rep.target_id, action === "dismiss" ? "dismissed" : "actioned"));
+  await env.CLUBS_DB.batch(stmts);
+  return json({ ok: true });
+}
+async function moderationRouter(url: URL, request: Request, env: Env) {
+  if (!env.CLUBS_DB) return json({ error: "Not found" }, 404);
+  const parts = url.pathname.split("/").filter(Boolean); // ["api","moderation","reports", id?]
+  const auth = await requireAuth(request, env);
+  if (!auth) return json({ error: "Not found" }, 404);
+  if (parts[2] !== "reports") return json({ error: "Not found" }, 404);
+  if (!parts[3] && request.method === "GET") return moderationList(auth, env);
+  if (parts[3] && request.method === "POST") return moderationAction(request, parts[3], auth, env);
   return json({ error: "Not found" }, 404);
 }
 
@@ -873,8 +1199,11 @@ async function route(url: URL, request: Request, env: Env, ctx: ExecutionContext
   if (url.pathname === "/api/password/reset" && m === "POST") return passwordReset(request, env, env.AUTH_SECRET);
   if (url.pathname === "/api/data" && m === "GET") return getData(request, env);
   if (url.pathname === "/api/data" && m === "PUT") return putData(request, env);
+  if (url.pathname === "/api/account" && m === "DELETE") return accountDelete(request, env, ctx);
   if (url.pathname === "/api/clubs" || url.pathname.indexOf("/api/clubs/") === 0) return clubsRouter(url, request, env, ctx);
   if (url.pathname === "/api/recs" || url.pathname.indexOf("/api/recs/") === 0) return recsRouter(url, request, env);
+  if (url.pathname === "/api/blocks" || url.pathname.indexOf("/api/blocks/") === 0) return blocksRouter(url, request, env);
+  if (url.pathname.indexOf("/api/moderation/") === 0) return moderationRouter(url, request, env);
   if (url.pathname === "/" || url.pathname === "/api") {
     return json({
       ok: true, service: "enkelas-bookshelf-sync",
@@ -882,6 +1211,10 @@ async function route(url: URL, request: Request, env: Env, ctx: ExecutionContext
       // The client hides "Forgot password?" when nothing can deliver the link,
       // rather than promising an email that will never arrive.
       passwordReset: mailerReady(env),
+      // Deleting an account needs no binding beyond KV, so it's always on. Report
+      // and block need the D1 tables, so the client can tell whether to offer them.
+      accountDelete: true,
+      moderation: !!env.CLUBS_DB,
     });
   }
   return json({ error: "Not found" }, 404);

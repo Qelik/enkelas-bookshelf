@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --var AUTH_SECRET:\"$(sed -n 's/^AUTH_SECRET=//p' .env)\"",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
