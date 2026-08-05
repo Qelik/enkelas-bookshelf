@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Normalizer golden harness</title>
+</head>
+<body>
+<!--
+  Runs the REAL normalize() from app.js over the corpus and dumps the result,
+  so the Swift port can be diffed against the actual web-app behaviour rather
+  than against someone's reading of it.
+
+  Not opened by hand — ios/Tools/generate-golden.sh serves the repo root, loads
+  this in headless Chrome and scrapes #out. Must be served from the repo root
+  (the relative imports below climb out of ios/Tools/).
+-->
+<pre id="out">running…</pre>
+<script type="module">
+  // Importing app.js runs the whole app against this page's empty DOM. That is
+  // fine and deliberate — it is the only way to reach the real normalize(), and
+  // the app tolerates missing elements on load. window.__test is the same hook
+  // tests.html uses.
+  import "../../app.js";
+
+  (async function () {
+    const out = document.getElementById("out");
+    try {
+      const T = window.__test;
+      if (!T || !T.normalize) throw new Error("window.__test.normalize not found — did app.js load?");
+
+      // Freeze the two sources of nondeterminism inside normalize(), so the
+      // golden file is stable and the Swift port can inject the same values and
+      // be compared strictly. Without this, every field normalize() invents —
+      // missing ids, missing dates, the default goal year — would have to be
+      // excluded from the diff, which is exactly where a port is most likely to
+      // be wrong.
+      const FIXED_ISO = "2026-08-04T00:00:00.000Z";
+      const RealDate = Date;
+      const fixedMs = new RealDate(FIXED_ISO).getTime();
+      window.Date = class extends RealDate {
+        constructor(...args) { if (args.length === 0) { super(fixedMs); } else { super(...args); } }
+        static now() { return fixedMs; }
+      };
+      let idCounter = 0;
+      Object.defineProperty(crypto, "randomUUID", {
+        configurable: true,
+        value: () => "generated-id-" + (++idCounter),
+      });
+
+      // Relative to THIS page (ios/Tools/), not to the server root it is served from.
+      const corpus = await (await fetch("./normalizer-corpus.json")).json();
+      const fixture = await (await fetch("../../fixtures/sample-bookshelf.json")).json();
+
+      const cases = corpus.cases.concat([
+        { name: "fixtures/sample-bookshelf.json", input: fixture },
+        // Idempotence: normalizing an already-normalized shelf must be a no-op.
+        // If it isn't, every sync would produce a fresh updatedAt and two devices
+        // would ping-pong forever.
+        { name: "fixtures/sample-bookshelf.json (twice)", input: T.normalize(fixture) },
+      ]);
+
+      const results = cases.map((c) => {
+        // Reset per case so each one can be run and debugged on its own, rather
+        // than every id depending on how many books came before it.
+        idCounter = 0;
+        return {
+          name: c.name,
+          input: c.input,
+          // Deep-clone through JSON so the recorded input is exactly what a Swift
+          // decoder will see, and normalize() can't mutate it out from under us.
+          expected: T.normalize(JSON.parse(JSON.stringify(c.input))),
+        };
+      });
+
+      out.textContent = JSON.stringify({ generatedFrom: "window.__test.normalize", cases: results }, null, 2);
+      document.title = "golden-ok-" + results.length;
+    } catch (e) {
+      out.textContent = "ERROR: " + (e && e.stack || e);
+      document.title = "golden-failed";
+    }
+  })();
+</script>
+</body>
+</html>
