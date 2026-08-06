@@ -36,15 +36,68 @@ public enum SpineCrop {
         )
     }
 
+    /// Which part of the photo an aspect-fill preview is actually showing.
+    ///
+    /// `resizeAspectFill` scales the image until it covers the preview and clips
+    /// the overflow, so the preview is a centred window onto the image. Cropping
+    /// has to start from that window — the guide's coordinates mean nothing
+    /// against the full frame.
+    public static func visibleRect(imageSize: CGSize, previewSize: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0,
+              previewSize.width > 0, previewSize.height > 0
+        else { return CGRect(origin: .zero, size: imageSize) }
+
+        // Image pixels per preview point. `min` because aspect-*fill* is limited
+        // by whichever axis needs the least of the image to cover the preview.
+        let pixelsPerPoint = min(
+            imageSize.width / previewSize.width,
+            imageSize.height / previewSize.height
+        )
+        let width = previewSize.width * pixelsPerPoint
+        let height = previewSize.height * pixelsPerPoint
+        return CGRect(
+            x: (imageSize.width - width) / 2,
+            y: (imageSize.height - height) / 2,
+            width: width,
+            height: height
+        )
+    }
+
+    /// The guide, in the photo's pixels.
+    ///
+    /// **The photo must already be in display orientation** — that is, with any
+    /// EXIF rotation baked in, so its pixel space and the preview's point space
+    /// agree about which way is up. Doing this against a raw sensor buffer means
+    /// reasoning about which coordinate space `metadataOutputRectConverted`
+    /// returns, and getting that wrong produces a crop rotated by 90° — a
+    /// landscape sliver where a spine should be. Normalising first makes the
+    /// whole question disappear.
+    public static func cropRect(
+        guide: CGRect,
+        previewSize: CGSize,
+        imageSize: CGSize
+    ) -> CGRect? {
+        guard previewSize.width > 0, previewSize.height > 0 else { return nil }
+        let visible = visibleRect(imageSize: imageSize, previewSize: previewSize)
+        let scale = visible.width / previewSize.width
+
+        return pixelRect(
+            from: CGRect(
+                x: (visible.minX + guide.minX * scale) / imageSize.width,
+                y: (visible.minY + guide.minY * scale) / imageSize.height,
+                width: guide.width * scale / imageSize.width,
+                height: guide.height * scale / imageSize.height
+            ),
+            imageSize: imageSize
+        )
+    }
+
     /// Convert a normalised rect (0…1 in the image's own space, origin top-left)
     /// to pixels, clamped to the image.
     ///
-    /// The normalised rect comes from
-    /// `AVCaptureVideoPreviewLayer.metadataOutputRectConverted(fromLayerRect:)`,
-    /// which is what accounts for the preview's gravity and orientation. Clamping
-    /// matters: that conversion can return values slightly outside 0…1 when the
-    /// guide touches the edge, and `cropping(to:)` returns nil for a rect that
-    /// isn't fully inside — a silently failed capture.
+    /// Clamping matters: a guide touching the edge can round to fractionally
+    /// outside 0…1, and `cropping(to:)` returns nil for a rect that isn't fully
+    /// inside — a capture that silently does nothing.
     public static func pixelRect(from normalised: CGRect, imageSize: CGSize) -> CGRect? {
         guard imageSize.width > 0, imageSize.height > 0 else { return nil }
 

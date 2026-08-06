@@ -9,21 +9,20 @@ import UIKit
 /// point is the guide rectangle: the user has to see what will be kept, and a
 /// system picker has nowhere to put it.
 ///
-/// The guide and the crop are driven from the *same* rect. The preview is
-/// `resizeAspectFill`, so what's on screen is already a crop of the sensor
-/// frame — cropping the photo to the guide's screen coordinates would take a
-/// different region than the one framed. `metadataOutputRectConverted` is what
-/// bridges the two, and it's the reason this isn't a few lines in a view.
+/// The guide and the crop are driven from the *same* rect, and the preview is
+/// `resizeAspectFill` — so what's on screen is a centred window onto the photo
+/// rather than the whole of it. `SpineCrop` maps between the two, and it lives
+/// in BookshelfCore so that mapping can be tested; getting it wrong produces a
+/// crop rotated by 90°, which is precisely what the first version did.
 @MainActor
 final class SpineCameraController: NSObject, ObservableObject {
 
 
-    /// Set by the preview layer once it exists — the conversion needs the live
-    /// layer's geometry, not a remembered copy of it.
-    weak var previewLayer: AVCaptureVideoPreviewLayer?
-
     /// The guide, in the preview's coordinates. Written by the view on layout.
     var guideRect: CGRect = .zero
+    /// The preview's own size, needed to work out which part of the photo it
+    /// was showing — `resizeAspectFill` means it is a window, not the whole.
+    var previewSize: CGSize = .zero
 
     @Published var failure: String?
 
@@ -110,33 +109,26 @@ extension SpineCameraController: AVCapturePhotoCaptureDelegate {
 
 extension SpineCameraController {
     /// Crop to the guide, then shrink to what a spine on a shelf actually needs.
+    ///
+    /// The photo is normalised to `.up` first. A capture from the back camera in
+    /// portrait arrives as a landscape pixel buffer with an EXIF rotation, so its
+    /// pixel space and the preview's point space disagree about which way is up.
+    /// The first version tried to bridge that with
+    /// `metadataOutputRectConverted` and an axis swap, and got it 90° wrong: the
+    /// result was a wide landscape sliver where a spine should be. Baking the
+    /// rotation in makes the two spaces the same and the question disappears.
     func crop(_ image: UIImage) -> Data? {
-        guard let cgImage = image.cgImage else { return nil }
+        let upright = image.normalisedUp()
+        guard let cgImage = upright.cgImage else { return nil }
 
-        // The preview knows how its own gravity maps screen space onto the sensor
-        // frame. Doing this by hand is where the region silently drifts.
-        let normalised = previewLayer.map {
-            $0.metadataOutputRectConverted(fromLayerRect: guideRect)
-        } ?? CGRect(x: 0, y: 0, width: 1, height: 1)
-
-        // `metadataOutputRect` is in the *unrotated* sensor space, so it has to be
-        // turned to match how the photo itself is oriented before it can index
-        // pixels. For a portrait capture the axes swap.
         let pixelSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let oriented: CGRect = switch image.imageOrientation {
-        case .right, .rightMirrored, .left, .leftMirrored:
-            CGRect(x: normalised.origin.y, y: normalised.origin.x,
-                   width: normalised.height, height: normalised.width)
-        default:
-            normalised
-        }
+        guard let rect = SpineCrop.cropRect(
+            guide: guideRect,
+            previewSize: previewSize,
+            imageSize: pixelSize
+        ), let cut = cgImage.cropping(to: rect) else { return nil }
 
-        guard let rect = SpineCrop.pixelRect(from: oriented, imageSize: pixelSize),
-              let cut = cgImage.cropping(to: rect)
-        else { return nil }
-
-        let cropped = UIImage(cgImage: cut, scale: 1, orientation: image.imageOrientation)
-        return Self.shrink(cropped)
+        return Self.shrink(UIImage(cgImage: cut, scale: 1, orientation: .up))
     }
 
     /// Down to `SpineCrop.storedSize` and JPEG.
@@ -165,10 +157,10 @@ struct SpineCameraPreview: UIViewRepresentable {
         view.layer.session = controller.session
         view.layer.videoGravity = .resizeAspectFill
         view.onLayout = { [weak controller] layer, bounds in
-            controller?.previewLayer = layer
             // The guide the user sees *is* the rect the crop uses. Computing it
             // in two places is how the frame and the photo drift apart.
             controller?.guideRect = SpineCrop.guideRect(in: bounds)
+            controller?.previewSize = bounds
         }
         return view
     }
@@ -284,6 +276,24 @@ private final class SessionBox: @unchecked Sendable {
             let settings = AVCapturePhotoSettings()
             settings.flashMode = .off
             output.capturePhoto(with: settings, delegate: delegate)
+        }
+    }
+}
+
+
+extension UIImage {
+    /// The same pixels, with any EXIF rotation baked in and scale 1.
+    ///
+    /// After this, pixel coordinates and on-screen coordinates agree — which is
+    /// what lets the crop be plain geometry instead of a guess about which
+    /// coordinate space a capture API reports in.
+    func normalisedUp() -> UIImage {
+        guard imageOrientation != .up || scale != 1 else { return self }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
         }
     }
 }
