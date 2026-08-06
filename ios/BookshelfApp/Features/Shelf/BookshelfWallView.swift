@@ -20,7 +20,16 @@ struct BookshelfWallView: View {
     var body: some View {
         GeometryReader { geo in
             let usable = geo.size.width - caseInset * 2
-            let rows = ShelfLayout.rows(books.map(ShelfLayout.spine(for:)), width: usable)
+            // The photo's aspect goes into the layout, not just the drawing:
+            // a packer measuring one width while the view draws another is how
+            // rows overflow the shelf.
+            let spines = books.map { book in
+                ShelfLayout.spine(
+                    for: book,
+                    photoAspect: SpineImageCache.shared.aspect(for: book.id, from: photos)
+                )
+            }
+            let rows = ShelfLayout.rows(spines, width: usable)
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -118,7 +127,9 @@ private struct SpineView: View {
             if let photo {
                 Image(uiImage: photo)
                     .resizable()
-                    .scaledToFill()
+                    // Fit, not fill: the frame is already the photo's own aspect,
+                    // and `fill` would crop away a sliver of the real spine.
+                    .scaledToFit()
             } else {
                 drawn
             }

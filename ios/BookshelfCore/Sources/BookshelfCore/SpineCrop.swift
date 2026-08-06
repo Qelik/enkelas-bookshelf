@@ -63,6 +63,31 @@ public enum SpineCrop {
         )
     }
 
+    /// Map a point given in the *whole frame* into the preview's coordinates.
+    ///
+    /// Vision reports against the entire camera buffer, but the preview is
+    /// `resizeAspectFill` and therefore shows only a centred window of it. Drawing
+    /// a detection straight onto the preview puts it in the wrong place — subtly
+    /// when the two aspects are close, badly when they aren't.
+    ///
+    /// `imageAspect` is width over height, in display orientation.
+    public static func previewPoint(
+        _ normalised: CGPoint,
+        imageAspect: Double,
+        previewSize: CGSize
+    ) -> CGPoint {
+        guard imageAspect > 0, previewSize.width > 0, previewSize.height > 0 else { return normalised }
+        // A unit-height stand-in for the frame; only the ratio matters.
+        let frame = CGSize(width: imageAspect, height: 1)
+        let visible = visibleRect(imageSize: frame, previewSize: previewSize)
+        guard visible.width > 0, visible.height > 0 else { return normalised }
+
+        return CGPoint(
+            x: (normalised.x * frame.width - visible.minX) / visible.width * previewSize.width,
+            y: (normalised.y * frame.height - visible.minY) / visible.height * previewSize.height
+        )
+    }
+
     /// The guide, in the photo's pixels.
     ///
     /// **The photo must already be in display orientation** — that is, with any

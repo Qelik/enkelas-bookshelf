@@ -502,6 +502,47 @@ The camera needs real hardware, so on the Simulator the screen opens straight on
 the photo-library path, which centre-crops to the same shape. Everything testable
 — the crop maths, the storage, the path-traversal guard — is in `BookshelfCore`.
 
+### Finding the spine on its own
+
+`VNDetectRectanglesRequest` runs on the video feed and the guide snaps to what it
+finds — corners and all, so a tilted book shows a tilted frame rather than a
+rectangle promising a crop the capture won't make. The shutter turns green when a
+spine is found. Nothing detected falls back to the centred guide and manual
+framing, which is honest and still works.
+
+Vision returns *every* rectangle: the front cover, the table edge, the shelf
+itself. Choosing badly is worse than not detecting, because the guide then
+confidently frames the wrong thing — so the choosing lives in `SpineDetection`
+with tests, including that a paperback face (the biggest and most tempting
+rectangle in frame) is rejected.
+
+Three coordinate spaces meet here, and mixing them is what produced the 90° bug:
+
+- **Vision** reports normalised with the origin **bottom-left**. Flipped once, at
+  the boundary, in `SpineQuad.init(vision…)`.
+- **The preview** shows a centred *crop* of the camera frame, so a detection
+  against the whole frame has to go through `inPreview(imageAspect:previewSize:)`
+  or it lands somewhere else on screen.
+- **The photo** is the full frame, so the detection maps onto it directly — which
+  is why the capture straightens the quad with `CIPerspectiveCorrection` rather
+  than cropping its bounding box, keeping the background out of the corners.
+
+Focus is continuous rather than a single pass at start-up, which locked onto
+whatever was in front of the lens while the user was still raising the phone.
+The range is restricted to `.near` so the camera doesn't hunt past a held book to
+the wall behind, and tapping the viewfinder focuses on that spot.
+
+### A photographed spine keeps its own proportions
+
+Drawn width comes from the page count, which is a guess. Forcing a photo into it
+crops the real spine — by a different amount for every book, so the row stops
+looking like a shelf. `ShelfLayout.spine(for:photoAspect:)` takes the photo's
+aspect instead, and a book too wide for the shelf is *shortened* rather than
+squashed, since the aspect is the one thing a photograph should preserve.
+
+The aspect goes into the **layout**, not just the drawing. A packer measuring one
+width while the view draws another is how rows overflow.
+
 ### The shelf shows everything
 
 Switching to shelf mode ignores the Want / Library / Owned sections and shows the

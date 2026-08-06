@@ -110,3 +110,47 @@ struct ShelfLayoutTests {
         #expect(ShelfLayout.rows([], width: 0).isEmpty)
     }
 }
+
+/// A photographed spine is as thick as the photograph says.
+struct ShelfPhotoWidthTests {
+
+    @Test("a photo's proportions win over the page-count guess")
+    func photoOverridesPages() {
+        // The page count only estimates thickness; a photograph of the actual
+        // book knows. Forcing the photo into the guessed width would crop it,
+        // and by a different amount for every book.
+        let book = ShelfLayoutTests.book(id: "a", title: "A", pages: 200)
+        let guessed = ShelfLayout.spine(for: book)
+        let photographed = ShelfLayout.spine(for: book, photoAspect: 0.4)
+
+        #expect(photographed.width != guessed.width)
+        #expect(abs(photographed.width / photographed.height - 0.4) < 0.02)
+        // A wide photo shortens the book rather than squashing it; the aspect
+        // is what a photograph is meant to preserve.
+        #expect(photographed.height <= guessed.height)
+    }
+
+    @Test("a wild aspect can't produce a spine as wide as the screen")
+    func clampsPhotoWidth() {
+        let book = ShelfLayoutTests.book(id: "a", title: "A")
+        for aspect in [5.0, 0.0001, .infinity, Double.nan] {
+            let spine = ShelfLayout.spine(for: book, photoAspect: aspect)
+            #expect(spine.width >= ShelfLayout.minWidth)
+            #expect(spine.width <= ShelfLayout.maxWidth)
+            #expect(spine.width.isFinite)
+        }
+    }
+
+    @Test("packing uses the photo width, so a row still fits")
+    func packingRespectsPhotoWidth() {
+        // The bug this guards: the packer measuring a guessed width while the
+        // view drew a photo width, so rows overflowed the shelf.
+        let books = (0..<12).map { ShelfLayoutTests.book(id: "b\($0)", title: "Book \($0)", pages: 150) }
+        let spines = books.map { ShelfLayout.spine(for: $0, photoAspect: 0.42) }
+        let width = 340.0
+        for row in ShelfLayout.rows(spines, width: width, gap: 2) {
+            let used = row.reduce(0) { $0 + $1.width } + Double(max(0, row.count - 1)) * 2
+            #expect(used <= width)
+        }
+    }
+}

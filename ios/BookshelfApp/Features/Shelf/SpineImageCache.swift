@@ -33,4 +33,12 @@ final class SpineImageCache {
         cache.setObject(image, forKey: key)
         return image
     }
+
+    /// Width over height of the stored photo, or nil when there isn't one.
+    /// Feeds `ShelfLayout` so the packer and the renderer agree on how wide a
+    /// photographed book is.
+    func aspect(for bookID: String, from photos: SpinePhotos) -> Double? {
+        guard let image = image(for: bookID, from: photos), image.size.height > 0 else { return nil }
+        return image.size.width / image.size.height
+    }
 }

@@ -50,7 +50,12 @@ public enum ShelfLayout {
     public static let minHeight = 118.0
     public static let maxHeight = 168.0
 
-    public static func spine(for book: WireBook) -> Spine {
+    /// `photoAspect` is width over height of a spine photograph, when there is
+    /// one. It overrides the page-count guess — the photograph knows how thick
+    /// the book is and the page count only estimates it — and it must be passed
+    /// here rather than applied at draw time, or the packer and the renderer
+    /// disagree about how wide a book is and rows overflow.
+    public static func spine(for book: WireBook, photoAspect: Double? = nil) -> Spine {
         // Deterministic per book, from the same stable hash the placeholder covers
         // use. Random values would reshuffle the whole shelf on every redraw,
         // which is the difference between a bookshelf and a lava lamp.
@@ -61,11 +66,24 @@ public enum ShelfLayout {
         // entire range.
         let pages = max(0, book.totalPages)
         let thickness = pages > 0 ? (pages / 1_200).squareRoot() : 0.28
-        let width = minWidth + (maxWidth - minWidth) * min(1, thickness)
-
         // Height is decoration, so it comes from the hash rather than from data
         // that means something — implying a tall book is a long one would be a lie.
-        let height = minHeight + (maxHeight - minHeight) * (Double(jitter % 100) / 100)
+        var height = minHeight + (maxHeight - minHeight) * (Double(jitter % 100) / 100)
+
+        let width: Double
+        if let photoAspect, photoAspect > 0, photoAspect.isFinite {
+            var fromPhoto = height * photoAspect
+            if fromPhoto > maxWidth {
+                // Too wide for the shelf: shorten the book rather than squash it.
+                // Clamping width alone would change the aspect, which is the one
+                // thing a photograph is supposed to preserve.
+                fromPhoto = maxWidth
+                height = fromPhoto / photoAspect
+            }
+            width = max(fromPhoto, minWidth)
+        } else {
+            width = minWidth + (maxWidth - minWidth) * min(1, thickness)
+        }
 
         return Spine(
             id: book.id,

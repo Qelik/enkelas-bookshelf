@@ -1,5 +1,7 @@
 import AVFoundation
 import BookshelfCore
+import CoreImage
+import Vision
 import SwiftUI
 import UIKit
 
@@ -23,8 +25,18 @@ final class SpineCameraController: NSObject, ObservableObject {
     /// The preview's own size, needed to work out which part of the photo it
     /// was showing — `resizeAspectFill` means it is a window, not the whole.
     var previewSize: CGSize = .zero
+    /// Held only to convert a tap into device coordinates; the crop no longer
+    /// depends on it.
+    weak var previewLayer: AVCaptureVideoPreviewLayer?
 
     @Published var failure: String?
+    /// The spine the camera can currently see, normalised with a top-left
+    /// origin. Nil when nothing convincing is in frame, which is when the
+    /// centred guide takes over.
+    @Published var detected: SpineQuad?
+    /// Width over height of the camera frame, in display orientation. Needed
+    /// to place a detection on a preview that only shows part of that frame.
+    @Published var bufferAspect: Double = 3.0 / 4.0
 
     enum CaptureError: LocalizedError {
         case noImage, cropFailed
@@ -47,6 +59,7 @@ final class SpineCameraController: NSObject, ObservableObject {
     // backed by a real invariant, namely that every touch happens on that queue.
 
     private let box = SessionBox()
+    private let detector = SpineDetector()
 
     var session: AVCaptureSession { box.session }
 
@@ -55,11 +68,47 @@ final class SpineCameraController: NSObject, ObservableObject {
             failure = "Bookshelf doesn't have camera access. Turn it on in Settings › Bookshelf."
             return
         }
+        // Smoothed on the way in: raw detections jitter frame to frame, and a
+        // box that twitches reads as broken even when it is finding the right
+        // thing. Snapping straight to a *new* spine is right, though — easing
+        // across the screen would look like a bug of its own.
+        detector.onResult = { [weak self] quad in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard let quad else {
+                    detected = nil
+                    return
+                }
+                if let current = detected, current.boundingBox.intersects(quad.boundingBox) {
+                    detected = current.blended(towards: quad, amount: 0.35)
+                } else {
+                    detected = quad
+                }
+            }
+        }
+        box.onFrame = { [weak self, detector] buffer, orientation in
+            if let pixels = CMSampleBufferGetImageBuffer(buffer) {
+                // Rotated for display, so the sensor's width becomes height.
+                let w = Double(CVPixelBufferGetHeight(pixels))
+                let h = Double(CVPixelBufferGetWidth(pixels))
+                if h > 0 {
+                    Task { @MainActor [weak self] in self?.bufferAspect = w / h }
+                }
+            }
+            detector.process(buffer, orientation: orientation)
+        }
         await box.startRunning()
     }
 
     func stop() {
         box.stopRunning()
+    }
+
+    /// Tap-to-focus. `point` is in the preview's coordinates; the layer converts
+    /// it to the device's own space, which accounts for the aspect-fill window.
+    func focus(at point: CGPoint, in layer: AVCaptureVideoPreviewLayer?) {
+        guard let layer else { return }
+        box.focus(at: layer.captureDevicePointConverted(fromLayerPoint: point))
     }
 
     static func authorized() async -> Bool {
@@ -121,6 +170,15 @@ extension SpineCameraController {
         let upright = image.normalisedUp()
         guard let cgImage = upright.cgImage else { return nil }
 
+        // A detected spine is rarely perfectly parallel to the phone, so it
+        // arrives as a slight trapezium. Straightening it keeps the background
+        // out of the corners, which cropping its bounding box would not.
+        if let quad = detected,
+           let straightened = SpinePerspective.straighten(CIImage(cgImage: cgImage), quad: quad),
+           let rendered = Self.render(straightened) {
+            return Self.shrink(rendered)
+        }
+
         let pixelSize = CGSize(width: cgImage.width, height: cgImage.height)
         guard let rect = SpineCrop.cropRect(
             guide: guideRect,
@@ -161,6 +219,7 @@ struct SpineCameraPreview: UIViewRepresentable {
             // in two places is how the frame and the photo drift apart.
             controller?.guideRect = SpineCrop.guideRect(in: bounds)
             controller?.previewSize = bounds
+            controller?.previewLayer = layer
         }
         return view
     }
@@ -181,36 +240,78 @@ struct SpineCameraPreview: UIViewRepresentable {
 }
 
 /// The dimmed surround and the bright guide, drawn over the preview.
+///
+/// When a spine has been found the guide *is* the found shape — corners and all,
+/// so a tilted book shows a tilted frame. That honesty matters: a rectangle drawn
+/// over a slanted book would promise a crop the capture isn't going to make.
 struct SpineGuideOverlay: View {
+    /// The detected spine, normalised with a top-left origin. Nil falls back to
+    /// the centred rectangle and manual framing.
+    var detected: SpineQuad?
+    /// The camera frame's aspect, so the detection lands where the preview is
+    /// actually showing it — the preview is a centred crop of that frame.
+    var imageAspect: Double
+
     var body: some View {
         GeometryReader { geo in
-            let guide = SpineCrop.guideRect(in: geo.size)
+            let quad = detected?.inPreview(imageAspect: imageAspect, previewSize: geo.size)
+            let fallback = SpineCrop.guideRect(in: geo.size)
 
             ZStack {
-                // Everything outside the guide, dimmed — the clearest way to say
-                // "this part is not being kept".
                 Rectangle()
                     .fill(.black.opacity(0.55))
                     .reverseMask {
-                        RoundedRectangle(cornerRadius: 6)
-                            .frame(width: guide.width, height: guide.height)
-                            .position(x: guide.midX, y: guide.midY)
+                        if let quad {
+                            QuadShape(quad: quad)
+                        } else {
+                            RoundedRectangle(cornerRadius: 6)
+                                .frame(width: fallback.width, height: fallback.height)
+                                .position(x: fallback.midX, y: fallback.midY)
+                        }
                     }
 
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(.white.opacity(0.9), lineWidth: 2)
-                    .frame(width: guide.width, height: guide.height)
-                    .position(x: guide.midX, y: guide.midY)
+                if let quad {
+                    QuadShape(quad: quad)
+                        .stroke(.green, lineWidth: 2.5)
+                } else {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(.white.opacity(0.9), lineWidth: 2)
+                        .frame(width: fallback.width, height: fallback.height)
+                        .position(x: fallback.midX, y: fallback.midY)
+                }
 
-                Text("Line the spine up inside the frame")
+                Text(detected == nil
+                     ? "Point at a book — or line the spine up in the frame"
+                     : "Spine found")
                     .font(.footnote)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(.black.opacity(0.45), in: .capsule)
-                    .position(x: geo.size.width / 2, y: guide.maxY + 30)
+                    .position(
+                        x: geo.size.width / 2,
+                        // Below whichever guide is showing, clamped so it can't
+                        // slide off the bottom when the spine fills the frame.
+                        y: min(geo.size.height - 24, (quad?.boundingBox.maxY ?? fallback.maxY) + 26)
+                    )
             }
+            .animation(.easeOut(duration: 0.18), value: detected)
             .allowsHitTesting(false)
         }
+    }
+}
+
+/// The detected quad, in view coordinates.
+struct QuadShape: Shape {
+    let quad: SpineQuad
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: quad.topLeft)
+        path.addLine(to: quad.topRight)
+        path.addLine(to: quad.bottomRight)
+        path.addLine(to: quad.bottomLeft)
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -236,11 +337,69 @@ private extension View {
 /// serial. Reading `session` from the main thread to hand it to the preview layer
 /// is the one documented exception, and it is what AVFoundation's own sample code
 /// does.
-private final class SessionBox: @unchecked Sendable {
+private final class SessionBox: NSObject, @unchecked Sendable {
     let session = AVCaptureSession()
     private let output = AVCapturePhotoOutput()
+    private let video = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "com.enkela.bookshelf.spine-camera")
     private var configured = false
+
+    /// Live frames, for spine detection. Called on `queue`.
+    var onFrame: (@Sendable (CMSampleBuffer, CGImagePropertyOrientation) -> Void)?
+
+    private var device: AVCaptureDevice?
+
+    /// Keep hunting for focus instead of locking on the first thing seen.
+    ///
+    /// The default is a single autofocus at start-up, which locks onto whatever
+    /// was in front of the lens then — usually not the book, since the user is
+    /// still raising the phone. A book is also held close, so the near range
+    /// restriction stops the camera hunting past it to the wall behind.
+    private func configureFocus(_ device: AVCaptureDevice) {
+        guard (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            device.focusMode = .continuousAutoFocus
+        }
+        if device.isExposureModeSupported(.continuousAutoExposure) {
+            device.exposureMode = .continuousAutoExposure
+        }
+        if device.isAutoFocusRangeRestrictionSupported {
+            device.autoFocusRangeRestriction = .near
+        }
+        // Without this the picture visibly pulses while the lens hunts, which on
+        // a spine full of small text looks like the app struggling.
+        if device.isSmoothAutoFocusSupported {
+            device.isSmoothAutoFocusEnabled = true
+        }
+        if device.isSubjectAreaChangeMonitoringEnabled == false {
+            // Tells the system to re-run autofocus when the scene changes, which
+            // is what makes moving to the next book refocus on its own.
+            device.isSubjectAreaChangeMonitoringEnabled = true
+        }
+    }
+
+    /// Focus and expose for a point the user tapped, in normalised device
+    /// coordinates.
+    func focus(at point: CGPoint) {
+        queue.async { [self] in
+            guard let device, (try? device.lockForConfiguration()) != nil else { return }
+            defer { device.unlockForConfiguration() }
+
+            if device.isFocusPointOfInterestSupported, device.isFocusModeSupported(.autoFocus) {
+                device.focusPointOfInterest = point
+                device.focusMode = .autoFocus
+            }
+            if device.isExposurePointOfInterestSupported, device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposurePointOfInterest = point
+                device.exposureMode = .continuousAutoExposure
+            }
+            // Back to hunting once it has settled, so the next book is picked up
+            // without another tap.
+            device.isSubjectAreaChangeMonitoringEnabled = true
+        }
+    }
 
     var isRunning: Bool { session.isRunning }
 
@@ -255,8 +414,16 @@ private final class SessionBox: @unchecked Sendable {
                        let input = try? AVCaptureDeviceInput(device: device),
                        session.canAddInput(input) {
                         session.addInput(input)
+                        self.device = device
+                        configureFocus(device)
                     }
                     if session.canAddOutput(output) { session.addOutput(output) }
+                    // Late frames are dropped rather than queued: detection only
+                    // has to keep up with a hand, and a backlog would show the
+                    // guide where the book *was*.
+                    video.alwaysDiscardsLateVideoFrames = true
+                    video.setSampleBufferDelegate(self, queue: queue)
+                    if session.canAddOutput(video) { session.addOutput(video) }
                     session.commitConfiguration()
                 }
                 if !session.isRunning { session.startRunning() }
@@ -295,5 +462,29 @@ extension UIImage {
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             draw(in: CGRect(origin: .zero, size: size))
         }
+    }
+}
+
+
+extension SpineCameraController {
+    /// Core Image is lazy; this is where the work actually happens.
+    static func render(_ image: CIImage) -> UIImage? {
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        guard let cg = context.createCGImage(image, from: image.extent) else { return nil }
+        return UIImage(cgImage: cg, scale: 1, orientation: .up)
+    }
+}
+
+
+extension SessionBox: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        // The buffer is landscape from the sensor while the preview is portrait,
+        // so Vision is told how to read it rather than the results being rotated
+        // afterwards — the correction that went wrong the first time.
+        onFrame?(sampleBuffer, .right)
     }
 }

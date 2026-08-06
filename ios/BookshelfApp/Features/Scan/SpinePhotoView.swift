@@ -71,7 +71,14 @@ struct SpinePhotoView: View {
         VStack(spacing: 0) {
             ZStack {
                 SpineCameraPreview(controller: camera)
-                SpineGuideOverlay()
+                SpineGuideOverlay(detected: camera.detected, imageAspect: camera.bufferAspect)
+                // Tap to focus. Autofocus is continuous, but a spine held close
+                // against a busy background is exactly where it guesses wrong,
+                // and there has to be a way to say "this bit".
+                TapToFocus { point in
+                    camera.focus(at: point, in: camera.previewLayer)
+                    Haptics.pageTurn()
+                }
             }
             .clipped()
 
@@ -81,9 +88,13 @@ struct SpinePhotoView: View {
                 } label: {
                     // The system's shutter: a ring with a filled centre. A labelled
                     // button here would be the only place in iOS that has one.
+                    // It turns green once a spine is found, so the state is
+                    // readable without looking away from the book.
                     ZStack {
                         Circle().strokeBorder(.white, lineWidth: 4).frame(width: 68, height: 68)
-                        Circle().fill(.white).frame(width: 56, height: 56)
+                        Circle()
+                            .fill(camera.detected == nil ? Color.white : .green)
+                            .frame(width: 56, height: 56)
                     }
                 }
                 .disabled(busy)
@@ -237,5 +248,48 @@ struct SpinePhotoView: View {
         photos.save(data, for: book.id)
         Haptics.unlocked()
         dismiss()
+    }
+}
+
+
+/// A transparent layer that reports where it was tapped.
+///
+/// `onTapGesture` gives no location in the view's own coordinates before iOS 18,
+/// and the focus conversion needs exactly that — so the tap is read from a
+/// gesture with a coordinate space instead of guessed at.
+private struct TapToFocus: View {
+    var onTap: (CGPoint) -> Void
+
+    @State private var ring: CGPoint?
+
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .contentShape(.rect)
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            let point = value.location
+                            guard geo.frame(in: .local).contains(point) else { return }
+                            onTap(point)
+                            withAnimation(.easeOut(duration: 0.15)) { ring = point }
+                            // The confirmation fades on its own; a marker that
+                            // stayed would look like a permanent focus lock.
+                            Task {
+                                try? await Task.sleep(for: .seconds(0.9))
+                                withAnimation(.easeOut(duration: 0.25)) { ring = nil }
+                            }
+                        }
+                )
+                .overlay {
+                    if let ring {
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(.yellow, lineWidth: 1.5)
+                            .frame(width: 64, height: 64)
+                            .position(ring)
+                            .transition(.opacity)
+                    }
+                }
+        }
     }
 }
