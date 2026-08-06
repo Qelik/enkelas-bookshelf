@@ -13,6 +13,7 @@ import SwiftUI
 final class ThemeStore {
 
     private(set) var theme: AppTheme
+    private(set) var appearance: AppearanceMode
     /// The account the current choice belongs to, so signing in as someone else
     /// loads their colour instead of inheriting yours.
     private var accountID: String?
@@ -24,6 +25,7 @@ final class ThemeStore {
         self.defaults = defaults
         self.accountID = accountID
         self.theme = ThemeStorage.read(accountID: accountID, from: defaults)
+        self.appearance = ThemeStorage.readAppearance(accountID: accountID, from: defaults)
     }
 
     /// Called after any change, to republish the widget snapshot. Set by the app
@@ -31,6 +33,12 @@ final class ThemeStore {
     /// each other.
     func onThemeChanged(_ handler: @escaping () -> Void) {
         onChange = handler
+    }
+
+    func select(_ appearance: AppearanceMode) {
+        guard appearance != self.appearance else { return }
+        self.appearance = appearance
+        ThemeStorage.writeAppearance(appearance, accountID: accountID, to: defaults)
     }
 
     func select(_ theme: AppTheme) {
@@ -46,6 +54,7 @@ final class ThemeStore {
     func accountChanged(to id: String?) {
         guard id != accountID else { return }
         accountID = id
+        appearance = ThemeStorage.readAppearance(accountID: id, from: defaults)
         let next = ThemeStorage.read(accountID: id, from: defaults)
         guard next != theme else { return }
         theme = next

@@ -28,6 +28,14 @@ struct ThemeSection: View {
             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
 
             LabeledContent("Colour", value: themes.theme.label)
+
+            Picker("Appearance", selection: Binding(
+                get: { themes.appearance },
+                set: { themes.select($0) }
+            )) {
+                ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
         } header: {
             Text("Appearance")
         } footer: {
@@ -73,7 +81,7 @@ struct ThemeSection: View {
     /// is the first question anyone asks.
     private var footer: String {
         sync.isSignedIn
-            ? "Saved for \(sync.account?.fullName ?? "this account") on this device — it doesn't sync, so everyone keeps their own colour."
+            ? "Saved for \(sync.account?.fullName ?? "this account") on this device — it doesn't sync, so everyone keeps their own look."
             : "Saved on this device. Sign in and it follows your account instead."
     }
 }

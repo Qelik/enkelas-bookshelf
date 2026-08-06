@@ -47,10 +47,17 @@ public enum ReadingNudges {
         let streak = state.readingStreak(now: day, calendar: calendar)
         let readToday = (state.pagesPerDay(calendar: calendar)[calendar.startOfDay(for: day)] ?? 0) > 0
 
-        // Ordered by how much the situation deserves saying. A book three pages
-        // from the end beats a generic "keep going" every time.
+        // Ordered by which true thing is most worth hearing. "Where you left
+        // off" is the default for a book in progress — it's the thing that gets
+        // someone back in — but a book three pages from the end, or one that has
+        // sat untouched for a month, has something better to say.
         if readToday {
             return pick(alreadyRead(title: title, streak: streak.current), book: book, day: day, calendar: calendar)
+        }
+        // The user's own words about where they stopped. Nothing generated comes
+        // close, so this outranks every derived number below it.
+        if let note = bookmarkNote(book) {
+            return pick(fromYourBookmark(title: title, note: note), book: book, day: day, calendar: calendar)
         }
         if knowsLength, pagesLeft > 0, pagesLeft <= 40 {
             return pick(nearlyDone(title: title, pagesLeft: pagesLeft), book: book, day: day, calendar: calendar)
@@ -60,6 +67,16 @@ public enum ReadingNudges {
         }
         if daysAway >= 7 {
             return pick(longNeglect(title: title, days: daysAway), book: book, day: day, calendar: calendar)
+        }
+        // The everyday case: pick it up from where the bookmark is.
+        if let page = leftOffPage(book), knowsLength, pagesLeft > 0 {
+            return pick(
+                leftOff(title: title, page: page, pagesLeft: pagesLeft, pace: typicalSitting(book)),
+                book: book, day: day, calendar: calendar
+            )
+        }
+        if let finish = book.estimatedFinish(now: day, calendar: calendar), finish.daysLeft > 0 {
+            return pick(onPace(title: title, days: finish.daysLeft), book: book, day: day, calendar: calendar)
         }
         if daysAway >= 2 {
             return pick(shortNeglect(title: title, days: daysAway), book: book, day: day, calendar: calendar)
@@ -73,10 +90,72 @@ public enum ReadingNudges {
         return pick(justStarted(title: title), book: book, day: day, calendar: calendar)
     }
 
+    // MARK: - Facts worth using
+
+    /// The note on the bookmark, when there is one worth repeating.
+    ///
+    /// The user's own words about where they stopped. Nothing generated comes
+    /// close, which is why this is checked first.
+    static func bookmarkNote(_ book: WireBook) -> String? {
+        guard let note = book.bookmark?.note.trimmingCharacters(in: .whitespacesAndNewlines),
+              !note.isEmpty
+        else { return nil }
+        // Long notes get cut rather than filling the whole notification.
+        return note.count <= 60 ? note : String(note.prefix(57)) + "…"
+    }
+
+    /// The page they stopped on: the bookmark if set, otherwise where the logs
+    /// add up to.
+    static func leftOffPage(_ book: WireBook) -> Int? {
+        if let page = book.bookmark?.page, page > 0 { return Int(page) }
+        let read = Int(book.pagesRead)
+        return read > 0 ? read : nil
+    }
+
+    /// A typical sitting for *this* book, so "one more session" means something.
+    static func typicalSitting(_ book: WireBook) -> Int? {
+        let sessions = book.logs.map(\.pages).filter { $0 > 0 }
+        guard sessions.count >= 2 else { return nil }
+        let average = sessions.reduce(0, +) / Double(sessions.count)
+        return average >= 5 ? Int(average.rounded()) : nil
+    }
+
     // MARK: - Lines
     //
     // Several per situation so a fortnight of notifications doesn't read like one
     // message on repeat, which is when people turn them off.
+
+    private static func fromYourBookmark(title: String, note: String) -> [(String, String)] {
+        [
+            ("You left a note in \(title)", "\u{201C}\(note)\u{201D} — pick it back up?"),
+            ("Where you stopped 🔖", "\u{201C}\(note)\u{201D} Still curious?"),
+        ]
+    }
+
+    private static func leftOff(title: String, page: Int, pagesLeft: Int, pace: Int?) -> [(String, String)] {
+        var lines: [(String, String)] = [
+            ("Page \(page) of \(title) 🔖", "\(pagesLeft) to go. Carry on from there."),
+            ("You stopped on page \(page)", "\(title) has \(pagesLeft) pages left."),
+        ]
+        // Only when there's enough history to mean it — see `typicalSitting`.
+        if let pace, pace > 0 {
+            let sittings = max(1, Int((Double(pagesLeft) / Double(pace)).rounded()))
+            lines.append((
+                "\(pagesLeft) pages left of \(title)",
+                sittings == 1
+                    ? "That's about one sitting at your usual pace."
+                    : "About \(sittings) sittings at your usual \(pace) pages."
+            ))
+        }
+        return lines
+    }
+
+    private static func onPace(title: String, days: Int) -> [(String, String)] {
+        [
+            ("\(title) by \(days == 1 ? "tomorrow" : "\(days) days")", "That's what your pace says. Keep it up."),
+            ("On track 📈", "At this rate \(title) is done in \(days) days."),
+        ]
+    }
 
     private static func alreadyRead(title: String, streak: Int) -> [(String, String)] {
         [
@@ -142,13 +221,39 @@ public enum ReadingNudges {
 
     private static func generic(for state: WireState, on day: Date, calendar: Calendar) -> ReadingNudge {
         // Nothing is being read, so there is nothing to name. Suggesting a book
-        // from the want-to-read pile is more useful than a bare "time to read".
-        let waiting = state.want.first
+        // from the want-to-read pile is more useful than a bare "time to read" —
+        // and the pile is usually where the guilt already lives.
+        let pile = state.want
+        // Rotated by day so it isn't the same book every morning.
+        let waiting = pile.isEmpty ? nil : pile[stableIndex(seed: dayKey(day, calendar), count: pile.count)]
+
         let options: [(String, String)] = waiting.map { book in
-            [
-                ("Fancy starting something? 📚", "\(book.title) has been on your list a while."),
+            var lines: [(String, String)] = [
+                ("Fancy starting something? 📚", "\(book.title) is on your list."),
                 ("Nothing on the go", "\(book.title) is waiting whenever you are."),
             ]
+            if let added = book.addedDate {
+                let days = max(0, calendar.dateComponents([.day], from: added, to: day).day ?? 0)
+                if days >= 30 {
+                    let months = days / 30
+                    lines.append((
+                        "\(book.title) has been patient",
+                        months == 1
+                            ? "On your list for a month now. Today?"
+                            : "On your list for \(months) months. Today?"
+                    ))
+                }
+            }
+            if !book.seriesName.isEmpty {
+                lines.append(("Next in \(book.seriesName)", "\(book.title) is ready when you are."))
+            }
+            if pile.count > 1 {
+                lines.append((
+                    "\(pile.count) books waiting 📚",
+                    "\(book.title) is one of them. Start there?"
+                ))
+            }
+            return lines
         } ?? [
             ("Time to read", "A few pages is all it takes."),
             ("Reading time 📖", "Even ten minutes counts."),

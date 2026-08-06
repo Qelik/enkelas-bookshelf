@@ -419,8 +419,24 @@ of them at a time, re-armed on every activation. Fourteen days, because iOS caps
 an app at 64 pending and the loan reminders need room too. Someone who doesn't
 open the app for a fortnight stops being nudged, which is the right way round.
 
-`ReadingNudges` picks the message, and it is written around one rule: **only say
-things that are true.** It's tempting to write "it's just getting good", but the
+`ReadingNudges` picks the message, ordered by which true thing is most worth
+hearing. The default for a book in progress is **where you left off** — the page,
+what's left, and how many sittings that is at your own average pace — because
+that's what actually gets someone back in. A bookmark note outranks all of it,
+since your own words about where you stopped beat any derived number:
+
+> **You left a note in Intermezzo**
+> "the bit where she finally calls him" — pick it back up?
+
+Stronger signals still win: a book 20 pages from the end says so, and one
+untouched for a month is greeted as such rather than told its page number. With
+nothing on the go it suggests from the want-to-read pile, rotating by day, and
+mentions how long a book has been waiting or which series it continues.
+
+A pace claim needs at least two sessions to average — one session is not a pace,
+and claiming it is would be the app guessing.
+
+It is written around one rule: **only say things that are true.** It's tempting to write "it's just getting good", but the
 app has never read the book. What it does know is real and quite enough — how far
 in you are, how many pages are left, how long it has sat there, whether a streak
 is on the line — so the playfulness goes in the framing, not in invented facts
@@ -665,6 +681,28 @@ every widget — losing the shelf, the streak and the goal over a colour.
 Colours are RGB components rather than SwiftUI `Color`s so `BookshelfCore` stays
 free of SwiftUI. Each target does its own four-line conversion, which is why that
 bridge appears twice.
+
+### The whole app wears the theme
+
+The accent tints controls; `background` and `surface` tint the page and the cards
+on it. **Barely** — the accent's hue at around a tenth strength. The text on top
+is the system's label colours, tuned for the system's own greys, so pushing a
+background far toward a hue takes the contrast ratio with it.
+
+That constraint is a test, not a hope: `ThemeSurfaceTests` checks every theme in
+both appearances against the real label colours and requires 7:1 for body text
+and 4.5:1 for secondary — comfortably past the 4.5:1 AA floor. It also checks the
+tint is actually visible (>0.4% off plain grey) and not overbearing (<12%), and
+that a card is lighter than its page in dark mode, since a darker card reads as a
+hole rather than a surface.
+
+`List` and `Form` paint `systemGroupedBackground` themselves, so tinting the
+container alone does nothing — `.themedBackground()` hides the scroll background
+first. Plain-list rows draw over it too, hence `.listRowBackground(.clear)`.
+
+Appearance is System / Light / Dark, stored per account like the colour. `.system`
+maps to a `nil` `preferredColorScheme`, which hands the decision back to iOS —
+not to light.
 
 ### The icon follows too
 

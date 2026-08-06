@@ -21,6 +21,20 @@ extension AppTheme {
             UIColor(self.accent(dark: traits.userInterfaceStyle == .dark))
         })
     }
+
+    /// The page behind everything.
+    var background: Color {
+        Color(uiColor: UIColor { traits in
+            UIColor(self.background(dark: traits.userInterfaceStyle == .dark))
+        })
+    }
+
+    /// Cards and rows sitting on `background`.
+    var surface: Color {
+        Color(uiColor: UIColor { traits in
+            UIColor(self.surface(dark: traits.userInterfaceStyle == .dark))
+        })
+    }
 }
 
 extension UIColor {
@@ -38,6 +52,14 @@ private struct ThemeAccentKey: EnvironmentKey {
     static let defaultValue: Color = AppTheme.fallback.color
 }
 
+private struct ThemeBackgroundKey: EnvironmentKey {
+    static let defaultValue: Color = AppTheme.fallback.background
+}
+
+private struct ThemeSurfaceKey: EnvironmentKey {
+    static let defaultValue: Color = AppTheme.fallback.surface
+}
+
 extension EnvironmentValues {
     /// The accent as a plain `Color`, for the handful of places that need the
     /// colour itself rather than the ambient tint.
@@ -48,5 +70,26 @@ extension EnvironmentValues {
     var themeAccent: Color {
         get { self[ThemeAccentKey.self] }
         set { self[ThemeAccentKey.self] = newValue }
+    }
+
+    var themeBackground: Color {
+        get { self[ThemeBackgroundKey.self] }
+        set { self[ThemeBackgroundKey.self] = newValue }
+    }
+
+    var themeSurface: Color {
+        get { self[ThemeSurfaceKey.self] }
+        set { self[ThemeSurfaceKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Put the theme's page colour behind a `List`, `Form` or `ScrollView`.
+    ///
+    /// Those draw `systemGroupedBackground` themselves, so tinting the container
+    /// alone does nothing — the scroll content has to be told to stop painting
+    /// over it first.
+    func themedBackground(_ colour: Color) -> some View {
+        scrollContentBackground(.hidden).background(colour)
     }
 }

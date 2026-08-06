@@ -9,6 +9,8 @@ import SwiftUI
 /// same list.
 struct ShelfView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
+    @Environment(\.themeSurface) private var surface
     var onAdd: () -> Void
 
     enum Section: String, CaseIterable, Identifiable {
@@ -63,6 +65,8 @@ struct ShelfView: View {
                 }
             }
             .listStyle(.plain)
+            .themedBackground(background)
+            .scrollContentBackground(.hidden)
             }
             }
             .overlay {

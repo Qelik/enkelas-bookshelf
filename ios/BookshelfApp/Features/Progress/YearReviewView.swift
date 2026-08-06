@@ -9,6 +9,7 @@ import SwiftUI
 /// exactly what was on screen and there is only one layout to maintain.
 struct YearReviewView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
     @Environment(\.displayScale) private var displayScale
 
@@ -41,7 +42,7 @@ struct YearReviewView: View {
                 }
                 .padding()
             }
-            .background(Color(.systemGroupedBackground))
+            .themedBackground(background)
             .navigationTitle("Year in Review")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

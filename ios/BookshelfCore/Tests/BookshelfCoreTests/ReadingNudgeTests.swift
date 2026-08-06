@@ -145,3 +145,116 @@ struct ReadingNudgeTests {
         #expect(bodies.count >= 3, "only \(bodies.count) distinct messages in a fortnight")
     }
 }
+
+/// The personalised lines — where you left off, in your own words where possible.
+struct ReadingNudgePersonalTests {
+
+    static func reading(
+        id: String = "b", title: String = "Intermezzo", pages: Double = 400,
+        read: [(Int, Double)] = [(-2, 120)], bookmarkPage: Double? = nil, bookmarkNote: String = ""
+    ) -> WireBook {
+        var b = ReadingNudgeTests.book(id: id, title: title, pages: pages, read: read)
+        if bookmarkPage != nil || !bookmarkNote.isEmpty {
+            b.bookmark = WireBookmark(page: bookmarkPage, note: bookmarkNote, date: nil)
+        }
+        return b
+    }
+
+    @Test("your own bookmark note is quoted back to you")
+    func usesTheBookmarkNote() {
+        // The most personal true thing there is. Nothing generated competes.
+        let state = ReadingNudgeTests.state([
+            Self.reading(bookmarkNote: "the bit where she finally calls him")
+        ])
+        let nudge = ReadingNudges.nudge(for: state, on: ReadingNudgeTests.now, calendar: ReadingNudgeTests.calendar)
+        #expect(nudge.body.contains("the bit where she finally calls him"))
+    }
+
+    @Test("a long note is trimmed, not dumped whole into the banner")
+    func trimsLongNotes() {
+        let long = String(repeating: "a chapter about boats ", count: 10)
+        let note = try! #require(ReadingNudges.bookmarkNote(Self.reading(bookmarkNote: long)))
+        #expect(note.count <= 61)
+        #expect(note.hasSuffix("…"))
+    }
+
+    @Test("an empty bookmark note doesn't produce empty quote marks")
+    func ignoresBlankNotes() {
+        #expect(ReadingNudges.bookmarkNote(Self.reading(bookmarkNote: "   ")) == nil)
+        #expect(ReadingNudges.bookmarkNote(Self.reading()) == nil)
+    }
+
+    @Test("the page you stopped on comes from the bookmark when there is one")
+    func prefersTheBookmarkPage() {
+        // The bookmark is where the reader *says* they are; the logs are only
+        // where the arithmetic puts them.
+        #expect(ReadingNudges.leftOffPage(Self.reading(read: [(-2, 120)], bookmarkPage: 214)) == 214)
+        #expect(ReadingNudges.leftOffPage(Self.reading(read: [(-2, 120)])) == 120)
+        #expect(ReadingNudges.leftOffPage(Self.reading(read: [])) == nil)
+    }
+
+    @Test("an in-progress book is told where it left off")
+    func namesThePage() {
+        let state = ReadingNudgeTests.state([Self.reading(pages: 662, read: [(-2, 100), (-3, 114)], bookmarkPage: 214)])
+        let nudge = ReadingNudges.nudge(for: state, on: ReadingNudgeTests.now, calendar: ReadingNudgeTests.calendar)
+        let text = nudge.title + " " + nudge.body
+        #expect(text.contains("214") || text.contains("448"))
+    }
+
+    @Test("a typical sitting needs enough history to be a real average")
+    func paceNeedsHistory() {
+        // One session is not a pace. Claiming it is would be the app guessing.
+        #expect(ReadingNudges.typicalSitting(Self.reading(read: [(-1, 40)])) == nil)
+        #expect(ReadingNudges.typicalSitting(Self.reading(read: [(-1, 40), (-2, 20)])) == 30)
+        // Trivial sessions don't make a useful "one sitting" claim either.
+        #expect(ReadingNudges.typicalSitting(Self.reading(read: [(-1, 2), (-2, 2)])) == nil)
+    }
+
+    @Test("nearly done still wins over the everyday page reminder")
+    func strongerSignalsOutrank() {
+        // 380 of 400 read: "20 pages left" is a better thing to hear than
+        // "you stopped on page 380".
+        let state = ReadingNudgeTests.state([Self.reading(pages: 400, read: [(-2, 380)])])
+        let nudge = ReadingNudges.nudge(for: state, on: ReadingNudgeTests.now, calendar: ReadingNudgeTests.calendar)
+        #expect((nudge.title + nudge.body).contains("20 pages"))
+    }
+
+    @Test("a long-neglected book is still greeted as neglected")
+    func neglectOutranksPage() {
+        let state = ReadingNudgeTests.state([Self.reading(read: [(-40, 120)], bookmarkPage: 120)])
+        let nudge = ReadingNudges.nudge(for: state, on: ReadingNudgeTests.now, calendar: ReadingNudgeTests.calendar)
+        #expect((nudge.title + nudge.body).contains("40 days"))
+    }
+
+    // MARK: - The want-to-read pile
+
+    @Test("the suggested book rotates rather than being the same one daily")
+    func rotatesThePile() {
+        let pile = (0..<5).map {
+            ReadingNudgeTests.book(id: "w\($0)", title: "Waiting \($0)", status: .want)
+        }
+        let state = ReadingNudgeTests.state(pile)
+        let suggested = Set((0..<10).map {
+            ReadingNudges.nudge(for: state, on: ReadingNudgeTests.day($0),
+                                calendar: ReadingNudgeTests.calendar).bookID
+        })
+        #expect(suggested.count >= 2, "the same book was suggested every day")
+    }
+
+    @Test("a book that has waited months is told so")
+    func mentionsHowLongItWaited() {
+        var book = ReadingNudgeTests.book(id: "w", title: "The Patient One", status: .want)
+        book.addedAt = ISO8601.string(from: ReadingNudgeTests.day(-200))
+        let state = ReadingNudgeTests.state([book])
+
+        // Across a fortnight the wait line should come up at least once — it is
+        // one of several, chosen by day.
+        let texts = (0..<14).map {
+            let n = ReadingNudges.nudge(for: state, on: ReadingNudgeTests.day($0),
+                                        calendar: ReadingNudgeTests.calendar)
+            return n.title + " " + n.body
+        }
+        #expect(texts.contains { $0.contains("months") })
+        #expect(texts.allSatisfy { $0.contains("The Patient One") })
+    }
+}

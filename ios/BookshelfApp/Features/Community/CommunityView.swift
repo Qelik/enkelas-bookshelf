@@ -8,6 +8,8 @@ import SwiftUI
 /// minimum for a board strangers can post to.
 struct CommunityView: View {
     @Environment(CommunityEngine.self) private var community
+    @Environment(\.themeBackground) private var background
+    @Environment(\.themeSurface) private var surface
     @Environment(BookshelfStore.self) private var store
     @Environment(SyncEngine.self) private var sync
 
@@ -131,6 +133,8 @@ struct CommunityView: View {
                 }
             }
             .listStyle(.plain)
+            .themedBackground(background)
+            .scrollContentBackground(.hidden)
         }
     }
 }

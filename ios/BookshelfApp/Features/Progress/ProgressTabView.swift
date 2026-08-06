@@ -9,6 +9,7 @@ import SwiftUI
 struct ProgressTabView: View {
     @Environment(BookshelfStore.self) private var store
     @Environment(\.themeAccent) private var accent
+    @Environment(\.themeBackground) private var background
     @State private var editingGoal = false
     @State private var showingYearReview = false
 
@@ -41,7 +42,7 @@ struct ProgressTabView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 32)
             }
-            .background(Color(.systemGroupedBackground))
+            .themedBackground(background)
             .navigationTitle("Progress")
             // Off the main actor, and only when the shelf actually changed.
             // `updatedAt` moves on every commit, which is precisely the
@@ -495,6 +496,7 @@ struct GoalEditorView: View {
 
 /// The rounded container every section on this screen sits in.
 struct Card<Content: View>: View {
+    @Environment(\.themeSurface) private var surface
     var title: String?
     var subtitle: String?
     @ViewBuilder var content: Content
@@ -520,6 +522,6 @@ struct Card<Content: View>: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 16))
+        .background(surface, in: .rect(cornerRadius: 16))
     }
 }

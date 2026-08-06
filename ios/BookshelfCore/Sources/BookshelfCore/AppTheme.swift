@@ -67,6 +67,32 @@ public enum AppTheme: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// The page behind everything, tinted with the theme.
+    ///
+    /// **Barely tinted on purpose.** The text on top is the system's label
+    /// colours, which are tuned for the system's own greys; push the background
+    /// far toward a hue and the contrast ratio goes with it. This is the accent's
+    /// hue at a few percent saturation — enough to feel like the theme, not
+    /// enough to make anything harder to read.
+    public func background(dark: Bool) -> RGB {
+        let hue = accent(dark: dark)
+        return dark
+            ? RGB.blend(hue, into: RGB(0x0E0E10), amount: 0.10)
+            : RGB.blend(hue, into: RGB(0xF2F2F7), amount: 0.10)
+    }
+
+    /// Cards and rows sitting on `background`.
+    ///
+    /// Lighter than the page in light mode and *lighter* again in dark, matching
+    /// how the system's grouped backgrounds behave — a card darker than its page
+    /// reads as a hole rather than a surface.
+    public func surface(dark: Bool) -> RGB {
+        let hue = accent(dark: dark)
+        return dark
+            ? RGB.blend(hue, into: RGB(0x1C1C1E), amount: 0.12)
+            : RGB.blend(hue, into: RGB(0xFFFFFF), amount: 0.07)
+    }
+
     /// sRGB, 0…1.
     public struct RGB: Sendable, Hashable {
         public let red: Double
@@ -77,6 +103,30 @@ public enum AppTheme: String, CaseIterable, Sendable, Identifiable {
             self.red = red
             self.green = green
             self.blue = blue
+        }
+
+        /// `amount` of `tint` mixed into `base`.
+        public static func blend(_ tint: RGB, into base: RGB, amount: Double) -> RGB {
+            let a = min(1, max(0, amount))
+            return RGB(
+                red: base.red + (tint.red - base.red) * a,
+                green: base.green + (tint.green - base.green) * a,
+                blue: base.blue + (tint.blue - base.blue) * a
+            )
+        }
+
+        /// Relative luminance, for checking a colour is still readable under text.
+        public var luminance: Double {
+            func channel(_ c: Double) -> Double {
+                c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+        }
+
+        /// WCAG contrast ratio against another colour.
+        public func contrast(with other: RGB) -> Double {
+            let a = luminance, b = other.luminance
+            return (max(a, b) + 0.05) / (min(a, b) + 0.05)
         }
 
         public init(_ hex: UInt32) {
@@ -135,5 +185,45 @@ public enum ThemeStorage {
         _ theme: AppTheme, accountID: String?, to defaults: UserDefaults = .standard
     ) {
         defaults.set(theme.rawValue, forKey: key(forAccount: accountID))
+    }
+}
+
+
+/// Light, dark, or whatever the phone is doing.
+///
+/// Per account like the theme: two people sharing a device shouldn't have to
+/// agree about this either.
+public enum AppearanceMode: String, CaseIterable, Sendable, Identifiable {
+    case system, light, dark
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+}
+
+public extension ThemeStorage {
+    private static var appearanceKey: String { "app-appearance" }
+
+    static func key(appearanceFor id: String?) -> String {
+        guard let id, !id.isEmpty else { return appearanceKey }
+        return "\(appearanceKey).\(id)"
+    }
+
+    static func readAppearance(accountID: String?, from defaults: UserDefaults = .standard) -> AppearanceMode {
+        let raw = defaults.string(forKey: key(appearanceFor: accountID))
+            ?? defaults.string(forKey: appearanceKey)
+        return raw.flatMap(AppearanceMode.init(rawValue:)) ?? .system
+    }
+
+    static func writeAppearance(
+        _ mode: AppearanceMode, accountID: String?, to defaults: UserDefaults = .standard
+    ) {
+        defaults.set(mode.rawValue, forKey: key(appearanceFor: accountID))
     }
 }

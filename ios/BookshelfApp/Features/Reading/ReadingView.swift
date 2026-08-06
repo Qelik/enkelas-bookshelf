@@ -5,6 +5,8 @@ import SwiftUI
 /// sessions the only one anybody visits.
 struct ReadingView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
+    @Environment(\.themeSurface) private var surface
     @Environment(SyncEngine.self) private var sync
     @Environment(Router.self) private var router
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -118,6 +120,7 @@ struct ReadingView: View {
                         Button("Log", systemImage: "plus.circle") { logging = book }
                             .tint(accent)
                     }
+                    .listRowBackground(Color.clear)
             }
         } else {
             List {
@@ -129,9 +132,12 @@ struct ReadingView: View {
                         Button("Log", systemImage: "plus.circle") { logging = book }
                             .tint(accent)
                     }
+                    .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.plain)
+            .themedBackground(background)
+            .scrollContentBackground(.hidden)
         }
     }
 

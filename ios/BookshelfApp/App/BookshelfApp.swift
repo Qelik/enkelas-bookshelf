@@ -73,6 +73,11 @@ struct BookshelfApp: App {
                 // than the ambient tint. A plain Color, not the store — see
                 // ThemeColor.swift for why that distinction crashed the app.
                 .environment(\.themeAccent, themes.theme.color)
+                .environment(\.themeBackground, themes.theme.background)
+                .environment(\.themeSurface, themes.theme.surface)
+                // nil means "whatever the phone is doing", which is the
+                // default and the right one for most people.
+                .preferredColorScheme(themes.appearance.colorScheme)
                 .task {
                     // An intent that opened the app said where to go; honour it
                     // before anything on the network has a chance to be slow.

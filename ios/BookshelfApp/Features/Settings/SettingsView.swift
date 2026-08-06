@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
+    @Environment(\.themeSurface) private var surface
 
     @State private var showingAuth = false
     @State private var importing = false
