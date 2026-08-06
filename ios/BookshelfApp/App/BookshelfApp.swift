@@ -1,5 +1,6 @@
 import BookshelfCore
 import SwiftUI
+import UserNotifications
 
 @main
 struct BookshelfApp: App {
@@ -14,6 +15,9 @@ struct BookshelfApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     private let widgets: WidgetPublisher
+    /// Held for the lifetime of the app: `UNUserNotificationCenter.delegate`
+    /// is weak, and a delegate that deallocates stops routing taps.
+    private let notifications = NotificationRouter()
 
     init() {
         let store = BookshelfStore()
@@ -36,6 +40,7 @@ struct BookshelfApp: App {
             widgets.schedule()
         }
         self.widgets = widgets
+        UNUserNotificationCenter.current().delegate = notifications
         _themes = State(initialValue: themes)
         _store = State(initialValue: store)
         _sync = State(initialValue: sync)
@@ -101,6 +106,10 @@ struct BookshelfApp: App {
                     if UserDefaults.standard.bool(forKey: "loan-reminders-on") {
                         await Reminders.refreshLoanReminders(from: store.state)
                     }
+                    // Queued nudges name a specific book, so they go stale as
+                    // soon as the shelf moves. Re-arming on every activation is
+                    // what keeps them true.
+                    await Reminders.rearmDailyIfOn(state: store.state)
                 }
             default:
                 // All three are coalesced, so anything pending would die with

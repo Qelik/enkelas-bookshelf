@@ -407,11 +407,29 @@ Handoff activity. What someone reads is nobody else's business.
 ### Reminders
 
 Permission is asked for when the user flips the switch, never at launch — iOS
-only lets an app ask once, and a prompt with no context gets declined. The daily
-nudge is a single repeating request rather than one per day: an app is capped at
-64 pending notifications, and a rolling schedule spends them all and then quietly
-stops. Loan reminders are rebuilt wholesale from the shelf, because a reminder
-for a book already returned is the fastest way to get notifications muted.
+only lets an app ask once, and a prompt with no context gets declined. Loan
+reminders are rebuilt wholesale from the shelf, because a reminder for a book
+already returned is the fastest way to get notifications muted.
+
+The daily nudge names the book you're actually reading — "20 pages left of
+*Intermezzo*. That's one sitting." That rules out a repeating request, whose
+content is **fixed at scheduling time** and so can't name a book that changes. So
+each day gets its own one-shot written for that day's shelf, `Reminders.queuedDays`
+of them at a time, re-armed on every activation. Fourteen days, because iOS caps
+an app at 64 pending and the loan reminders need room too. Someone who doesn't
+open the app for a fortnight stops being nudged, which is the right way round.
+
+`ReadingNudges` picks the message, and it is written around one rule: **only say
+things that are true.** It's tempting to write "it's just getting good", but the
+app has never read the book. What it does know is real and quite enough — how far
+in you are, how many pages are left, how long it has sat there, whether a streak
+is on the line — so the playfulness goes in the framing, not in invented facts
+about the plot. A book with no page count gets no page or percentage claims at
+all, which is a tested case.
+
+The choice is deterministic, seeded by book and day. Notifications are written up
+to a fortnight ahead and re-armed on every launch, so a random pick would rewrite
+tomorrow's message each time the app opened.
 
 The toggles re-check authorization on appear: permission can be revoked in
 Settings while the app is closed, and a switch left on would promise

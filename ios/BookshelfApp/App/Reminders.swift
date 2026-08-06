@@ -10,7 +10,10 @@ import UserNotifications
 @MainActor
 enum Reminders {
 
+    /// The old single repeating request. Kept only so an install that still
+    /// has one queued gets it cleared rather than fired forever.
     static let dailyIdentifier = "daily-reading"
+    static let dailyPrefix = "daily-reading-"
     static let loanPrefix = "loan-due-"
 
     // MARK: - Permission
@@ -28,34 +31,89 @@ enum Reminders {
 
     // MARK: - Daily nudge
 
-    /// Schedule the daily reminder at `time`'s hour and minute.
+    /// How many days of nudges are queued at once.
     ///
-    /// One repeating request rather than one per day: iOS caps an app at 64
-    /// pending notifications, and a rolling schedule would spend them all and
-    /// then quietly stop.
-    static func scheduleDaily(at time: Date, calendar: Calendar = .current) async {
+    /// A repeating request would be simpler, but its content is fixed at
+    /// scheduling time — it cannot name the book you're actually reading, which
+    /// is the entire point. So each day gets its own one-shot, written for that
+    /// day's shelf, and the queue is re-armed whenever the app is opened.
+    ///
+    /// Fourteen because iOS caps an app at 64 pending notifications and the loan
+    /// reminders need room too. Someone who doesn't open the app for a fortnight
+    /// stops being nudged, which is the right way round: the alternative is an
+    /// app that keeps talking to someone who has stopped listening.
+    static let queuedDays = 14
+
+    /// Queue the next fortnight of nudges, each written for its own day.
+    static func scheduleDaily(
+        at time: Date,
+        state: WireState,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) async {
         let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [dailyIdentifier])
+        await cancelQueuedNudges()
 
-        let content = UNMutableNotificationContent()
-        content.title = "Time to read"
-        content.body = "A few pages keeps the streak going."
-        content.sound = .default
+        let hour = calendar.component(.hour, from: time)
+        let minute = calendar.component(.minute, from: time)
 
-        var when = DateComponents()
-        when.hour = calendar.component(.hour, from: time)
-        when.minute = calendar.component(.minute, from: time)
+        for offset in 0..<queuedDays {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: now),
+                  let fire = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day),
+                  // Today's slot may already have passed.
+                  fire > now
+            else { continue }
 
-        try? await center.add(UNNotificationRequest(
-            identifier: dailyIdentifier,
-            content: content,
-            trigger: UNCalendarNotificationTrigger(dateMatching: when, repeats: true)
-        ))
+            // Written for the shelf as it stands. It will be out of date by the
+            // time a distant one fires — hence the re-arm on every launch, which
+            // is where the accuracy actually comes from.
+            let nudge = ReadingNudges.nudge(for: state, on: fire, calendar: calendar)
+
+            let content = UNMutableNotificationContent()
+            content.title = nudge.title
+            content.body = nudge.body
+            content.sound = .default
+            if let bookID = nudge.bookID {
+                // Tapping it opens the book rather than the app's front door.
+                content.userInfo = ["bookID": bookID]
+            }
+
+            try? await center.add(UNNotificationRequest(
+                identifier: "\(dailyPrefix)\(offset)",
+                content: content,
+                trigger: UNCalendarNotificationTrigger(
+                    dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fire),
+                    repeats: false
+                )
+            ))
+        }
+    }
+
+    /// Rewrite the queue, if the user has the daily nudge switched on.
+    ///
+    /// Called on every activation: a nudge naming "you're 40 pages from the end"
+    /// stops being true the moment those pages are read, and the queue is written
+    /// up to a fortnight ahead.
+    static func rearmDailyIfOn(state: WireState, now: Date = Date()) async {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "daily-reminder-on") else { return }
+        guard await authorizationStatus() == .authorized else { return }
+        let seconds = defaults.double(forKey: "daily-reminder-time")
+        let time = Calendar.current.startOfDay(for: now)
+            .addingTimeInterval(seconds > 0 ? seconds : 20 * 3600)
+        await scheduleDaily(at: time, state: state, now: now)
     }
 
     static func cancelDaily() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [dailyIdentifier])
+        Task { await cancelQueuedNudges() }
+    }
+
+    private static func cancelQueuedNudges() async {
+        let center = UNUserNotificationCenter.current()
+        let queued = await center.pendingNotificationRequests()
+            .map(\.identifier)
+            .filter { $0.hasPrefix(dailyPrefix) || $0 == dailyIdentifier }
+        center.removePendingNotificationRequests(withIdentifiers: queued)
     }
 
     // MARK: - Loan due

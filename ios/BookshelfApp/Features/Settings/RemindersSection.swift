@@ -36,7 +36,7 @@ struct RemindersSection: View {
                         set: { newValue in
                             let parts = Calendar.current.dateComponents([.hour, .minute], from: newValue)
                             dailySeconds = Double((parts.hour ?? 20) * 3600 + (parts.minute ?? 0) * 60)
-                            Task { await Reminders.scheduleDaily(at: newValue) }
+                            Task { await Reminders.scheduleDaily(at: newValue, state: store.state) }
                         }
                     ),
                     displayedComponents: .hourAndMinute
@@ -54,7 +54,7 @@ struct RemindersSection: View {
                 Text("Notifications are off for Bookshelf. Turn them on in Settings › Notifications.")
                     .foregroundStyle(.orange)
             } else {
-                Text("A daily nudge, and a warning the day before a borrowed book is due back.")
+                Text("A nudge about the book you're actually reading, and a warning the day before a borrowed book is due back.")
             }
         }
         .task {
@@ -79,7 +79,7 @@ struct RemindersSection: View {
         }
         guard await ensureAuthorized() else { return }
         dailyOn = true
-        await Reminders.scheduleDaily(at: dailyTime)
+        await Reminders.scheduleDaily(at: dailyTime, state: store.state)
     }
 
     private func setLoan(_ on: Bool) async {
