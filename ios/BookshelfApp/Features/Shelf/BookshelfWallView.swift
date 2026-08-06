@@ -38,18 +38,26 @@ struct BookshelfWallView: View {
                         shelf(row, width: usable)
                     }
                 }
-                .padding(.vertical, 10)
+                .padding(.top, 10)
+                // The tab bar floats over the content, so the last shelf needs
+                // room to clear it. Padding the *content* rather than insetting
+                // the scroll view is what lets the case itself carry on behind
+                // the bar to the bottom of the screen.
+                .padding(.bottom, 96)
                 // Fill the pane even with two books on it: a case that stops
                 // where the books stop reads as a floating strip, not
                 // furniture with room to grow into.
                 .frame(minHeight: geo.size.height, alignment: .top)
-                .background(caseBack)
             }
-            // The tab bar floats over content, so the bottom shelf needs room
-            // to clear it — otherwise the last row of books is half-hidden.
-            .safeAreaPadding(.bottom, 8)
             .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground))
+            // On the scroll view, not the content: a background *inside* the
+            // scroll view stops at its container, which left the case ending in
+            // a band of white above the tab bar and a hairline below the header.
+            //
+            // Bottom edge only. Letting it under the navigation bar too makes the
+            // bar sample the dark case for its scroll-edge effect and flip to
+            // white text — on a pale pink bar.
+            .background(caseBack.ignoresSafeArea(edges: .bottom))
         }
     }
 

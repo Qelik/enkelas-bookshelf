@@ -15,6 +15,7 @@ struct RootView: View {
     @Environment(BookshelfStore.self) private var store
     @Environment(SyncEngine.self) private var sync
     @Environment(Router.self) private var router
+    @Environment(ThemeStore.self) private var themes
     @State private var editing: BookEditorTarget?
 
     var body: some View {
@@ -41,6 +42,10 @@ struct RootView: View {
         }
         // A widget, a Spotlight hit and a Handoff from another device all land
         // here — see DeepLink for why they share one route.
+        // The floating tab bar is its own material and ignores everything set
+        // on the content behind it.
+        .toolbarBackground(themes.theme.background, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .onOpenURL { router.follow(url: $0) }
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
             guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String
