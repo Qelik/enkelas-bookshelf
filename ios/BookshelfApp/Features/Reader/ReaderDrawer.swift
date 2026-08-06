@@ -42,6 +42,7 @@ struct ReaderDrawer: View {
                 .padding(.bottom, 8)
                 .background(.bar)
             }
+            .themedPage()
             .navigationTitle(record.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -230,6 +231,7 @@ struct ReaderSearchView: View {
             .onChange(of: query) { _, value in
                 if value.isEmpty { results = []; searched = false }
             }
+            .themedPage()
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }

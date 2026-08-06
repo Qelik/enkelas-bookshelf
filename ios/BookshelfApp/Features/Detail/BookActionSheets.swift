@@ -41,6 +41,8 @@ struct FinishBookView: View {
                     }
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle(mode == .reread ? "Finished a re-read" : "Finished")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -86,6 +88,8 @@ struct DNFView: View {
                     Text("It stays in your library with everything you logged — giving up on a book is part of the history, not a deletion.")
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Did not finish")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -137,6 +141,8 @@ struct BookmarkView: View {
                     }
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Bookmark")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -190,6 +196,8 @@ struct LendView: View {
                     }
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Lend this book")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -278,6 +286,8 @@ struct AddNoteView: View {
                     Text(book.title)
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle(kind.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

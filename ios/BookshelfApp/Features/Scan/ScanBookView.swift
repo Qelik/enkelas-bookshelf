@@ -44,6 +44,8 @@ struct ScanBookView: View {
                 }
                 result
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Scan a book")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

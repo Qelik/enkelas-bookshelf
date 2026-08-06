@@ -165,3 +165,35 @@ struct ThemeSurfaceTests {
         #expect(AppTheme.RGB.blend(white, into: black, amount: -1).red == 0)
     }
 }
+
+/// The bookcase takes the theme too — and the books on it must stay legible.
+struct ShelfPaletteTests {
+    /// The cream the spines are drawn in.
+    static let spine = AppTheme.RGB(0xF7EFE0)
+
+    @Test("a cream spine stands out against every case back", arguments: AppTheme.allCases)
+    func spinesReadAgainstTheCase(_ theme: AppTheme) {
+        for dark in [false, true] {
+            let back = theme.shelfBack(dark: dark)
+            #expect(back.contrast(with: Self.spine) >= 7,
+                    "\(theme.label) \(dark ? "dark" : "light"): \(back.contrast(with: Self.spine))")
+        }
+    }
+
+    @Test("the plank is lighter than the case behind it", arguments: AppTheme.allCases)
+    func plankSeparates(_ theme: AppTheme) {
+        // Otherwise the board vanishes into the back and the books float.
+        for dark in [false, true] {
+            #expect(theme.shelfPlank(dark: dark).luminance > theme.shelfBack(dark: dark).luminance,
+                    "\(theme.label) \(dark ? "dark" : "light")")
+        }
+    }
+
+    @Test("each theme's shelf is its own colour", arguments: [false, true])
+    func shelvesDiffer(_ dark: Bool) {
+        // Deriving in HSB is what keeps these apart; scaling RGB toward black
+        // turned every one of them the same brown.
+        let backs = AppTheme.allCases.filter { $0 != .graphite }.map { $0.shelfBack(dark: dark) }
+        #expect(Set(backs).count == backs.count)
+    }
+}

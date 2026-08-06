@@ -53,6 +53,8 @@ struct SettingsView: View {
                     Text("Reading stats and the built-in reader are still to come.")
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Settings")
             .sheet(isPresented: $showingAuth) { AuthView() }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in

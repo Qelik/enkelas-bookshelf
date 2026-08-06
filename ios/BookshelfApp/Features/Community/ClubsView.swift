@@ -58,6 +58,7 @@ struct ClubsListView: View {
                         } label: {
                             row(club)
                         }
+                        .themedPlainRows()
                     }
                     Section {
                         Button("Start a club", systemImage: "plus") { creating = true }
@@ -127,6 +128,7 @@ struct ClubDetailView: View {
                 ProgressView()
             }
         }
+        .themedPage()
         .navigationTitle(detail?.club.title ?? "Club")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -353,6 +355,7 @@ struct MembersView: View {
                 }
                 .padding(.vertical, 2)
             }
+            .themedPage()
             .navigationTitle("Where everyone is")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -414,6 +417,7 @@ struct CreateClubView: View {
                     }
                 }
             }
+            .themedPage()
             .navigationTitle("Start a club")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -470,6 +474,7 @@ struct JoinClubView: View {
                         .foregroundStyle(.red).font(.footnote)
                 }
             }
+            .themedPage()
             .navigationTitle("Join a club")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

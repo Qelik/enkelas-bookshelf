@@ -8,8 +8,6 @@ import SwiftUI
 /// snapshot behind the sheet that made the change.
 struct BookDetailView: View {
     @Environment(BookshelfStore.self) private var store
-    @Environment(\.themeBackground) private var background
-    @Environment(\.themeSurface) private var surface
     @Environment(SpinePhotos.self) private var spines
     @Environment(\.dismiss) private var dismiss
 
@@ -40,9 +38,9 @@ struct BookDetailView: View {
                     sessions(book)
                 }
                 .listStyle(.insetGrouped)
-            .themedBackground(background)
-            .scrollContentBackground(.hidden)
-            .listRowBackground(surface)
+                .themedRows()
+            .themedPage()
+            .themedRows()
                 .navigationTitle(book.title)
                 .navigationBarTitleDisplayMode(.inline)
                 // Handoff: pick a book up on the iPad where you left it on the

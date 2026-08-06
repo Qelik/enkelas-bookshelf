@@ -42,7 +42,8 @@ struct YearReviewView: View {
                 }
                 .padding()
             }
-            .themedBackground(background)
+            .themedPage()
+            .themedRows()
             .navigationTitle("Year in Review")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

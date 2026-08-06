@@ -10,6 +10,7 @@ import SwiftUI
 struct BookshelfWallView: View {
     @Environment(\.themeAccent) private var accent
     @Environment(SpinePhotos.self) private var photos
+    @Environment(ThemeStore.self) private var themes
 
     let books: [WireBook]
     var onSelect: (String) -> Void
@@ -80,8 +81,10 @@ struct BookshelfWallView: View {
     private var plank: some View {
         ZStack(alignment: .top) {
             LinearGradient(
-                colors: [Color(red: 0.42, green: 0.30, blue: 0.21),
-                         Color(red: 0.28, green: 0.19, blue: 0.13)],
+                // The board takes the theme like everything else, derived in HSB
+                // so each colour keeps its hue instead of every shelf turning the
+                // same brown.
+                colors: [themes.theme.shelfPlank, themes.theme.shelfBack],
                 startPoint: .top, endPoint: .bottom
             )
             // A lit front edge, which is most of what makes it read as a board
@@ -102,8 +105,7 @@ struct BookshelfWallView: View {
     /// The back of the case, behind the books.
     private var caseBack: some View {
         LinearGradient(
-            colors: [Color(red: 0.20, green: 0.14, blue: 0.11),
-                     Color(red: 0.13, green: 0.09, blue: 0.07)],
+            colors: [themes.theme.shelfBack, themes.theme.shelfBack.opacity(0.82)],
             startPoint: .topLeading, endPoint: .bottomTrailing
         )
     }

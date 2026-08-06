@@ -40,7 +40,7 @@ struct AuthView: View {
                     }
                     .pickerStyle(.segmented)
                     .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                    .themedPlainRows()
                 }
 
                 Section {
@@ -103,6 +103,8 @@ struct AuthView: View {
                         .font(.footnote)
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle(mode.rawValue)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

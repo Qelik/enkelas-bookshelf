@@ -29,6 +29,7 @@ struct EPUBShelfView: View {
                     List {
                         ForEach(library.books) { record in
                             NavigationLink(value: record.id) { row(record) }
+                                .themedPlainRows()
                                 .swipeActions {
                                     Button("Delete", systemImage: "trash", role: .destructive) {
                                         library.delete(id: record.id)
@@ -41,6 +42,7 @@ struct EPUBShelfView: View {
                     .listStyle(.plain)
                 }
             }
+            .themedPage()
             .navigationTitle("Reader")
             .navigationDestination(for: String.self) { ReaderView(recordID: $0) }
             .toolbar {
@@ -192,6 +194,7 @@ struct LinkBookView: View {
                 }
             }
             .searchable(text: $query, prompt: "Find a book")
+            .themedPage()
             .navigationTitle(record.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

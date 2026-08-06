@@ -113,6 +113,8 @@ struct BookEditorView: View {
                     }
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle(isEditing ? "Edit book" : "Add a book")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

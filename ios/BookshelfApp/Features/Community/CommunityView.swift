@@ -9,7 +9,6 @@ import SwiftUI
 struct CommunityView: View {
     @Environment(CommunityEngine.self) private var community
     @Environment(\.themeBackground) private var background
-    @Environment(\.themeSurface) private var surface
     @Environment(BookshelfStore.self) private var store
     @Environment(SyncEngine.self) private var sync
 
@@ -43,6 +42,7 @@ struct CommunityView: View {
                 .padding(.bottom, 8)
                 .background(.bar)
             }
+            .themedPage()
             .navigationTitle("Community")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -125,6 +125,7 @@ struct CommunityView: View {
             List {
                 ForEach(visible) { rec in
                     RecommendationRow(rec: rec, onReport: { reporting = rec })
+                        .themedPlainRows()
                 }
                 if community.boardIsCapped {
                     // Say so rather than implying the board is this small.
@@ -133,8 +134,7 @@ struct CommunityView: View {
                 }
             }
             .listStyle(.plain)
-            .themedBackground(background)
-            .scrollContentBackground(.hidden)
+            .themedPage()
         }
     }
 }
@@ -258,6 +258,7 @@ struct ReportView: View {
                     Text("Reports are reviewed within 24 hours. Content reported by several readers is hidden straight away.")
                 }
             }
+            .themedPage()
             .navigationTitle("Report")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -304,6 +305,7 @@ struct BlockedListView: View {
                 }
             }
         }
+        .themedPage()
         .navigationTitle("Blocked")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -373,6 +375,7 @@ struct RecommendView: View {
                         .foregroundStyle(.red).font(.footnote)
                 }
             }
+            .themedPage()
             .navigationTitle("Recommend")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

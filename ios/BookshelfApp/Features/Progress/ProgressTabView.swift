@@ -42,7 +42,8 @@ struct ProgressTabView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 32)
             }
-            .themedBackground(background)
+            .themedPage()
+            .themedRows()
             .navigationTitle("Progress")
             // Off the main actor, and only when the shelf actually changed.
             // `updatedAt` moves on every commit, which is precisely the

@@ -130,6 +130,8 @@ struct ConflictLogView: View {
                     }
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Sync conflicts")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -170,6 +172,8 @@ struct ChangePasswordView: View {
                         .foregroundStyle(.red).font(.footnote)
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Change password")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -250,6 +254,8 @@ struct DeleteAccountView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Delete account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -323,6 +329,8 @@ struct ConflictResolutionView: View {
                     Text("Either way, the choice is recorded in Settings → Sync conflicts.")
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Two versions")
             .navigationBarTitleDisplayMode(.inline)
         }

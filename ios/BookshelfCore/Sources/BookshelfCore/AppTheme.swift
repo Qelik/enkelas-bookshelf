@@ -93,6 +93,21 @@ public enum AppTheme: String, CaseIterable, Sendable, Identifiable {
             : RGB.blend(hue, into: RGB(0xFFFFFF), amount: 0.07)
     }
 
+    /// The back of the bookcase, behind the books.
+    ///
+    /// Deep and desaturated so cream spines stay legible against it — the same
+    /// relationship the app icon uses. Derived in HSB rather than by scaling RGB
+    /// toward black, which drains the hue and turns every theme the same brown.
+    public func shelfBack(dark: Bool) -> RGB {
+        accent(dark: dark).deepened(toBrightness: dark ? 0.13 : 0.19, saturation: 0.55)
+    }
+
+    /// The board the books stand on. Lighter than the case so it reads as a
+    /// separate piece of wood catching light.
+    public func shelfPlank(dark: Bool) -> RGB {
+        accent(dark: dark).deepened(toBrightness: dark ? 0.32 : 0.42, saturation: 0.62)
+    }
+
     /// sRGB, 0…1.
     public struct RGB: Sendable, Hashable {
         public let red: Double
@@ -127,6 +142,39 @@ public enum AppTheme: String, CaseIterable, Sendable, Identifiable {
         public func contrast(with other: RGB) -> Double {
             let a = luminance, b = other.luminance
             return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+        }
+
+        /// Toward a target brightness in HSB, keeping the hue exactly.
+        ///
+        /// Scaling RGB channels toward black instead loses saturation, and the
+        /// pale accents all converge on the same mauve-brown — which is how the
+        /// app icon's Blush and Plum ended up indistinguishable.
+        public func deepened(toBrightness brightness: Double, saturation target: Double) -> RGB {
+            let maxC = max(red, green, blue), minC = min(red, green, blue)
+            let delta = maxC - minC
+            var hue = 0.0
+            if delta > 0 {
+                if maxC == red { hue = (green - blue) / delta }
+                else if maxC == green { hue = 2 + (blue - red) / delta }
+                else { hue = 4 + (red - green) / delta }
+                hue *= 60
+                if hue < 0 { hue += 360 }
+            }
+            let s = delta == 0 ? 0 : target
+            let v = brightness
+            if s == 0 { return RGB(red: v, green: v, blue: v) }
+
+            let sector = (hue / 60).truncatingRemainder(dividingBy: 6)
+            let i = floor(sector), f = sector - i
+            let p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f))
+            switch Int(i) {
+            case 0: return RGB(red: v, green: t, blue: p)
+            case 1: return RGB(red: q, green: v, blue: p)
+            case 2: return RGB(red: p, green: v, blue: t)
+            case 3: return RGB(red: p, green: q, blue: v)
+            case 4: return RGB(red: t, green: p, blue: v)
+            default: return RGB(red: v, green: p, blue: q)
+            }
         }
 
         public init(_ hex: UInt32) {
