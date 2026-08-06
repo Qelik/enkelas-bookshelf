@@ -38,7 +38,6 @@ struct BookshelfWallView: View {
                         shelf(row, width: usable)
                     }
                 }
-                .padding(.horizontal, caseInset)
                 .padding(.vertical, 10)
                 // Fill the pane even with two books on it: a case that stops
                 // where the books stop reads as a floating strip, not
@@ -74,6 +73,11 @@ struct BookshelfWallView: View {
                 Spacer(minLength: 0)
             }
             .frame(width: width, alignment: .leading)
+            // Only the books are inset; the board runs the full width of the
+            // case. A plank stopping short of the sides reads as a shelf sawn
+            // off rather than one built into the wall.
+            .padding(.horizontal, caseInset)
+
             plank
         }
     }

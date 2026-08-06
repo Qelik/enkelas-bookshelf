@@ -8,6 +8,7 @@ import SwiftUI
 /// snapshot behind the sheet that made the change.
 struct BookDetailView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
     @Environment(SpinePhotos.self) private var spines
     @Environment(\.dismiss) private var dismiss
 
@@ -42,6 +43,8 @@ struct BookDetailView: View {
             .themedPage()
             .themedRows()
                 .navigationTitle(book.title)
+                .toolbarBackground(background, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
                 .navigationBarTitleDisplayMode(.inline)
                 // Handoff: pick a book up on the iPad where you left it on the
                 // phone. Not eligible for public indexing — see BookActivity.

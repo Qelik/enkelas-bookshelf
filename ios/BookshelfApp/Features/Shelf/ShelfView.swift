@@ -13,15 +13,22 @@ struct ShelfView: View {
     var onAdd: () -> Void
 
     enum Section: String, CaseIterable, Identifiable {
+        /// Shelf mode only. None of the other three contains `.reading`, so
+        /// without this the book in your hand isn't on your bookshelf — which is
+        /// the one place it obviously belongs.
+        case all = "All"
         case want = "Want to Read"
         case library = "Library"
         case owned = "Owned"
         var id: String { rawValue }
 
+        /// The three that make sense as a *list*; the shelf adds "All".
+        static var listCases: [Section] { [.want, .library, .owned] }
+
         /// Where a book scanned from this shelf should land.
         var status: BookStatus {
             switch self {
-            case .want: .want
+            case .all, .want: .want
             // Library and Owned are both places finished books live; a book
             // you just bought and scanned is one you mean to read.
             case .library, .owned: .want
@@ -72,18 +79,28 @@ struct ShelfView: View {
                 if visibleBooks.isEmpty { emptyState }
             }
             .safeAreaInset(edge: .top) {
-                if !asShelf {
-                    Picker("Shelf", selection: $section) {
-                        ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+                Picker("Shelf", selection: $section) {
+                    ForEach(asShelf ? Section.allCases : Section.listCases) {
+                        Text($0.rawValue).tag($0)
                     }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                    .background(.bar)
                 }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+                // `.bar` is the system's material, which stays grey whatever the
+                // theme — the strip of white above the tinted content.
+                .background(background)
+            }
+            // "All" only exists on the shelf; leaving it selected on the list
+            // would show a section the picker can't get back to.
+            .onChange(of: asShelf) { _, shelf in
+                if !shelf, section == .all { section = .want }
+                if shelf, section == .want, visibleBooks.isEmpty { section = .all }
             }
             .searchable(text: $query, prompt: "Title, author or tag")
             .navigationTitle("Shelf")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             // Inline, because the segmented control below already names the shelf
             // you're looking at. A large "Shelf" title on top of "Want to Read"
             // says the same thing twice and costs a third of the screen.
@@ -128,12 +145,11 @@ struct ShelfView: View {
     // MARK: - Contents
 
     private var sourceBooks: [WireBook] {
-        // A real shelf holds everything, including the book currently in your
-        // hand. Want / Library / Owned is a way of *managing* a list, and none of
-        // those three sections contains `.reading` — so in shelf mode they'd hide
-        // the one book you're most likely to have photographed.
-        guard !asShelf else { return store.state.books }
-        return switch section {
+        switch section {
+        // "All" holds everything, including the book currently in your hand.
+        // Want / Library / Owned is a way of *managing* a list and none of them
+        // contains `.reading`, so the shelf defaults here.
+        case .all: store.state.books
         case .want: store.state.want
         case .library: store.state.library
         case .owned: store.state.owned
@@ -176,6 +192,14 @@ struct ShelfView: View {
             ContentUnavailableView.search
         } else {
             switch section {
+            case .all:
+                ContentUnavailableView {
+                    Label("No books yet", systemImage: "books.vertical")
+                } description: {
+                    Text("Everything you add shows up on the shelf.")
+                } actions: {
+                    Button("Add a book", action: onAdd).buttonStyle(.borderedProminent)
+                }
             case .want:
                 ContentUnavailableView {
                     Label("Nothing queued up", systemImage: "bookmark")

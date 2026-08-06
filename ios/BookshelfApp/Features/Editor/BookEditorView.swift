@@ -22,6 +22,7 @@ enum BookEditorTarget: Identifiable {
 /// adding a book in five seconds and giving up halfway.
 struct BookEditorView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
     let target: BookEditorTarget
@@ -116,6 +117,8 @@ struct BookEditorView: View {
             .themedPage()
             .themedRows()
             .navigationTitle(isEditing ? "Edit book" : "Add a book")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

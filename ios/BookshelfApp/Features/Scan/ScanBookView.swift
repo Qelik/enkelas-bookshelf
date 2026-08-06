@@ -11,6 +11,7 @@ import VisionKit
 /// scan.
 struct ScanBookView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
     /// Where a scanned book lands. Matches the shelf the user was looking at.
@@ -47,6 +48,8 @@ struct ScanBookView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Scan a book")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -7,6 +7,7 @@ import SwiftUI
 /// book", and a reader shouldn't have to remember which button opens which list.
 struct ReaderDrawer: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.themeBackground) private var background
     @Environment(\.themeAccent) private var accent
 
     let package: EPUBPackage
@@ -44,6 +45,8 @@ struct ReaderDrawer: View {
             }
             .themedPage()
             .navigationTitle(record.title)
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
@@ -179,6 +182,7 @@ struct ReaderDrawer: View {
 
 /// Full-book search.
 struct ReaderSearchView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
     let package: EPUBPackage
@@ -239,6 +243,8 @@ struct ReaderSearchView: View {
             }
             .themedPage()
             .navigationTitle("Search")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }

@@ -11,6 +11,7 @@ import SwiftUI
 
 struct FinishBookView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
     /// Identifiable so `.sheet(item:)` rebuilds when switching between
@@ -44,6 +45,8 @@ struct FinishBookView: View {
             .themedPage()
             .themedRows()
             .navigationTitle(mode == .reread ? "Finished a re-read" : "Finished")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -70,6 +73,7 @@ struct FinishBookView: View {
 // MARK: - Did not finish
 
 struct DNFView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -91,6 +95,8 @@ struct DNFView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Did not finish")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -109,6 +115,7 @@ struct DNFView: View {
 // MARK: - Bookmark
 
 struct BookmarkView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -144,6 +151,8 @@ struct BookmarkView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Bookmark")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -165,6 +174,7 @@ struct BookmarkView: View {
 // MARK: - Lending
 
 struct LendView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -199,6 +209,8 @@ struct LendView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Lend this book")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -223,6 +235,7 @@ struct LendView: View {
 /// One sheet for all four note kinds — they differ only in their fields, and
 /// four near-identical screens would be four places to fix a bug.
 struct AddNoteView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -289,6 +302,8 @@ struct AddNoteView: View {
             .themedPage()
             .themedRows()
             .navigationTitle(kind.title)
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

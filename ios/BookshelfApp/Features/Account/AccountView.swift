@@ -6,6 +6,7 @@ import SwiftUI
 /// delete account.
 struct AccountSection: View {
     @Environment(SyncEngine.self) private var sync
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
 
     @Binding var showingAuth: Bool
@@ -103,6 +104,7 @@ struct AccountSection: View {
 
 /// The conflict history — every time two devices disagreed and which copy won.
 struct ConflictLogView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(SyncEngine.self) private var sync
     @Environment(\.dismiss) private var dismiss
 
@@ -133,6 +135,8 @@ struct ConflictLogView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Sync conflicts")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
@@ -142,6 +146,7 @@ struct ConflictLogView: View {
 }
 
 struct ChangePasswordView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(SyncEngine.self) private var sync
     @Environment(\.dismiss) private var dismiss
 
@@ -175,6 +180,8 @@ struct ChangePasswordView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Change password")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -205,6 +212,7 @@ struct ChangePasswordView: View {
 /// Deleting an account. Required by App Store guideline 5.1.1(v), and the
 /// friction here is deliberate: it is irreversible and total.
 struct DeleteAccountView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(SyncEngine.self) private var sync
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -257,6 +265,8 @@ struct DeleteAccountView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Delete account")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -283,6 +293,7 @@ struct DeleteAccountView: View {
 /// The divergence prompt. Shown when both this device and the account hold
 /// changes the other hasn't seen — the one case where guessing loses data.
 struct ConflictResolutionView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(SyncEngine.self) private var sync
     let conflict: SyncEngine.Conflict
 
@@ -332,6 +343,8 @@ struct ConflictResolutionView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Two versions")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
         }
         // No cancel: leaving it unresolved means sync stays stuck and the next

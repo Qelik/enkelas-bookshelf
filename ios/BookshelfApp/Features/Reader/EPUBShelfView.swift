@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// The ePubs on this device.
 struct EPUBShelfView: View {
     @Environment(EPUBLibrary.self) private var library
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.themeAccent) private var accent
 
@@ -45,6 +46,8 @@ struct EPUBShelfView: View {
             }
             .themedPage()
             .navigationTitle("Reader")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(for: String.self) { ReaderView(recordID: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -130,6 +133,7 @@ struct EPUBShelfView: View {
 
 /// Attach an ePub to a book on the shelf, so reading it logs sessions there.
 struct LinkBookView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(EPUBLibrary.self) private var library
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -197,6 +201,8 @@ struct LinkBookView: View {
             .searchable(text: $query, prompt: "Find a book")
             .themedPage()
             .navigationTitle(record.title)
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Skip") { dismiss() } }

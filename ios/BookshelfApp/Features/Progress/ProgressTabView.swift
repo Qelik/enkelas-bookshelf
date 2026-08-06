@@ -45,6 +45,8 @@ struct ProgressTabView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Progress")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             // Off the main actor, and only when the shelf actually changed.
             // `updatedAt` moves on every commit, which is precisely the
             // identity this depends on.
@@ -384,6 +386,7 @@ struct ProgressTabView: View {
 
 /// Every badge, earned or not — locked ones show what they'd take.
 struct BadgesView: View {
+    @Environment(\.themeBackground) private var background
     /// Passed in, not derived here. This used to call `badges()` *inside* the
     /// loop over groups, so a full walk of every book and session ran once per
     /// group, on every redraw.
@@ -420,12 +423,15 @@ struct BadgesView: View {
             }
         }
         .navigationTitle("Badges")
+        .toolbarBackground(background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 /// Set the yearly, pages and daily goals.
 struct GoalEditorView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -464,6 +470,8 @@ struct GoalEditorView: View {
                 }
             }
             .navigationTitle("Reading goal")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

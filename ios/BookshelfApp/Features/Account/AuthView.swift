@@ -10,6 +10,7 @@ import SwiftUI
 /// when it refuses.
 struct AuthView: View {
     @Environment(SyncEngine.self) private var sync
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
     enum Mode: String, CaseIterable { case signIn = "Sign in", register = "Create account" }
@@ -106,6 +107,8 @@ struct AuthView: View {
             .themedPage()
             .themedRows()
             .navigationTitle(mode.rawValue)
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

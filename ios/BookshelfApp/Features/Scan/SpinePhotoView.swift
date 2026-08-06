@@ -11,6 +11,7 @@ import SwiftUI
 /// guide shape, so both produce the same kind of image.
 struct SpinePhotoView: View {
     @Environment(SpinePhotos.self) private var photos
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
     let book: WireBook
@@ -39,6 +40,8 @@ struct SpinePhotoView: View {
                 }
             }
             .navigationTitle("Spine photo")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

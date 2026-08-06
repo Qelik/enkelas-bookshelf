@@ -5,6 +5,7 @@ import SwiftUI
 /// sessions the only one anybody visits.
 struct ReadingView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(\.themeBackground) private var background
     @Environment(SyncEngine.self) private var sync
     @Environment(Router.self) private var router
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -29,6 +30,8 @@ struct ReadingView: View {
             NavigationSplitView {
                 bookList(selection: $selected)
                     .navigationTitle(sync.displayTitle)
+                    .toolbarBackground(background, for: .navigationBar)
+                    .toolbarBackground(.visible, for: .navigationBar)
                     .toolbar { shellToolbar }
                     .attachShellSheets(
                         showingSettings: $showingSettings,
@@ -65,6 +68,8 @@ struct ReadingView: View {
             // home-screen icon can't change; iOS gives an app no way to rename
             // itself at runtime.
             .navigationTitle(sync.displayTitle)
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(for: String.self) { BookDetailView(bookID: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -173,6 +178,7 @@ private extension View {
 /// a reader knows without doing arithmetic. The store turns it into the stored
 /// per-session delta.
 struct LogSessionView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -267,6 +273,8 @@ struct LogSessionView: View {
             // running session — only Stop or saving does.
             .onDisappear { timer.pauseDisplay() }
             .navigationTitle("Log a session")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -44,6 +44,8 @@ struct CommunityView: View {
             }
             .themedPage()
             .navigationTitle("Community")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if section == .board {
@@ -233,6 +235,7 @@ struct RecommendationRow: View {
 /// The report sheet. Deliberately plain: a reason, an optional detail, and a
 /// clear statement of what happens next.
 struct ReportView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
     let what: String
     var onSubmit: (ReportReason, String) async -> Void
@@ -260,6 +263,8 @@ struct ReportView: View {
             }
             .themedPage()
             .navigationTitle("Report")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -281,6 +286,7 @@ struct ReportView: View {
 
 /// Everyone this reader has blocked, so it can be undone.
 struct BlockedListView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(CommunityEngine.self) private var community
 
     var body: some View {
@@ -307,12 +313,15 @@ struct BlockedListView: View {
         }
         .themedPage()
         .navigationTitle("Blocked")
+        .toolbarBackground(background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 /// Post a recommendation to the shared board.
 struct RecommendView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(CommunityEngine.self) private var community
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -377,6 +386,8 @@ struct RecommendView: View {
             }
             .themedPage()
             .navigationTitle("Recommend")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

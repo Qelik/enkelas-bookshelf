@@ -56,6 +56,8 @@ struct SettingsView: View {
             .themedPage()
             .themedRows()
             .navigationTitle("Settings")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .sheet(isPresented: $showingAuth) { AuthView() }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
                 handleImport(result)

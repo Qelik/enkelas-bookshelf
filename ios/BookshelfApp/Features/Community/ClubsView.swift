@@ -9,6 +9,7 @@ import SwiftUI
 /// renders what arrived and shows the count of what didn't.
 struct ClubsListView: View {
     @Environment(CommunityEngine.self) private var community
+    @Environment(\.themeBackground) private var background
     @Environment(\.themeAccent) private var accent
     @Binding var showingAuth: Bool
 
@@ -102,6 +103,7 @@ struct ClubsListView: View {
 }
 
 struct ClubDetailView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(CommunityEngine.self) private var community
     @Environment(\.dismiss) private var dismiss
 
@@ -130,6 +132,8 @@ struct ClubDetailView: View {
         }
         .themedPage()
         .navigationTitle(detail?.club.title ?? "Club")
+        .toolbarBackground(background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -332,6 +336,7 @@ struct ClubDetailView: View {
 }
 
 struct MembersView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
     @Environment(\.themeAccent) private var accent
     let members: [ClubMember]
@@ -359,6 +364,8 @@ struct MembersView: View {
             }
             .themedPage()
             .navigationTitle("Where everyone is")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
@@ -366,6 +373,7 @@ struct MembersView: View {
 }
 
 struct CreateClubView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(CommunityEngine.self) private var community
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -421,6 +429,8 @@ struct CreateClubView: View {
             }
             .themedPage()
             .navigationTitle("Start a club")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -453,6 +463,7 @@ struct CreateClubView: View {
 }
 
 struct JoinClubView: View {
+    @Environment(\.themeBackground) private var background
     @Environment(CommunityEngine.self) private var community
     @Environment(\.dismiss) private var dismiss
 
@@ -478,6 +489,8 @@ struct JoinClubView: View {
             }
             .themedPage()
             .navigationTitle("Join a club")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
