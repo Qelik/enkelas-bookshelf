@@ -57,6 +57,7 @@ struct ReaderDrawer: View {
                 // there, so fall back to it rather than showing nothing.
                 ForEach(Array(package.spine.enumerated()), id: \.offset) { index, chapter in
                     chapterRow(title: chapter.title ?? "Section \(index + 1)", indent: 0, index: index)
+                        .themedPlainRows()
                 }
             } else {
                 ForEach(package.toc) { entry in
@@ -65,10 +66,12 @@ struct ReaderDrawer: View {
                         indent: entry.depth,
                         index: package.spine.firstIndex { $0.path == entry.path }
                     )
+                    .themedPlainRows()
                 }
             }
         }
         .listStyle(.plain)
+        .themedPage()
     }
 
     @ViewBuilder
@@ -122,6 +125,7 @@ struct ReaderDrawer: View {
                 }
             }
             .listStyle(.plain)
+            .themedPage()
         }
     }
 
@@ -168,6 +172,7 @@ struct ReaderDrawer: View {
                 }
             }
             .listStyle(.plain)
+            .themedPage()
         }
     }
 }
@@ -220,6 +225,7 @@ struct ReaderSearchView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .themedPage()
                 }
             }
             .searchable(text: $query, prompt: "Find in book")

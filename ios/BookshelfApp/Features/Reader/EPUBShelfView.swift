@@ -40,6 +40,7 @@ struct EPUBShelfView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .themedPage()
                 }
             }
             .themedPage()

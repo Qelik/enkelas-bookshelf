@@ -60,6 +60,7 @@ struct ShelfView: View {
                         NavigationLink(value: book.id) {
                             BookRow(book: book)
                         }
+                        .themedPlainRows()
                     }
                 }
             }

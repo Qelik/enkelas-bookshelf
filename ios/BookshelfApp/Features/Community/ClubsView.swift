@@ -227,9 +227,11 @@ struct ClubDetailView: View {
             List {
                 ForEach(detail.comments) { comment in
                     commentRow(comment)
+                        .themedPlainRows()
                 }
             }
             .listStyle(.plain)
+            .themedPage()
         }
     }
 
