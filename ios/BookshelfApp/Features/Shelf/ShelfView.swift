@@ -69,13 +69,15 @@ struct ShelfView: View {
                 if visibleBooks.isEmpty { emptyState }
             }
             .safeAreaInset(edge: .top) {
-                Picker("Shelf", selection: $section) {
-                    ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+                if !asShelf {
+                    Picker("Shelf", selection: $section) {
+                        ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .background(.bar)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-                .background(.bar)
             }
             .searchable(text: $query, prompt: "Title, author or tag")
             .navigationTitle("Shelf")
@@ -123,7 +125,12 @@ struct ShelfView: View {
     // MARK: - Contents
 
     private var sourceBooks: [WireBook] {
-        switch section {
+        // A real shelf holds everything, including the book currently in your
+        // hand. Want / Library / Owned is a way of *managing* a list, and none of
+        // those three sections contains `.reading` — so in shelf mode they'd hide
+        // the one book you're most likely to have photographed.
+        guard !asShelf else { return store.state.books }
+        return switch section {
         case .want: store.state.want
         case .library: store.state.library
         case .owned: store.state.owned

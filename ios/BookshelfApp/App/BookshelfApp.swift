@@ -6,6 +6,7 @@ struct BookshelfApp: App {
     @State private var store: BookshelfStore
     @State private var sync: SyncEngine
     @State private var epubs = EPUBLibrary()
+    @State private var spines = SpinePhotos()
     @State private var timer = ReadingTimer()
     @State private var community: CommunityEngine
     @State private var router = Router()
@@ -53,6 +54,7 @@ struct BookshelfApp: App {
                 .environment(store)
                 .environment(sync)
                 .environment(epubs)
+                .environment(spines)
                 .environment(timer)
                 .environment(community)
                 .environment(router)
@@ -79,6 +81,9 @@ struct BookshelfApp: App {
                     // local commit having happened.
                     widgets.publishNow()
                     await SpotlightIndex.rebuild(from: store.state)
+                    // The store knows nothing about photos, so a deleted
+                    // book's picture would stay on disk forever.
+                    spines.prune(keeping: store.state.books.map(\.id))
                 }
         }
         .onChange(of: scenePhase) { _, phase in

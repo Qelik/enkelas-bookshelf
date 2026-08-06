@@ -24,6 +24,11 @@
 	<key>NSCameraUsageDescription</key>
 	<string>To add a book by scanning the barcode on its back cover.</string>
 
+	<!-- Choosing an existing photo of a spine. Read-only: the app never writes
+	     to the library, so NSPhotoLibraryAddUsageDescription is not needed. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>To use one of your photos as a book's spine on the shelf.</string>
+
 	<!-- ActivityKit refuses to start an activity without this, and does so
 	     silently — the call returns an error rather than the Lock Screen simply
 	     not updating, which is why it is easy to miss. -->

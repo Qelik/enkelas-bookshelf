@@ -8,6 +8,7 @@ import SwiftUI
 /// snapshot behind the sheet that made the change.
 struct BookDetailView: View {
     @Environment(BookshelfStore.self) private var store
+    @Environment(SpinePhotos.self) private var spines
     @Environment(\.dismiss) private var dismiss
 
     let bookID: String
@@ -18,6 +19,7 @@ struct BookDetailView: View {
     @State private var markingDNF = false
     @State private var bookmarking = false
     @State private var lending = false
+    @State private var photographing = false
     @State private var addingNote: AddNoteView.Kind?
 
     private var book: WireBook? { store.state.book(id: bookID) }
@@ -51,6 +53,10 @@ struct BookDetailView: View {
                                    systemImage: book.owned ? "house.slash" : "house") {
                                 store.toggleOwned(bookID: book.id)
                             }
+                            Button(
+                                spines.hasPhoto(for: book.id) ? "Change spine photo" : "Photograph the spine",
+                                systemImage: "camera"
+                            ) { photographing = true }
                             Button(book.isLentOut ? "Lending…" : "Lend to someone",
                                    systemImage: "arrow.left.arrow.right") { lending = true }
                             if book.status == .finished {
@@ -70,6 +76,7 @@ struct BookDetailView: View {
                 .sheet(item: $finishing) { FinishBookView(book: book, mode: $0) }
                 .sheet(isPresented: $markingDNF) { DNFView(book: book) }
                 .sheet(isPresented: $bookmarking) { BookmarkView(book: book) }
+                .sheet(isPresented: $photographing) { SpinePhotoView(book: book) }
                 .sheet(isPresented: $lending) { LendView(book: book) }
                 .sheet(item: $addingNote) { AddNoteView(book: book, kind: $0) }
                 .confirmationDialog(

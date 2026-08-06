@@ -468,6 +468,48 @@ are off by one gap: a book wider than the shelf still gets a row instead of
 vanishing, and a zero width (the first layout pass, before geometry resolves)
 returns one row rather than looping.
 
+## Spine photographs
+
+Book detail → **⋯** → Photograph the spine. The shelf then draws the real book
+instead of a coloured rectangle.
+
+The capture screen dims everything outside a tall, narrow guide, because the user
+has to see what will be kept. **The guide and the crop come from the same
+`SpineCrop.guideRect`** — computing them separately is exactly how the frame and
+the resulting photo drift apart.
+
+The subtle part is that the preview is `resizeAspectFill`, so what's on screen is
+*already* a crop of the sensor frame. Cropping the captured photo to the guide's
+screen coordinates would take a different region than the one framed.
+`metadataOutputRectConverted` bridges the two, and its output is in unrotated
+sensor space, so the axes swap for a portrait capture before it can index pixels.
+
+`SpineCrop.pixelRect` clamps. That conversion can return values slightly outside
+0…1 when the guide touches an edge, and `CGImage.cropping(to:)` returns nil for a
+rect that isn't fully inside — a capture that silently does nothing.
+
+**Photos are files on the device, not in the shelf blob.** The blob syncs and the
+Worker rejects it over 8 MB; a couple of hundred photographs as base64 would blow
+that ceiling and take the whole shelf offline with it. The consequence is real and
+worth stating: a spine photo does not follow you to another phone.
+
+Book ids come from imported JSON, so `SpinePhotos.filename` derives a name rather
+than trusting one — an id of `../../Documents/x` would otherwise write outside the
+directory. A hash is appended because two ids that sanitise to the same characters
+would otherwise share a file and show each other's photograph.
+
+The camera needs real hardware, so on the Simulator the screen opens straight onto
+the photo-library path, which centre-crops to the same shape. Everything testable
+— the crop maths, the storage, the path-traversal guard — is in `BookshelfCore`.
+
+### The shelf shows everything
+
+Switching to shelf mode ignores the Want / Library / Owned sections and shows the
+whole shelf. Those three are a way of *managing a list*, and none of them contains
+`.reading` — so in shelf mode they hid the one book you're most likely to have in
+your hand and to have photographed. The section picker is hidden while the shelf
+is showing; search and the tag filter still apply.
+
 ## Performance: what was making it freeze
 
 Measured on a synthetic 300-book shelf with 12,000 session logs, which is what

@@ -9,6 +9,7 @@ import SwiftUI
 /// count, so a row of books reads at a glance the way a real one does.
 struct BookshelfWallView: View {
     @Environment(\.themeAccent) private var accent
+    @Environment(SpinePhotos.self) private var photos
 
     let books: [WireBook]
     var onSelect: (String) -> Void
@@ -50,7 +51,11 @@ struct BookshelfWallView: View {
             // Bottom-aligned: books stand on the plank, they don't hang from it.
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(row) { spine in
-                    SpineView(spine: spine, accent: accent)
+                    SpineView(
+                        spine: spine,
+                        accent: accent,
+                        photo: SpineImageCache.shared.image(for: spine.id, from: photos)
+                    )
                         .onTapGesture {
                             Haptics.pageTurn()
                             onSelect(spine.id)
@@ -99,12 +104,42 @@ struct BookshelfWallView: View {
 private struct SpineView: View {
     let spine: ShelfLayout.Spine
     let accent: Color
+    /// The real thing, photographed. When present it replaces the drawn spine
+    /// entirely — printed title, bands and all — because a photograph with our
+    /// lettering on top of the publisher's is worse than either alone.
+    let photo: UIImage?
 
     private var base: Color {
         Color(hue: Double(spine.hue) / 360, saturation: 0.42, brightness: 0.52)
     }
 
     var body: some View {
+        ZStack {
+            if let photo {
+                Image(uiImage: photo)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                drawn
+            }
+            marker
+        }
+        .frame(width: spine.width, height: spine.height)
+        .clipShape(.rect(cornerRadius: 2))
+        .overlay {
+            RoundedRectangle(cornerRadius: 2)
+                .strokeBorder(.black.opacity(0.35), lineWidth: 0.5)
+        }
+        .rotationEffect(.degrees(spine.lean), anchor: .bottom)
+        .shadow(color: .black.opacity(0.4), radius: 2, x: 1)
+        .accessibilityElement()
+        .accessibilityLabel(spine.title)
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The drawn spine, for a book with no photograph.
+    private var drawn: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 2)
                 .fill(
@@ -126,11 +161,16 @@ private struct SpineView: View {
             .padding(.vertical, 7)
 
             title
+        }
+    }
 
-            // A finished book gets a foil dot; one in progress gets a ribbon down
-            // the spine showing how far in you are. Both are readable side-on,
-            // which a progress bar wouldn't be.
-            if spine.finished {
+    /// Read state, drawn over a photograph as readily as over a drawn spine.
+    @ViewBuilder
+    private var marker: some View {
+        // A finished book gets a foil dot; one in progress gets a ribbon down
+        // the spine showing how far in you are. Both are readable side-on,
+        // which a progress bar wouldn't be.
+        if spine.finished {
                 VStack {
                     Spacer()
                     Circle()
@@ -151,20 +191,7 @@ private struct SpineView: View {
                 }
                 .frame(width: 2.5, alignment: .top)
                 .offset(x: spine.width / 2 - 6)
-            }
         }
-        .frame(width: spine.width, height: spine.height)
-        .clipShape(.rect(cornerRadius: 2))
-        .overlay {
-            RoundedRectangle(cornerRadius: 2)
-                .strokeBorder(.black.opacity(0.35), lineWidth: 0.5)
-        }
-        .rotationEffect(.degrees(spine.lean), anchor: .bottom)
-        .shadow(color: .black.opacity(0.4), radius: 2, x: 1)
-        .accessibilityElement()
-        .accessibilityLabel(spine.title)
-        .accessibilityValue(accessibilityValue)
-        .accessibilityAddTraits(.isButton)
     }
 
     private var band: some View {
