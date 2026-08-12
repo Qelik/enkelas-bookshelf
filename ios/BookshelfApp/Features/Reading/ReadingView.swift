@@ -32,6 +32,7 @@ struct ReadingView: View {
                     .navigationTitle(sync.displayTitle)
                     .toolbarBackground(background, for: .navigationBar)
                     .toolbarBackground(.visible, for: .navigationBar)
+                    .navigationBarTitleDisplayMode(.inline)
                     .toolbar { shellToolbar }
                     .attachShellSheets(
                         showingSettings: $showingSettings,
@@ -71,6 +72,10 @@ struct ReadingView: View {
             .navigationTitle(sync.displayTitle)
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            // Inline, because a large title disappears the moment its list has
+            // rows — which left the top of the app's first screen simply blank.
+            // Every other tab is inline for the same reason.
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { BookDetailView(bookID: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

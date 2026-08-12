@@ -55,6 +55,9 @@ struct ProgressTabView: View {
             .navigationTitle("Progress")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            // A large title vanishes once the content scrolls, which left a band
+            // of empty page above the goal card and no clue which tab this is.
+            .navigationBarTitleDisplayMode(.inline)
             // Off the main actor, and only when the shelf actually changed.
             // `updatedAt` moves on every commit, which is precisely the
             // identity this depends on.

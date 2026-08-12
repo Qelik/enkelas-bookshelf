@@ -58,6 +58,9 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            // Inline, so it survives scrolling the form — and so a sheet that can
+            // be dragged has its name pinned where the grabber is.
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingAuth) { AuthView() }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
                 handleImport(result)
