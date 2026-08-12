@@ -39,6 +39,7 @@ struct SpinePhotoView: View {
                     unavailable
                 }
             }
+            .themedPage()
             .navigationTitle("Spine photo")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)

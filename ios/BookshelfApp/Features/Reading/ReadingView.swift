@@ -47,6 +47,7 @@ struct ReadingView: View {
                             "Pick a book", systemImage: "book",
                             description: Text("Choose something from the list to see its progress.")
                         )
+                            .themedState()
                     }
                 }
             }
@@ -115,6 +116,7 @@ struct ReadingView: View {
                 Button("Add a book", action: onAdd)
                     .buttonStyle(.borderedProminent)
             }
+                .themedState()
         } else if let selection {
             List(store.state.reading, id: \.id, selection: selection) { book in
                 BookRow(book: book)
@@ -272,6 +274,8 @@ struct LogSessionView: View {
             // pauseDisplay, not stop: closing the sheet must not discard a
             // running session — only Stop or saving does.
             .onDisappear { timer.pauseDisplay() }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Log a session")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)

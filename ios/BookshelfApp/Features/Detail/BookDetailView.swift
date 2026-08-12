@@ -104,6 +104,7 @@ struct BookDetailView: View {
             } else {
                 // Reachable if the book is deleted while this screen is open.
                 ContentUnavailableView("Book not found", systemImage: "questionmark.folder")
+                    .themedState()
             }
         }
     }

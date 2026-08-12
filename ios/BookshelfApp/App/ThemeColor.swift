@@ -136,3 +136,23 @@ extension View {
     /// through rather than each row being its own card.
     func themedPlainRows() -> some View { listRowBackground(Color.clear) }
 }
+
+/// A full-screen state — empty, error, loading — on the theme's page colour.
+///
+/// `ContentUnavailableView` and a centred `ProgressView` paint `systemBackground`
+/// themselves, and they're usually presented as an `.overlay` *on top* of the
+/// themed container rather than inside it. So they punch a white hole through an
+/// otherwise themed screen, and every one has to be told individually.
+private struct ThemedState: ViewModifier {
+    @Environment(\.themeBackground) private var background
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(background)
+    }
+}
+
+extension View {
+    func themedState() -> some View { modifier(ThemedState()) }
+}

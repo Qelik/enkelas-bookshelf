@@ -37,6 +37,7 @@ struct YearReviewView: View {
                         } description: {
                             Text("No books finished in \(String(year)) yet. Come back once you've read some.")
                         }
+                            .themedState()
                         .padding(.top, 40)
                     }
                 }

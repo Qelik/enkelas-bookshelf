@@ -26,6 +26,7 @@ struct ClubsListView: View {
                 } actions: {
                     Button("Sign in") { showingAuth = true }.buttonStyle(.borderedProminent)
                 }
+                    .themedState()
             } else if let error = community.errorMessage, community.clubs.isEmpty {
                 // Checked *before* the empty state: a request that failed also
                 // leaves the list empty, and "No clubs yet" then quietly claims
@@ -40,6 +41,7 @@ struct ClubsListView: View {
                     Button("Try again") { Task { await community.loadClubs() } }
                         .buttonStyle(.borderedProminent)
                 }
+                    .themedState()
             } else if community.clubs.isEmpty {
                 ContentUnavailableView {
                     Label("No clubs yet", systemImage: "person.2")
@@ -51,6 +53,7 @@ struct ClubsListView: View {
                         Button("Join with a code") { joining = true }
                     }
                 }
+                    .themedState()
             } else {
                 List {
                     ForEach(community.clubs) { club in
@@ -126,6 +129,7 @@ struct ClubDetailView: View {
             } else if let loadError {
                 ContentUnavailableView("Couldn't open this club", systemImage: "person.2.slash",
                                        description: Text(loadError))
+                    .themedState()
             } else {
                 ProgressView()
             }
@@ -226,6 +230,7 @@ struct ClubDetailView: View {
                      ? "There are \(detail.lockedAhead) comments further into the book. Move your progress up as you read to unlock them."
                      : "Say something about where you've got to.")
             }
+                .themedState()
             .frame(maxHeight: .infinity)
         } else {
             List {
@@ -428,6 +433,7 @@ struct CreateClubView: View {
                 }
             }
             .themedPage()
+            .themedRows()
             .navigationTitle("Start a club")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -488,6 +494,7 @@ struct JoinClubView: View {
                 }
             }
             .themedPage()
+            .themedRows()
             .navigationTitle("Join a club")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)

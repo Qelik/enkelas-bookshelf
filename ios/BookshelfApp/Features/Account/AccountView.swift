@@ -114,6 +114,7 @@ struct ConflictLogView: View {
                 if sync.conflictLog.isEmpty {
                     ContentUnavailableView("No conflicts", systemImage: "checkmark.circle",
                                            description: Text("Every change has merged cleanly."))
+                        .themedState()
                 } else {
                     ForEach(sync.conflictLog) { entry in
                         VStack(alignment: .leading, spacing: 3) {
