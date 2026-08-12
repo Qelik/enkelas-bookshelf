@@ -172,6 +172,65 @@ struct BookDetailTests {
         #expect(!store.state.books[0].isLentOut)
     }
 
+    @Test("a return date is stored as a bare day, and is what a reminder can fire on")
+    func lendingWithADueDate() {
+        let store = Self.shelf(Self.book)
+        let when = ISO8601.date(from: "2026-06-01T12:00:00.000Z")!
+        let back = ISO8601.date(from: "2026-06-30T22:00:00.000Z")!
+        store.lend(bookID: "b1", to: "Sam", on: when, due: back)
+
+        let b = store.state.books[0]
+        // Bare YYYY-MM-DD, the same shape the web app writes `loanDue` in — a date
+        // someone named, not an instant.
+        #expect(b.lentDue == "2026-06-30")
+        #expect(b.lentDueDate != nil)
+        #expect(!b.isLentOverdue(now: ISO8601.date(from: "2026-06-29T12:00:00.000Z")!))
+        #expect(b.isLentOverdue(now: ISO8601.date(from: "2026-07-02T12:00:00.000Z")!))
+
+        // The boundary, on a fixed calendar. "Overdue" is a comparison of *days*,
+        // and which day an instant falls on depends on the reader's timezone — so
+        // asserting it against `Calendar.current` would pass or fail depending on
+        // where the machine running the tests happens to be.
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        // The day itself is not yet late.
+        #expect(!b.isLentOverdue(now: ISO8601.date(from: "2026-06-30T23:00:00.000Z")!, calendar: utc))
+        #expect(b.isLentOverdue(now: ISO8601.date(from: "2026-07-01T00:30:00.000Z")!, calendar: utc))
+    }
+
+    @Test("an open-ended loan has no date, and nothing to remind about")
+    func lendingWithoutADueDate() {
+        let store = Self.shelf(Self.book)
+        store.lend(bookID: "b1", to: "Sam")
+        #expect(store.state.books[0].lentDue.isEmpty)
+        #expect(store.state.books[0].lentDueDate == nil)
+        #expect(!store.state.books[0].isLentOverdue())
+    }
+
+    @Test("getting the book back clears the deadline with it")
+    func returningClearsTheDueDate() {
+        // Left behind, it would re-arm a reminder for a book already on the shelf —
+        // and the reminders are rebuilt wholesale from the shelf every time.
+        let store = Self.shelf(Self.book)
+        store.lend(bookID: "b1", to: "Sam", due: ISO8601.date(from: "2026-06-30T12:00:00.000Z")!)
+        store.markReturned(bookID: "b1")
+
+        let b = store.state.books[0]
+        #expect(b.lentDue.isEmpty)
+        #expect(b.lentDueDate == nil)
+        #expect(!b.isLentOut)
+    }
+
+    @Test("a due date on a book nobody has is not a loan")
+    func dueDateNeedsALoan() {
+        // Data can arrive this way from an older build or a hand-edited blob; the
+        // date means nothing without somebody holding the book.
+        let store = Self.shelf(Self.book)
+        store.commit { $0.books[0].lentDue = "2026-06-30" }
+        #expect(store.state.books[0].lentDueDate == nil)
+        #expect(!store.state.books[0].isLentOverdue())
+    }
+
     // MARK: - Notes
 
     @Test("all four kinds of note add and delete")

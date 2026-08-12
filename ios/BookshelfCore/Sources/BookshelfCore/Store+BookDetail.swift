@@ -115,13 +115,17 @@ public extension BookshelfStore {
 
     /// `lentTo`/`lentAt` is a book *you* lent out. Distinct from `loanDue`, which
     /// is a library book you borrowed and have to give back.
-    func lend(bookID: String, to person: String, on date: Date = Date()) {
+    /// - Parameter due: when you want it back. Optional, because plenty of loans
+    ///   are open-ended — but without one there is no moment for a reminder to
+    ///   fire, which is why nothing ever nudged about a lent book before.
+    func lend(bookID: String, to person: String, on date: Date = Date(), due: Date? = nil) {
         commit { state in
             guard let i = state.books.firstIndex(where: { $0.id == bookID }) else { return }
             let name = person.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return }
             state.books[i].lentTo = name
             state.books[i].lentAt = ISO8601.string(from: date)
+            state.books[i].lentDue = due.map(Self.dayStamp) ?? ""
         }
     }
 
@@ -130,7 +134,15 @@ public extension BookshelfStore {
             guard let i = state.books.firstIndex(where: { $0.id == bookID }) else { return }
             state.books[i].lentTo = ""
             state.books[i].lentAt = nil
+            // The deadline goes with the loan. Left behind, it would re-arm a
+            // reminder for a book already back on the shelf.
+            state.books[i].lentDue = ""
         }
+    }
+
+    /// A bare `YYYY-MM-DD`, matching how the web app writes `loanDue`.
+    static func dayStamp(_ date: Date) -> String {
+        ISO8601.string(from: date).prefix(10).description
     }
 
     func setLoanDue(bookID: String, date: Date?) {
@@ -226,6 +238,21 @@ public extension WireBook {
     var loanDueDate: Date? {
         guard !loanDue.isEmpty else { return nil }
         return ISO8601.date(from: loanDue) ?? ISO8601.date(from: loanDue + "T12:00:00.000Z")
+    }
+
+    /// When you asked for a lent book back, if you named a date.
+    ///
+    /// Read the same way as `loanDue`: midday, so a bare date can't land on the
+    /// wrong side of midnight in a timezone west of UTC.
+    var lentDueDate: Date? {
+        guard isLentOut, !lentDue.isEmpty else { return nil }
+        return ISO8601.date(from: lentDue) ?? ISO8601.date(from: lentDue + "T12:00:00.000Z")
+    }
+
+    /// Past the date you asked for it back.
+    func isLentOverdue(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let due = lentDueDate else { return false }
+        return calendar.startOfDay(for: due) < calendar.startOfDay(for: now)
     }
 
     /// Total notes of every kind, for the detail screen's section headers.

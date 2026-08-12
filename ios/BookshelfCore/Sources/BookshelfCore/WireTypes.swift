@@ -89,6 +89,9 @@ public struct WireBook: Codable, Sendable, Hashable {
     public var coverTriedAt: String?
     public var lentTo: String
     public var lentAt: String?
+    /// When you asked for it back, as a bare `YYYY-MM-DD` — the same shape as
+    /// `loanDue`, and for the same reason: a date somebody named, not an instant.
+    public var lentDue: String
     public var status: BookStatus
     public var rating: Double?
     public var startedAt: String?
@@ -186,6 +189,7 @@ extension WireBook {
         try c.encode(coverTriedAt, forKey: .coverTriedAt)
         try c.encode(lentTo, forKey: .lentTo)
         try c.encode(lentAt, forKey: .lentAt)
+        try c.encode(lentDue, forKey: .lentDue)
         try c.encode(status, forKey: .status)
         try c.encode(rating, forKey: .rating)
         try c.encode(startedAt, forKey: .startedAt)

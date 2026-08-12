@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.08.04a"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.08.12a"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -272,6 +272,10 @@ function normalize(data: any): AppState {
     coverTriedAt: b.coverTriedAt || null,
     lentTo: b.lentTo || "",
     lentAt: b.lentAt || null,
+    // When you asked for it back, as a bare YYYY-MM-DD like loanDue. Carried here
+    // even though only the phone sets it: a field this normalizer doesn't know is
+    // a field the browser silently deletes on the next save.
+    lentDue: b.lentDue || "",
     status: STATUSES.indexOf(b.status) >= 0 ? b.status : "reading",
     rating: b.rating ? Number(b.rating) : null,
     startedAt: b.startedAt || null,

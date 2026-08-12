@@ -43,7 +43,9 @@ struct RemindersSection: View {
                 )
             }
 
-            Toggle("Library book due dates", isOn: Binding(
+            // Both directions of a loan, one switch: they're the same worry, and
+            // the label used to name only half of it.
+            Toggle("Borrowed and lent books", isOn: Binding(
                 get: { loanOn },
                 set: { on in Task { await setLoan(on) } }
             ))
@@ -54,7 +56,7 @@ struct RemindersSection: View {
                 Text("Notifications are off for Bookshelf. Turn them on in Settings › Notifications.")
                     .foregroundStyle(.orange)
             } else {
-                Text("A nudge about the book you're actually reading, and a warning the day before a borrowed book is due back.")
+                Text("A nudge about the book you're actually reading, a warning the day before a borrowed book is due back, and a reminder to ask for a lent book when you said you would.")
             }
         }
         .task {

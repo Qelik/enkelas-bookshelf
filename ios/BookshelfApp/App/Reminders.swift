@@ -15,6 +15,9 @@ enum Reminders {
     static let dailyIdentifier = "daily-reading"
     static let dailyPrefix = "daily-reading-"
     static let loanPrefix = "loan-due-"
+    /// A book *you* lent out, waiting to come back. Its own prefix so cancelling
+    /// one kind can't sweep away the other.
+    static let lentPrefix = "lent-due-"
 
     // MARK: - Permission
 
@@ -122,11 +125,21 @@ enum Reminders {
         let center = UNUserNotificationCenter.current()
         let pending = await center.pendingNotificationRequests()
             .map(\.identifier)
-            .filter { $0.hasPrefix(loanPrefix) }
+            .filter { $0.hasPrefix(loanPrefix) || $0.hasPrefix(lentPrefix) }
         center.removePendingNotificationRequests(withIdentifiers: pending)
     }
 
-    /// Re-schedule every borrowed book's due warning.
+    /// Re-arm after a loan changes, if these reminders are switched on.
+    ///
+    /// Without this the only refresh was on scene activation, so a date set just
+    /// now scheduled nothing until the app had been backgrounded and reopened —
+    /// for a reminder feature, indistinguishable from not working.
+    static func loansChanged(state: WireState) {
+        guard UserDefaults.standard.bool(forKey: "loan-reminders-on") else { return }
+        Task { await refreshLoanReminders(from: state) }
+    }
+
+    /// Re-schedule the due warnings: books you borrowed, and books you lent out.
     ///
     /// Rebuilt wholesale from the shelf each time rather than patched: due dates
     /// get edited and books get returned, and a stale reminder for a book already
@@ -135,33 +148,65 @@ enum Reminders {
         await cancelLoanReminders()
         guard await authorizationStatus() == .authorized else { return }
 
-        let center = UNUserNotificationCenter.current()
-
         let calendar = Calendar.current
         for book in state.books {
-            guard !book.loanDue.isEmpty,
-                  let due = ISO8601.date(from: book.loanDue) ?? dayOnly(book.loanDue, calendar),
-                  // The day before, at 9am: on the day itself is too late to
-                  // get to a library.
-                  let fire = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: due)),
-                  let at9 = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: fire),
-                  at9 > now
-            else { continue }
+            // Borrowed: warn the day before, because the day itself is too late to
+            // get to a library.
+            if let due = ISO8601.date(from: book.loanDue) ?? dayOnly(book.loanDue, calendar),
+               !book.loanDue.isEmpty {
+                await schedule(
+                    identifier: loanPrefix + book.id,
+                    title: "Due back tomorrow",
+                    body: book.title,
+                    bookID: book.id,
+                    on: calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: due)),
+                    calendar: calendar, now: now
+                )
+            }
 
-            let content = UNMutableNotificationContent()
-            content.title = "Due back tomorrow"
-            content.body = book.title
-            content.sound = .default
-            content.userInfo = ["bookID": book.id]
-
-            let trigger = UNCalendarNotificationTrigger(
-                dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: at9),
-                repeats: false
-            )
-            try? await center.add(UNNotificationRequest(
-                identifier: loanPrefix + book.id, content: content, trigger: trigger
-            ))
+            // Lent out: nudge on the day you asked for it back. There's no library
+            // counter to beat, and "today" is when you'd actually send the message.
+            if let due = book.lentDueDate, book.isLentOut {
+                await schedule(
+                    identifier: lentPrefix + book.id,
+                    title: "Ask \(book.lentTo) for your book back",
+                    body: book.title,
+                    bookID: book.id,
+                    on: calendar.startOfDay(for: due),
+                    calendar: calendar, now: now
+                )
+            }
         }
+    }
+
+    /// One nudge at 9am on `day`, if that's still in the future.
+    private static func schedule(
+        identifier: String,
+        title: String,
+        body: String,
+        bookID: String,
+        on day: Date?,
+        calendar: Calendar,
+        now: Date
+    ) async {
+        guard let day,
+              let at9 = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day),
+              at9 > now
+        else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = ["bookID": bookID]
+
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: at9),
+            repeats: false
+        )
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        )
     }
 
     /// `loanDue` is stored as a bare `YYYY-MM-DD`, which the ISO8601 parser the

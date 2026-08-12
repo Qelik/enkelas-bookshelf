@@ -24,140 +24,279 @@
     },
     {
       "name": "books is not an array",
-      "input": { "books": "nope", "shelfOrder": 7 }
+      "input": {
+        "books": "nope",
+        "shelfOrder": 7
+      }
     },
     {
       "name": "goal merge keeps unknown keys and does not coerce",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "settings": { "goal": { "target": "abc", "pagesTarget": 12000, "somethingNew": true, "nested": { "a": 1 } } }
+        "settings": {
+          "goal": {
+            "target": "abc",
+            "pagesTarget": 12000,
+            "somethingNew": true,
+            "nested": {
+              "a": 1
+            }
+          }
+        }
       }
     },
     {
       "name": "goal absent leaves defaults",
-      "input": { "updatedAt": "2026-03-01T00:00:00.000Z", "settings": {} }
+      "input": {
+        "updatedAt": "2026-03-01T00:00:00.000Z",
+        "settings": {}
+      }
     },
     {
       "name": "shelfOrder stringifies members",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "shelfOrder": ["a", 5, true, null, 1.5]
+        "shelfOrder": [
+          "a",
+          5,
+          true,
+          null,
+          1.5
+        ]
       }
     },
     {
       "name": "fully specified book round-trips unchanged",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b1",
-          "title": "The Name of the Wind",
-          "author": "Patrick Rothfuss",
-          "totalPages": 662,
-          "coverUrl": "https://covers.openlibrary.org/b/id/8231856-L.jpg",
-          "isbn": "9780756404741",
-          "review": "Kvothe's voice pulls you in.",
-          "description": "A story about a story.",
-          "tags": ["Fantasy", "Adventure"],
-          "collections": ["Favourites"],
-          "format": "ebook",
-          "seriesName": "The Kingkiller Chronicle",
-          "seriesNumber": 1,
-          "publishedYear": 2007,
-          "quotes": [{ "id": "q1", "text": "It was night again.", "page": 1, "at": "2026-02-01T10:00:00.000Z" }],
-          "readCount": 2,
-          "finishHistory": [{ "date": "2025-01-01T00:00:00.000Z", "rating": 5 }],
-          "journal": [{ "id": "j1", "date": "2026-02-02T10:00:00.000Z", "page": 100, "text": "Slow start." }],
-          "characters": [{ "id": "c1", "name": "Kvothe", "desc": "Narrator" }],
-          "vocab": [{ "id": "v1", "word": "alar", "def": "Riding the lightning", "page": 300 }],
-          "bookmark": { "page": 412, "note": "Stopped here", "date": "2026-02-03T10:00:00.000Z" },
-          "dnfReason": "",
-          "pickReason": "Recommended",
-          "expectation": 4,
-          "loanDue": "2026-04-01",
-          "owned": true,
-          "location": "Shelf B",
-          "coverTriedAt": "2026-01-01T00:00:00.000Z",
-          "lentTo": "Sam",
-          "lentAt": "2026-02-10T00:00:00.000Z",
-          "status": "reading",
-          "rating": 4.5,
-          "startedAt": "2026-01-15T00:00:00.000Z",
-          "finishedAt": null,
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "logs": [{ "id": "l1", "date": "2026-01-16T21:30:00.000Z", "pages": 40, "minutes": 35, "mood": "🙂", "note": "Great opening." }]
-        }]
+        "books": [
+          {
+            "id": "b1",
+            "title": "The Name of the Wind",
+            "author": "Patrick Rothfuss",
+            "totalPages": 662,
+            "coverUrl": "https://covers.openlibrary.org/b/id/8231856-L.jpg",
+            "isbn": "9780756404741",
+            "review": "Kvothe's voice pulls you in.",
+            "description": "A story about a story.",
+            "tags": [
+              "Fantasy",
+              "Adventure"
+            ],
+            "collections": [
+              "Favourites"
+            ],
+            "format": "ebook",
+            "seriesName": "The Kingkiller Chronicle",
+            "seriesNumber": 1,
+            "publishedYear": 2007,
+            "quotes": [
+              {
+                "id": "q1",
+                "text": "It was night again.",
+                "page": 1,
+                "at": "2026-02-01T10:00:00.000Z"
+              }
+            ],
+            "readCount": 2,
+            "finishHistory": [
+              {
+                "date": "2025-01-01T00:00:00.000Z",
+                "rating": 5
+              }
+            ],
+            "journal": [
+              {
+                "id": "j1",
+                "date": "2026-02-02T10:00:00.000Z",
+                "page": 100,
+                "text": "Slow start."
+              }
+            ],
+            "characters": [
+              {
+                "id": "c1",
+                "name": "Kvothe",
+                "desc": "Narrator"
+              }
+            ],
+            "vocab": [
+              {
+                "id": "v1",
+                "word": "alar",
+                "def": "Riding the lightning",
+                "page": 300
+              }
+            ],
+            "bookmark": {
+              "page": 412,
+              "note": "Stopped here",
+              "date": "2026-02-03T10:00:00.000Z"
+            },
+            "dnfReason": "",
+            "pickReason": "Recommended",
+            "expectation": 4,
+            "loanDue": "2026-04-01",
+            "owned": true,
+            "location": "Shelf B",
+            "coverTriedAt": "2026-01-01T00:00:00.000Z",
+            "lentTo": "Sam",
+            "lentAt": "2026-02-10T00:00:00.000Z",
+            "status": "reading",
+            "rating": 4.5,
+            "startedAt": "2026-01-15T00:00:00.000Z",
+            "finishedAt": null,
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-16T21:30:00.000Z",
+                "pages": 40,
+                "minutes": 35,
+                "mood": "🙂",
+                "note": "Great opening."
+              }
+            ]
+          }
+        ]
       }
     },
     {
       "name": "sparse book gets every default",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{ "id": "b2", "addedAt": "2026-01-10T00:00:00.000Z" }]
+        "books": [
+          {
+            "id": "b2",
+            "addedAt": "2026-01-10T00:00:00.000Z"
+          }
+        ]
       }
     },
     {
       "name": "zero is not the same absence everywhere",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b3",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "totalPages": 0,
-          "readCount": 0,
-          "rating": 0,
-          "publishedYear": 0,
-          "expectation": 0,
-          "seriesNumber": 0,
-          "quotes": [{ "id": "q0", "page": 0 }],
-          "journal": [{ "id": "j0", "date": "2026-01-11T00:00:00.000Z", "page": 0 }],
-          "vocab": [{ "id": "v0", "page": 0 }],
-          "logs": [{ "id": "l0", "date": "2026-01-11T00:00:00.000Z", "pages": 0, "minutes": 0 }]
-        }]
+        "books": [
+          {
+            "id": "b3",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "totalPages": 0,
+            "readCount": 0,
+            "rating": 0,
+            "publishedYear": 0,
+            "expectation": 0,
+            "seriesNumber": 0,
+            "quotes": [
+              {
+                "id": "q0",
+                "page": 0
+              }
+            ],
+            "journal": [
+              {
+                "id": "j0",
+                "date": "2026-01-11T00:00:00.000Z",
+                "page": 0
+              }
+            ],
+            "vocab": [
+              {
+                "id": "v0",
+                "page": 0
+              }
+            ],
+            "logs": [
+              {
+                "id": "l0",
+                "date": "2026-01-11T00:00:00.000Z",
+                "pages": 0,
+                "minutes": 0
+              }
+            ]
+          }
+        ]
       }
     },
     {
       "name": "empty string pages differ between quotes and journal/vocab",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b4",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "quotes": [{ "id": "q1", "page": "" }],
-          "journal": [{ "id": "j1", "date": "2026-01-11T00:00:00.000Z", "page": "" }],
-          "vocab": [{ "id": "v1", "page": "" }],
-          "seriesNumber": ""
-        }]
+        "books": [
+          {
+            "id": "b4",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "quotes": [
+              {
+                "id": "q1",
+                "page": ""
+              }
+            ],
+            "journal": [
+              {
+                "id": "j1",
+                "date": "2026-01-11T00:00:00.000Z",
+                "page": ""
+              }
+            ],
+            "vocab": [
+              {
+                "id": "v1",
+                "page": ""
+              }
+            ],
+            "seriesNumber": ""
+          }
+        ]
       }
     },
     {
       "name": "garbage numbers coerce the JavaScript way",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b5",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "totalPages": "not a number",
-          "readCount": "12abc",
-          "rating": "4.5",
-          "publishedYear": "1984",
-          "seriesNumber": "nope",
-          "expectation": "3",
-          "logs": [{ "id": "l1", "date": "2026-01-11T00:00:00.000Z", "pages": "17", "minutes": "x" }]
-        }]
+        "books": [
+          {
+            "id": "b5",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "totalPages": "not a number",
+            "readCount": "12abc",
+            "rating": "4.5",
+            "publishedYear": "1984",
+            "seriesNumber": "nope",
+            "expectation": "3",
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-11T00:00:00.000Z",
+                "pages": "17",
+                "minutes": "x"
+              }
+            ]
+          }
+        ]
       }
     },
     {
       "name": "numeric strings with whitespace and signs",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b6",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "totalPages": "  350  ",
-          "publishedYear": "  1984  ",
-          "seriesNumber": "-2",
-          "logs": [{ "id": "l1", "date": "2026-01-11T00:00:00.000Z", "pages": "1e3", "minutes": "+45" }]
-        }]
+        "books": [
+          {
+            "id": "b6",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "totalPages": "  350  ",
+            "publishedYear": "  1984  ",
+            "seriesNumber": "-2",
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-11T00:00:00.000Z",
+                "pages": "1e3",
+                "minutes": "+45"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -165,9 +304,24 @@
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
         "books": [
-          { "id": "b7", "addedAt": "2026-01-10T00:00:00.000Z", "status": "sideways", "format": "papyrus" },
-          { "id": "b8", "addedAt": "2026-01-10T00:00:00.000Z", "status": 5, "format": null },
-          { "id": "b9", "addedAt": "2026-01-10T00:00:00.000Z", "status": "dnf", "format": "audio" }
+          {
+            "id": "b7",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "status": "sideways",
+            "format": "papyrus"
+          },
+          {
+            "id": "b8",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "status": 5,
+            "format": null
+          },
+          {
+            "id": "b9",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "status": "dnf",
+            "format": "audio"
+          }
         ]
       }
     },
@@ -175,35 +329,74 @@
       "name": "unknown book fields are dropped by the rebuild whitelist",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b10",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "somethingFromTheFuture": "keep me?",
-          "nested": { "a": [1, 2, 3] }
-        }]
+        "books": [
+          {
+            "id": "b10",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "somethingFromTheFuture": "keep me?",
+            "nested": {
+              "a": [
+                1,
+                2,
+                3
+              ]
+            }
+          }
+        ]
       }
     },
     {
       "name": "junk Goodreads shelves are stripped from tags but not collections",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b11",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "tags": ["to-read", "Currently-Reading", "READ", "dnf", "abandoned", "why-did-i-read-this", "series: Discworld", "serie-Foo", "  Fantasy  ", "", "Sci-Fi"],
-          "collections": ["to-read", "  Favourites  ", ""]
-        }]
+        "books": [
+          {
+            "id": "b11",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "tags": [
+              "to-read",
+              "Currently-Reading",
+              "READ",
+              "dnf",
+              "abandoned",
+              "why-did-i-read-this",
+              "series: Discworld",
+              "serie-Foo",
+              "  Fantasy  ",
+              "",
+              "Sci-Fi"
+            ],
+            "collections": [
+              "to-read",
+              "  Favourites  ",
+              ""
+            ]
+          }
+        ]
       }
     },
     {
       "name": "non-string tags are stringified before filtering",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b12",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "tags": [5, true, null, ["a"], { "x": 1 }, "  Horror "]
-        }]
+        "books": [
+          {
+            "id": "b12",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "tags": [
+              5,
+              true,
+              null,
+              [
+                "a"
+              ],
+              {
+                "x": 1
+              },
+              "  Horror "
+            ]
+          }
+        ]
       }
     },
     {
@@ -211,10 +404,26 @@
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
         "books": [
-          { "id": "b13", "addedAt": "2026-01-10T00:00:00.000Z", "owned": "yes" },
-          { "id": "b14", "addedAt": "2026-01-10T00:00:00.000Z", "owned": 0 },
-          { "id": "b15", "addedAt": "2026-01-10T00:00:00.000Z", "owned": "" },
-          { "id": "b16", "addedAt": "2026-01-10T00:00:00.000Z", "owned": [] }
+          {
+            "id": "b13",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "owned": "yes"
+          },
+          {
+            "id": "b14",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "owned": 0
+          },
+          {
+            "id": "b15",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "owned": ""
+          },
+          {
+            "id": "b16",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "owned": []
+          }
         ]
       }
     },
@@ -222,17 +431,27 @@
       "name": "finishHistory accepts bare date strings and objects",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b17",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "finishHistory": [
-            "2024-01-01T00:00:00.000Z",
-            { "date": "2025-01-01T00:00:00.000Z", "rating": 4 },
-            { "date": "2025-06-01T00:00:00.000Z", "rating": 0 },
-            { "rating": 3 },
-            {}
-          ]
-        }]
+        "books": [
+          {
+            "id": "b17",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "finishHistory": [
+              "2024-01-01T00:00:00.000Z",
+              {
+                "date": "2025-01-01T00:00:00.000Z",
+                "rating": 4
+              },
+              {
+                "date": "2025-06-01T00:00:00.000Z",
+                "rating": 0
+              },
+              {
+                "rating": 3
+              },
+              {}
+            ]
+          }
+        ]
       }
     },
     {
@@ -240,12 +459,46 @@
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
         "books": [
-          { "id": "b18", "addedAt": "2026-01-10T00:00:00.000Z", "bookmark": {} },
-          { "id": "b19", "addedAt": "2026-01-10T00:00:00.000Z", "bookmark": { "note": "here" } },
-          { "id": "b20", "addedAt": "2026-01-10T00:00:00.000Z", "bookmark": { "page": 0 } },
-          { "id": "b21", "addedAt": "2026-01-10T00:00:00.000Z", "bookmark": { "page": null, "note": "" } },
-          { "id": "b22", "addedAt": "2026-01-10T00:00:00.000Z", "bookmark": null },
-          { "id": "b23", "addedAt": "2026-01-10T00:00:00.000Z", "bookmark": { "page": "", "note": "x" } }
+          {
+            "id": "b18",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "bookmark": {}
+          },
+          {
+            "id": "b19",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "bookmark": {
+              "note": "here"
+            }
+          },
+          {
+            "id": "b20",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "bookmark": {
+              "page": 0
+            }
+          },
+          {
+            "id": "b21",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "bookmark": {
+              "page": null,
+              "note": ""
+            }
+          },
+          {
+            "id": "b22",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "bookmark": null
+          },
+          {
+            "id": "b23",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "bookmark": {
+              "page": "",
+              "note": "x"
+            }
+          }
         ]
       }
     },
@@ -253,14 +506,23 @@
       "name": "phantom Goodreads finish is healed",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b24",
-          "title": "Phantom",
-          "status": "finished",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "finishedAt": "2026-01-10T00:00:30.000Z",
-          "logs": [{ "id": "l1", "date": "2026-01-10T00:00:30.000Z", "pages": 300, "note": "Imported from Goodreads" }]
-        }]
+        "books": [
+          {
+            "id": "b24",
+            "title": "Phantom",
+            "status": "finished",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "finishedAt": "2026-01-10T00:00:30.000Z",
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-10T00:00:30.000Z",
+                "pages": 300,
+                "note": "Imported from Goodreads"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -274,7 +536,14 @@
             "status": "finished",
             "addedAt": "2026-01-10T00:00:00.000Z",
             "finishedAt": "2026-01-10T00:00:30.000Z",
-            "logs": [{ "id": "l1", "date": "2026-01-10T00:00:30.000Z", "pages": 300, "note": "Finished on the train" }]
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-10T00:00:30.000Z",
+                "pages": 300,
+                "note": "Finished on the train"
+              }
+            ]
           },
           {
             "id": "b26",
@@ -283,8 +552,18 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "finishedAt": "2026-01-10T00:00:30.000Z",
             "logs": [
-              { "id": "l1", "date": "2026-01-10T00:00:30.000Z", "pages": 150, "note": "Imported from Goodreads" },
-              { "id": "l2", "date": "2026-01-10T00:00:31.000Z", "pages": 150, "note": "Imported from Goodreads" }
+              {
+                "id": "l1",
+                "date": "2026-01-10T00:00:30.000Z",
+                "pages": 150,
+                "note": "Imported from Goodreads"
+              },
+              {
+                "id": "l2",
+                "date": "2026-01-10T00:00:31.000Z",
+                "pages": 150,
+                "note": "Imported from Goodreads"
+              }
             ]
           },
           {
@@ -293,7 +572,14 @@
             "status": "finished",
             "addedAt": "2026-01-10T00:00:00.000Z",
             "finishedAt": "2026-01-17T00:00:00.000Z",
-            "logs": [{ "id": "l1", "date": "2026-01-17T00:00:00.000Z", "pages": 300, "note": "Imported from Goodreads" }]
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-17T00:00:00.000Z",
+                "pages": 300,
+                "note": "Imported from Goodreads"
+              }
+            ]
           },
           {
             "id": "b28",
@@ -301,7 +587,14 @@
             "status": "reading",
             "addedAt": "2026-01-10T00:00:00.000Z",
             "finishedAt": "2026-01-10T00:00:30.000Z",
-            "logs": [{ "id": "l1", "date": "2026-01-10T00:00:30.000Z", "pages": 300, "note": "Imported from Goodreads" }]
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-10T00:00:30.000Z",
+                "pages": 300,
+                "note": "Imported from Goodreads"
+              }
+            ]
           }
         ]
       }
@@ -316,14 +609,28 @@
             "status": "finished",
             "addedAt": "2026-01-10T00:00:00.000Z",
             "finishedAt": "2026-01-10T00:01:00.000Z",
-            "logs": [{ "id": "l1", "date": "2026-01-10T00:01:00.000Z", "pages": 1, "note": "Imported from Goodreads" }]
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-10T00:01:00.000Z",
+                "pages": 1,
+                "note": "Imported from Goodreads"
+              }
+            ]
           },
           {
             "id": "b30",
             "status": "finished",
             "addedAt": "2026-01-10T00:00:00.000Z",
             "finishedAt": "2026-01-10T00:01:00.001Z",
-            "logs": [{ "id": "l1", "date": "2026-01-10T00:01:00.001Z", "pages": 1, "note": "Imported from Goodreads" }]
+            "logs": [
+              {
+                "id": "l1",
+                "date": "2026-01-10T00:01:00.001Z",
+                "pages": 1,
+                "note": "Imported from Goodreads"
+              }
+            ]
           }
         ]
       }
@@ -332,18 +639,22 @@
       "name": "arrays that should be arrays but are not",
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
-        "books": [{
-          "id": "b31",
-          "addedAt": "2026-01-10T00:00:00.000Z",
-          "tags": "Fantasy",
-          "collections": { "0": "Favourites" },
-          "quotes": null,
-          "journal": 5,
-          "characters": "none",
-          "vocab": false,
-          "logs": "many",
-          "finishHistory": {}
-        }]
+        "books": [
+          {
+            "id": "b31",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "tags": "Fantasy",
+            "collections": {
+              "0": "Favourites"
+            },
+            "quotes": null,
+            "journal": 5,
+            "characters": "none",
+            "vocab": false,
+            "logs": "many",
+            "finishHistory": {}
+          }
+        ]
       }
     },
     {
@@ -351,11 +662,51 @@
       "input": {
         "updatedAt": "2026-03-01T00:00:00.000Z",
         "books": [
-          { "id": "b32", "addedAt": "2026-01-10T00:00:00.000Z", "title": "" },
-          { "id": "b33", "addedAt": "2026-01-10T00:00:00.000Z", "title": 0 },
-          { "id": "b34", "addedAt": "2026-01-10T00:00:00.000Z", "title": false },
-          { "id": "b35", "addedAt": "2026-01-10T00:00:00.000Z", "title": "0" },
-          { "id": "b36", "addedAt": "2026-01-10T00:00:00.000Z", "title": 12 }
+          {
+            "id": "b32",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "title": ""
+          },
+          {
+            "id": "b33",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "title": 0
+          },
+          {
+            "id": "b34",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "title": false
+          },
+          {
+            "id": "b35",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "title": "0"
+          },
+          {
+            "id": "b36",
+            "addedAt": "2026-01-10T00:00:00.000Z",
+            "title": 12
+          }
+        ]
+      }
+    },
+    {
+      "name": "a lent book keeps its return date",
+      "input": {
+        "books": [
+          {
+            "id": "lent-1",
+            "title": "Lent Out",
+            "lentTo": "  Janet  ",
+            "lentAt": "2026-07-01T10:00:00.000Z",
+            "lentDue": "2026-08-30"
+          },
+          {
+            "id": "lent-2",
+            "title": "Lent, no deadline",
+            "lentTo": "Sam",
+            "lentDue": 0
+          }
         ]
       }
     }

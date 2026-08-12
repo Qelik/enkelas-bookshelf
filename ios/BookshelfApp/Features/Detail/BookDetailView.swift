@@ -279,6 +279,17 @@ struct BookDetailView: View {
                                     // long enough that a nudge is fair.
                                     .foregroundStyle(days >= 45 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                             }
+                            // The date you asked for it back, if you named one —
+                            // otherwise there's nothing to say and no reminder
+                            // coming, which the lend sheet spells out.
+                            if let due = book.lentDueDate {
+                                let overdue = book.isLentOverdue()
+                                Text(overdue
+                                     ? "Was due back \(due.formatted(.dateTime.day().month(.abbreviated)))"
+                                     : "Back by \(due.formatted(.dateTime.day().month(.abbreviated)))")
+                                    .font(.caption)
+                                    .foregroundStyle(overdue ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                            }
                         }
                     }
                 }

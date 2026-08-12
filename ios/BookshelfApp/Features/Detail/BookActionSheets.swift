@@ -181,6 +181,13 @@ struct LendView: View {
     let book: WireBook
     @State private var person = ""
     @State private var date: Date = .now
+    /// Off by default: plenty of loans are open-ended, and a deadline nobody chose
+    /// is a notification nobody asked for.
+    @State private var wantsBack = false
+    @State private var due: Date = .now
+
+    /// A month, which is what people say when they say "no rush".
+    private static let defaultLoan = 30
 
     var body: some View {
         NavigationStack {
@@ -193,10 +200,28 @@ struct LendView: View {
                     Text(book.title)
                 }
 
+                Section {
+                    Toggle("Ask for it back", isOn: $wantsBack)
+                    if wantsBack {
+                        DatePicker("By", selection: $due, in: Date()..., displayedComponents: .date)
+                    }
+                } footer: {
+                    // Say plainly what the date is for. Without one there is nothing
+                    // for a reminder to fire on, which is why lent books used to go
+                    // quiet for months.
+                    // On the day, not the day before: unlike a library book there's
+                    // no counter to get to, and that morning is when you'd actually
+                    // send the message.
+                    Text(wantsBack
+                         ? "You'll get a reminder that morning, if reminders are on in Settings."
+                         : "Without a date there's no reminder — the book just shows as lent out.")
+                }
+
                 if book.isLentOut {
                     Section {
                         Button("Mark as returned") {
                             store.markReturned(bookID: book.id)
+                            Reminders.loansChanged(state: store.state)
                             dismiss()
                         }
                     } footer: {
@@ -216,7 +241,11 @@ struct LendView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        store.lend(bookID: book.id, to: person, on: date)
+                        store.lend(
+                            bookID: book.id, to: person, on: date,
+                            due: wantsBack ? due : nil
+                        )
+                        Reminders.loansChanged(state: store.state)
                         dismiss()
                     }
                     .disabled(person.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -225,6 +254,15 @@ struct LendView: View {
             .onAppear {
                 person = book.lentTo
                 date = book.lentAt.flatMap(ISO8601.date(from:)) ?? .now
+                // Editing an existing loan keeps whatever was agreed; a new one
+                // suggests a month out, so turning the toggle on doesn't land on
+                // today.
+                if let existing = book.lentDueDate {
+                    wantsBack = true
+                    due = existing
+                } else {
+                    due = Calendar.current.date(byAdding: .day, value: Self.defaultLoan, to: .now) ?? .now
+                }
             }
         }
     }

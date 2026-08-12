@@ -192,6 +192,7 @@ public struct Normalizer: Sendable {
             coverTriedAt: JS.stringOrNil(b["coverTriedAt"]),
             lentTo: JS.stringOr(b["lentTo"], ""),
             lentAt: JS.stringOrNil(b["lentAt"]),
+            lentDue: JS.stringOr(b["lentDue"], ""),
             // An unrecognised status becomes "reading", not "want": a book already
             // on the shelf with a corrupt status is more likely in progress than
             // unstarted, and the web app has always chosen this way.
