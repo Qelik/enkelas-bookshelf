@@ -13,6 +13,11 @@ struct EPUBShelfView: View {
     @State private var importError: String?
     @State private var linking: EPUBRecord?
     @State private var path = NavigationPath()
+    /// The sitting the reader just finished, reported on its way out.
+    ///
+    /// Held here rather than in `ReaderView` because the reader is gone by the time
+    /// it has something to say — see the note on `ReaderView.finishedSession`.
+    @State private var finishedSession: ReaderView.SessionSummary?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -53,7 +58,9 @@ struct EPUBShelfView: View {
             // reads as an unlabelled list of books with no clue which tab it is.
             // Inline is also what every other tab does.
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { ReaderView(recordID: $0) }
+            .navigationDestination(for: String.self) {
+                ReaderView(recordID: $0, finishedSession: $finishedSession)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Add an ePub", systemImage: "plus") { importing = true }
@@ -68,6 +75,7 @@ struct EPUBShelfView: View {
             .sheet(item: $linking) { record in
                 LinkBookView(record: record)
             }
+            .sheet(item: $finishedSession) { SessionSummaryView(summary: $0) }
             .alert("Couldn't add that book", isPresented: .constant(importError != nil), presenting: importError) { _ in
                 Button("OK") { importError = nil }
             } message: { Text($0) }

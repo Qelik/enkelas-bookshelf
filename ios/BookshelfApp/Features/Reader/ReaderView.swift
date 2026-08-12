@@ -13,6 +13,15 @@ struct ReaderView: View {
 
     let recordID: String
 
+    /// Where the sitting's summary goes when the reader closes.
+    ///
+    /// Owned by `EPUBShelfView`, not by this view. `finish()` runs from
+    /// `onDisappear` — the one place every way out of the reader passes through,
+    /// including the swipe-back — and a sheet presented from a view that is already
+    /// being torn down never appears. So the summary is handed to something that
+    /// outlives the reader and presented there.
+    @Binding var finishedSession: SessionSummary?
+
     @State private var package: EPUBPackage?
     @State private var record: EPUBRecord?
     @State private var openError: String?
@@ -20,6 +29,11 @@ struct ReaderView: View {
     @State private var chapter = 0
     @State private var page = 0
     @State private var pageCount = 1
+    /// Set when a backwards turn crossed into the previous chapter: land on its
+    /// *last* page, once that chapter has laid out and there is a last page to
+    /// know. Previously this was `page = Int.max` as a sentinel, which the chrome
+    /// then rendered as `page + 1` — an arithmetic overflow, and a crash.
+    @State private var wantsLastPage = false
     @State private var settings = ReaderSettings()
 
     @State private var chrome = true
@@ -27,7 +41,6 @@ struct ReaderView: View {
     @State private var session = ReadingSession()
     /// How much of `session.activeSeconds` the ePub record has already been given.
     @State private var persistedSeconds: Double = 0
-    @State private var summary: SessionSummary?
     @State private var seekOffset: Int?
     @State private var searching = false
     @State private var chapterText: [String] = []
@@ -59,6 +72,17 @@ struct ReaderView: View {
                     pageCount: $pageCount,
                     canSaveQuote: record?.linkedBookID != nil,
                     onReady: {},
+                    onLayout: { count in
+                        if wantsLastPage {
+                            page = max(0, count - 1)
+                            wantsLastPage = false
+                        } else {
+                            // A chapter that laid out shorter than where we were —
+                            // a bigger font, say — must not leave `page` past its
+                            // end, or the progress bar reads past 100%.
+                            page = min(page, max(0, count - 1))
+                        }
+                    },
                     onTapEdge: handleTap,
                     onHighlight: highlight,
                     onSaveQuote: { saveQuote($0.text) }
@@ -87,12 +111,6 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .tabBar)
         .task { await open() }
         .onReceive(clock) { _ in session.tick() }
-        .onChange(of: pageCount) { _, count in
-            // Turning back a chapter asks for "the last page", which isn't known
-            // until that chapter has laid out. Left unclamped, the sentinel
-            // leaks into pageFraction and the saved progress goes to nonsense.
-            page = min(page, max(0, count - 1))
-        }
         .onChange(of: scenePhase) { _, phase in
             // Backgrounding is not reading, and the progress so far must survive
             // being killed while the app is away.
@@ -108,10 +126,19 @@ struct ReaderView: View {
                     package: package,
                     record: record,
                     current: chapter,
-                    onChapter: { index in chapter = index; page = 0; showingContents = false },
+                    // Every deliberate jump cancels a pending "last page" request —
+                    // it belongs to the turn that asked for it, not to wherever the
+                    // reader went instead.
+                    onChapter: { index in
+                        chapter = index
+                        page = 0
+                        wantsLastPage = false
+                        showingContents = false
+                    },
                     onJump: { ch, offset in
                         chapter = ch
                         seekOffset = offset
+                        wantsLastPage = false
                         showingContents = false
                     },
                     onRemoveBookmark: { library.removeBookmark(recordID: recordID, bookmarkID: $0); reloadRecord() },
@@ -124,6 +151,7 @@ struct ReaderView: View {
                 ReaderSearchView(package: package, cachedText: chapterText) { result in
                     chapter = result.chapter
                     seekOffset = result.offset
+                    wantsLastPage = false
                     searching = false
                 }
             }
@@ -138,7 +166,6 @@ struct ReaderView: View {
                     .transition(.opacity)
             }
         }
-        .sheet(item: $summary) { SessionSummaryView(summary: $0) }
     }
 
     // MARK: - Chrome
@@ -187,7 +214,11 @@ struct ReaderView: View {
                 ProgressView(value: bookProgress)
                     .tint(settings.ink.opacity(0.6))
                 HStack {
-                    Text("\(page + 1) / \(pageCount)")
+                    // Clamped, not trusted. `page` is a number the paginator and
+                    // three navigation paths all write to, and the cost of it being
+                    // out of range here is an arithmetic trap that kills the app
+                    // mid-read.
+                    Text("\(min(max(0, page), max(0, pageCount - 1)) + 1) / \(pageCount)")
                     Spacer()
                     if let left = timeLeft { Text(left) }
                     Spacer()
@@ -310,8 +341,11 @@ struct ReaderView: View {
             countTurn()
             chapter -= 1
             // Landing on the last page of the previous chapter is what going
-            // "back" means; page 0 would skip its whole content.
-            page = Int.max
+            // "back" means; page 0 would skip its whole content. Which page that
+            // is isn't known until the chapter lays out, so it's a request rather
+            // than a number — see `onLayout`.
+            page = 0
+            wantsLastPage = true
         } else if next >= pageCount {
             guard let package, chapter + 1 < package.spine.count else { return }
             countTurn()
@@ -418,7 +452,7 @@ struct ReaderView: View {
             )
         }
         if minutes > 0 || pagesRead > 0 {
-            summary = SessionSummary(
+            finishedSession = SessionSummary(
                 minutes: minutes,
                 pages: max(0, pagesRead),
                 progress: bookProgress,
@@ -438,8 +472,9 @@ struct SessionSummaryView: View {
             Image(systemName: "book.closed.fill")
                 .font(.largeTitle)
                 .foregroundStyle(.tint)
-            Text("\(summary.minutes) minute\(summary.minutes == 1 ? "" : "s") of reading")
+            Text(headline)
                 .font(.title3.bold())
+                .multilineTextAlignment(.center)
             Text("\(Int(summary.progress * 100))% through the book")
                 .foregroundStyle(.secondary)
             if let title = summary.linkedTitle {
@@ -452,6 +487,16 @@ struct SessionSummaryView: View {
         }
         .padding(32)
         .presentationDetents([.height(280)])
+    }
+
+    /// A sitting is worth reporting on pages *or* minutes, so the headline leads
+    /// with whichever there is. "0 minutes of reading" was the alternative, and a
+    /// few pages read in half a minute deserves better than that.
+    private var headline: String {
+        let minutes = "\(summary.minutes) minute\(summary.minutes == 1 ? "" : "s") of reading"
+        let pages = "\(summary.pages) page\(summary.pages == 1 ? "" : "s") read"
+        if summary.minutes > 0, summary.pages > 0 { return minutes + ", \(summary.pages) page\(summary.pages == 1 ? "" : "s")" }
+        return summary.minutes > 0 ? minutes : pages
     }
 }
 

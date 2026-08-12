@@ -122,6 +122,13 @@ struct ReaderWebView: UIViewRepresentable {
     /// Whether a quote has somewhere to go — see `ReaderContentWebView`.
     let canSaveQuote: Bool
     var onReady: () -> Void
+    /// The chapter has laid out and knows how many pages it has.
+    ///
+    /// Separate from the `pageCount` binding because it fires on *every* layout,
+    /// including one that happens to produce the same count as the chapter before
+    /// it — which `onChange(of: pageCount)` would miss, and which is exactly when
+    /// "take me to the last page" needs answering.
+    var onLayout: (Int) -> Void = { _ in }
     var onTapEdge: (Int) -> Void
     var onHighlight: (TextSelection) -> Void
     var onSaveQuote: (TextSelection) -> Void
@@ -243,7 +250,10 @@ struct ReaderWebView: UIViewRepresentable {
             guard let body = message.body as? [String: Any] else { return }
             switch body["type"] as? String {
             case "layout":
-                if let count = body["pages"] as? Int { parent.pageCount = max(1, count) }
+                if let count = body["pages"] as? Int {
+                    parent.pageCount = max(1, count)
+                    parent.onLayout(max(1, count))
+                }
             case "tap":
                 if let side = body["side"] as? Int { parent.onTapEdge(side) }
             case "selection":
