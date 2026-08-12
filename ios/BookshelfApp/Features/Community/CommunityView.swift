@@ -33,14 +33,18 @@ struct CommunityView: View {
                 case .clubs: ClubsListView(showingAuth: $showingAuth)
                 }
             }
-            .safeAreaInset(edge: .top) {
+            // spacing: 0 — the default leaves an unpainted gap in the safe area
+            // under the picker. See the note in ShelfView.
+            .safeAreaInset(edge: .top, spacing: 0) {
                 Picker("Section", selection: $section) {
                     ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
                 .padding(.bottom, 8)
-                .background(.bar)
+                // `.bar` is the system's material, which stays grey whatever the
+                // theme — a strip of white between the nav bar and the board.
+                .background(background)
             }
             .themedPage()
             .navigationTitle("Community")
@@ -101,7 +105,7 @@ struct CommunityView: View {
     @ViewBuilder
     private var boardList: some View {
         if community.isLoading && community.recommendations.isEmpty {
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView().themedState()
         } else if let error = community.errorMessage, community.recommendations.isEmpty {
             ContentUnavailableView {
                 Label("Couldn't load the board", systemImage: "wifi.exclamationmark")
@@ -110,6 +114,7 @@ struct CommunityView: View {
             } actions: {
                 Button("Try again") { Task { await community.loadBoard() } }
             }
+                .themedState()
         } else if visible.isEmpty {
             ContentUnavailableView {
                 Label("Nothing here yet", systemImage: "star")
@@ -123,6 +128,7 @@ struct CommunityView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+                .themedState()
         } else {
             List {
                 ForEach(visible) { rec in
@@ -150,9 +156,7 @@ struct RecommendationRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            AsyncImage(url: rec.cover_url.flatMap(URL.init(string:))) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
+            CoverImage(url: rec.cover_url.flatMap(URL.init(string:))) {
                 RoundedRectangle(cornerRadius: 4).fill(.quaternary)
             }
             .frame(width: 44, height: 66)
@@ -262,6 +266,7 @@ struct ReportView: View {
                 }
             }
             .themedPage()
+            .themedRows()
             .navigationTitle("Report")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -293,6 +298,7 @@ struct BlockedListView: View {
         List {
             if community.blockedUIDs.isEmpty {
                 ContentUnavailableView("Nobody blocked", systemImage: "hand.raised")
+                    .themedState()
             } else {
                 Section {
                     ForEach(Array(community.blockedUIDs).sorted(), id: \.self) { uid in
@@ -385,6 +391,7 @@ struct RecommendView: View {
                 }
             }
             .themedPage()
+            .themedRows()
             .navigationTitle("Recommend")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)

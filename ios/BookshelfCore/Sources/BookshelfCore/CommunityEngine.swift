@@ -23,9 +23,29 @@ public final class CommunityEngine {
     private let client: SyncClient
     private let sync: SyncEngine
 
+    /// The last board this device saw.
+    ///
+    /// The board is public, re-fetchable and slow to change, and it was showing a
+    /// spinner on every cold launch while a network round-trip finished. Cached, it
+    /// is on screen in the first frame and refreshed behind the reader.
+    ///
+    /// Scoped to the account: `mine` and `myVote` are per-reader, so replaying one
+    /// person's cached board for another would show the wrong thumbs.
+    private struct CachedBoard: Codable, Sendable {
+        var uid: String?
+        var recs: [Recommendation]
+        var capped: Bool
+    }
+
+    private let boardCache = DiskCache<CachedBoard>(filename: "community-board.json")
+
     public init(client: SyncClient, sync: SyncEngine) {
         self.client = client
         self.sync = sync
+        if let cached = boardCache.read()?.value, cached.uid == sync.account?.id {
+            recommendations = cached.recs
+            boardIsCapped = cached.capped
+        }
     }
 
     public var isSignedIn: Bool { sync.isSignedIn }
@@ -49,6 +69,11 @@ public final class CommunityEngine {
             }
             boardIsCapped = result.capped
             if isSignedIn { await loadBlocks() }
+            // Cached after the block filter, so the next launch doesn't flash
+            // something the reader has already blocked.
+            boardCache.write(CachedBoard(
+                uid: sync.account?.id, recs: recommendations, capped: boardIsCapped
+            ))
         } catch {
             record(error)
         }

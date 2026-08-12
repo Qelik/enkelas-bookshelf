@@ -155,10 +155,8 @@ struct BookEditorView: View {
 
     private func candidateRow(_ doc: OpenLibrary.Doc) -> some View {
         HStack(spacing: 12) {
-            AsyncImage(url: doc.coverURL) { $0.resizable().scaledToFill() } placeholder: {
-                Color.secondary.opacity(0.15)
-            }
-            .frame(width: 34, height: 51)
+            CoverImage(url: doc.coverURL) { Color.secondary.opacity(0.15) }
+                .frame(width: 34, height: 51)
             .clipShape(.rect(cornerRadius: 3))
 
             VStack(alignment: .leading, spacing: 2) {

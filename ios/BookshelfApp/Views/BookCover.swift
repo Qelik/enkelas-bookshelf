@@ -15,19 +15,11 @@ struct BookCover: View {
 
     var body: some View {
         Group {
-            if let url = URL(string: book.coverUrl), !book.coverUrl.isEmpty {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .failure:
-                        placeholder
-                    case .empty:
-                        placeholder.overlay(ProgressView().controlSize(.small))
-                    @unknown default:
-                        placeholder
-                    }
-                }
+            if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
+                // No spinner over the placeholder: the lettered gradient already
+                // says which book this is, and a spinner that appears for two
+                // frames on every scroll is worse than nothing.
+                CoverImage(url: url) { placeholder }
             } else {
                 placeholder
             }

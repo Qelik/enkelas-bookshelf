@@ -83,9 +83,17 @@ struct BookshelfApp: App {
                     // before anything on the network has a chance to be slow.
                     router.followPending()
                     themes.accountChanged(to: sync.account?.id)
+                    // Before the network: the Progress screen's statistics walk the
+                    // whole shelf, so computing them now — while the reader is still
+                    // looking at Reading — is the difference between that tab
+                    // opening full and opening empty.
+                    await DigestCache.shared.warm(from: store.state)
                     // Catch up with whatever happened on other devices while
                     // this one was closed.
                     await sync.pullIfStale()
+                    // A pull can replace the whole shelf, which invalidates the
+                    // digest computed a moment ago. Free when nothing changed.
+                    await DigestCache.shared.warm(from: store.state)
                     // Then republish: a pull can change everything the widgets
                     // show and everything Spotlight has indexed without a single
                     // local commit having happened.
@@ -104,6 +112,7 @@ struct BookshelfApp: App {
                 themes.accountChanged(to: sync.account?.id)
                 Task {
                     await sync.pullIfStale()
+                    await DigestCache.shared.warm(from: store.state)
                     widgets.publishNow()
                     await SpotlightIndex.rebuild(from: store.state)
                     // Due dates change on other devices too, and a reminder for

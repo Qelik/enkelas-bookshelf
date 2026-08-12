@@ -276,14 +276,10 @@ struct CatalogueCover: View {
     let url: URL?
 
     var body: some View {
-        AsyncImage(url: url) { phase in
-            if case .success(let image) = phase {
-                image.resizable().scaledToFill()
-            } else {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(.quaternary)
-                    .overlay { Image(systemName: "book.closed").foregroundStyle(.secondary) }
-            }
+        CoverImage(url: url) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(.quaternary)
+                .overlay { Image(systemName: "book.closed").foregroundStyle(.secondary) }
         }
         .frame(width: 46, height: 69)
         .clipShape(.rect(cornerRadius: 3))

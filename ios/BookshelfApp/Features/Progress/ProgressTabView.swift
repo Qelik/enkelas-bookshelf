@@ -21,7 +21,15 @@ struct ProgressTabView: View {
     /// Each one walks every book and every session log, a body re-runs on any
     /// observed change, and there were eight calls per pass — ~200 ms on a
     /// 12,000-session shelf, on the main thread, every redraw.
-    @State private var digest: ProgressDigest = .placeholder
+    ///
+    /// Seeded from `DigestCache`, which is usually warm by the time this screen is
+    /// opened — so it draws real numbers in the first frame instead of a screenful
+    /// of zeros that corrects itself a moment later.
+    @State private var digest: ProgressDigest
+
+    init() {
+        _digest = State(initialValue: DigestCache.shared.latest ?? .placeholder)
+    }
 
     var body: some View {
         NavigationStack {
@@ -72,9 +80,13 @@ struct ProgressTabView: View {
     /// finished digest comes back to the main actor.
     private func refreshDigest() async {
         let state = store.state
-        let fresh = await Task.detached(priority: .userInitiated) {
-            ProgressDigest.make(from: state)
-        }.value
+        // A hit is free and exact — `updatedAt` moves on every commit, so a digest
+        // built from this shelf cannot be out of date.
+        if let hit = DigestCache.shared.digest(for: state.updatedAt) {
+            digest = hit
+            return
+        }
+        let fresh = await DigestCache.shared.make(from: state)
         guard !Task.isCancelled else { return }
         digest = fresh
     }
@@ -422,6 +434,8 @@ struct BadgesView: View {
                 }
             }
         }
+        .themedPage()
+        .themedRows()
         .navigationTitle("Badges")
         .toolbarBackground(background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -469,6 +483,8 @@ struct GoalEditorView: View {
                     Text("Optional. Leave blank to hide them.")
                 }
             }
+            .themedPage()
+            .themedRows()
             .navigationTitle("Reading goal")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
