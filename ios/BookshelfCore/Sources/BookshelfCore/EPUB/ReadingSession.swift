@@ -30,6 +30,12 @@ public struct ReadingSession: Sendable, Equatable {
 
     public private(set) var activeSeconds: Double = 0
     public private(set) var charactersRead: Double = 0
+    /// Pages turned this sitting.
+    ///
+    /// Counted rather than derived from `charactersRead`: characters-per-page is
+    /// whatever the *current* chapter happens to average, so dividing by it turns
+    /// a sitting that crossed a chapter boundary into a made-up number.
+    public private(set) var pagesTurned = 0
     private var lastActivity: Date?
     private var lastTick: Date?
 
@@ -46,6 +52,7 @@ public struct ReadingSession: Sendable, Equatable {
             // Long enough away that this is a fresh sitting.
             activeSeconds = 0
             charactersRead = 0
+            pagesTurned = 0
             lastTick = now
             return true
         }
@@ -67,9 +74,13 @@ public struct ReadingSession: Sendable, Equatable {
     }
 
     /// Called when a page is turned, with the characters on the page just read.
+    ///
+    /// Only for a turn that actually happened — tapping forward on the last page of
+    /// a book is activity, not a page read.
     public mutating func countPage(characters: Int, at now: Date = Date()) {
         markActivity(at: now)
         charactersRead += Double(max(0, characters))
+        pagesTurned += 1
     }
 
     /// Stop counting — the reader was closed or backgrounded.

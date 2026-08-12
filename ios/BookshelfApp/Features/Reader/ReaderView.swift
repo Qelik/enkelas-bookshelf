@@ -25,6 +25,8 @@ struct ReaderView: View {
     @State private var chrome = true
     @State private var showingContents = false
     @State private var session = ReadingSession()
+    /// How much of `session.activeSeconds` the ePub record has already been given.
+    @State private var persistedSeconds: Double = 0
     @State private var summary: SessionSummary?
     @State private var seekOffset: Int?
     @State private var searching = false
@@ -70,6 +72,7 @@ struct ReaderView: View {
                 } actions: {
                     Button("Back") { dismiss() }
                 }
+                    .themedState()
             } else {
                 ProgressView()
             }
@@ -296,27 +299,34 @@ struct ReaderView: View {
     }
 
     private func turn(_ direction: Int) {
-        session.countPage(characters: charactersPerPage)
+        // A tap is activity whether or not there's a page to go to, so the clock
+        // keeps running at the end of a book. Counting the page, though, waits for
+        // the turn to actually happen — tapping forward on the last page is not a
+        // page read, and the same goes for the haptic.
+        session.markActivity()
         let next = page + direction
-        // Before the early returns: the feedback belongs to a page that turned,
-        // and buzzing at the end of the last chapter says the opposite.
         if next < 0 {
             guard chapter > 0 else { return }
-            Haptics.pageTurn()
+            countTurn()
             chapter -= 1
             // Landing on the last page of the previous chapter is what going
             // "back" means; page 0 would skip its whole content.
             page = Int.max
         } else if next >= pageCount {
             guard let package, chapter + 1 < package.spine.count else { return }
-            Haptics.pageTurn()
+            countTurn()
             chapter += 1
             page = 0
         } else {
-            Haptics.pageTurn()
+            countTurn()
             page = next
         }
         if chrome { withAnimation(.easeInOut(duration: 0.15)) { chrome = false } }
+    }
+
+    private func countTurn() {
+        Haptics.pageTurn()
+        session.countPage(characters: charactersPerPage)
     }
 
     // MARK: - Lifecycle
@@ -368,7 +378,18 @@ struct ReaderView: View {
         record.chapterProgress = pageFraction
         record.progress = bookProgress
         record.lastOpenedAt = ISO8601.string(from: Date())
-        record.activeSeconds += session.activeSeconds
+        // Only the seconds this record hasn't been told about yet. `persist()` runs
+        // on every backgrounding as well as on close, and adding the running total
+        // each time counted the same sitting two or three times over — which is
+        // what made "N min read" on the reader shelf drift upwards.
+        //
+        // A sitting that reset (a 15-minute lull) leaves the session's total lower
+        // than what's already recorded; then all of it is new.
+        let unrecorded = session.activeSeconds >= persistedSeconds
+            ? session.activeSeconds - persistedSeconds
+            : session.activeSeconds
+        record.activeSeconds += unrecorded
+        persistedSeconds = session.activeSeconds
         record.charactersPerMinute = ReadingSession.blend(
             stored: record.charactersPerMinute,
             measured: session.measuredCharactersPerMinute
@@ -380,20 +401,23 @@ struct ReaderView: View {
     private func finish() {
         session.pause()
         let minutes = Int(session.minutes.rounded())
-        let pagesRead = Int(session.charactersRead / Double(max(1, charactersPerPage)))
+        let pagesRead = session.pagesTurned
         persist()
 
         // A session in the reader is a session on the shelf — that is the whole
         // point of linking a book, and the reason the reader isn't a separate app.
-        if let record, let bookID = record.linkedBookID, minutes > 0 {
-            store.logSession(
+        //
+        // Logged on pages *or* minutes: a few pages read in under half a minute is
+        // still a sitting, and it used to vanish.
+        if let record, let bookID = record.linkedBookID, minutes > 0 || pagesRead > 0 {
+            store.logReaderSession(
                 bookID: bookID,
-                currentPage: 0,          // page numbers don't map onto an ePub
+                pages: Double(pagesRead),
                 minutes: Double(minutes),
                 note: "📖 eReader session"
             )
         }
-        if minutes > 0 {
+        if minutes > 0 || pagesRead > 0 {
             summary = SessionSummary(
                 minutes: minutes,
                 pages: max(0, pagesRead),

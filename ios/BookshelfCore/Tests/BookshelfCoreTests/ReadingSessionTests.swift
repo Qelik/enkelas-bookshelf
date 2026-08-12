@@ -57,6 +57,28 @@ struct ReadingSessionTests {
         #expect(session.charactersRead == 1000)
     }
 
+    @Test("pages turned are counted, not inferred from characters")
+    func countsPagesTurned() {
+        var session = ReadingSession()
+        session.markActivity(at: Self.t0)
+        // Three pages, and one of them in a much shorter chapter — dividing total
+        // characters by the current chapter's average would not give 3.
+        session.countPage(characters: 1800, at: Self.t0.addingTimeInterval(60))
+        session.countPage(characters: 1800, at: Self.t0.addingTimeInterval(120))
+        session.countPage(characters: 300, at: Self.t0.addingTimeInterval(150))
+        #expect(session.pagesTurned == 3)
+    }
+
+    @Test("yesterday's pages don't come along to today's sitting")
+    func pagesResetWithSession() {
+        var session = ReadingSession()
+        session.markActivity(at: Self.t0)
+        session.countPage(characters: 1500, at: Self.t0)
+        #expect(session.pagesTurned == 1)
+        session.markActivity(at: Self.t0.addingTimeInterval(60 * 60 * 12))
+        #expect(session.pagesTurned == 0)
+    }
+
     @Test("a speed is only learned once there's enough evidence")
     func speedNeedsEvidence() {
         var session = ReadingSession()

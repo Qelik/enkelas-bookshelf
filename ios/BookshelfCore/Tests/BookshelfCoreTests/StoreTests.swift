@@ -71,6 +71,29 @@ struct StoreTests {
         #expect(store.state.books[0].startedAt != nil)
     }
 
+    @Test("a reader session logs the pages it turned, not a page number")
+    func readerSessionLogsItsOwnPages() {
+        // An ePub has no page numbers to be "on" — it repaginates with the font
+        // size — so the reader reports a count. Sending that through the
+        // page-number path turned every eReader sitting into zero pages.
+        let store = Self.shelf([Fixture.book(logs: [Fixture.log("l1", pages: 40, on: "2026-01-01T10:00:00.000Z")])])
+        store.logReaderSession(bookID: "b1", pages: 12, minutes: 25, note: "📖 eReader session")
+
+        let b = store.state.books[0]
+        #expect(b.logs.count == 2)
+        #expect(b.logs[1].pages == 12, "12 pages turned, not 12 minus what was already read")
+        #expect(b.logs[1].minutes == 25)
+        #expect(b.pagesRead == 52)
+    }
+
+    @Test("a reader session starts a want-to-read book too")
+    func readerSessionStartsAWantedBook() {
+        let store = Self.shelf([Fixture.book(status: .want)])
+        store.logReaderSession(bookID: "b1", pages: 3, minutes: 4)
+        #expect(store.state.books[0].status == .reading)
+        #expect(store.state.books[0].startedAt != nil)
+    }
+
     // MARK: - Status
 
     @Test("re-shelving a book does not rewrite when it was started")

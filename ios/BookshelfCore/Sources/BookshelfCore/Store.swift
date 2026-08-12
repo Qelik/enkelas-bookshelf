@@ -114,19 +114,29 @@ public final class BookshelfStore {
         commit { state in
             guard let i = state.books.firstIndex(where: { $0.id == bookID }) else { return }
             let already = state.books[i].pagesRead
-            let delta = max(0, currentPage - already)
-            state.books[i].logs.append(WireReadingLog(
-                id: UUID().uuidString.lowercased(),
-                date: ISO8601.string(from: date),
-                pages: delta,
-                minutes: minutes,
-                mood: mood,
-                note: note
-            ))
-            if state.books[i].status == .want {
-                state.books[i].status = .reading
-                if state.books[i].startedAt == nil { state.books[i].startedAt = ISO8601.string(from: date) }
-            }
+            state.books[i].appendSession(
+                pages: max(0, currentPage - already),
+                minutes: minutes, mood: mood, note: note, at: date
+            )
+        }
+    }
+
+    /// Log a session whose page count is *already* a delta.
+    ///
+    /// The eReader knows how many pages it turned, not what page of a paper
+    /// edition the reader is on — an ePub repaginates with the font size. Routing
+    /// it through `logSession` meant passing 0 as "the current page", which the
+    /// delta arithmetic dutifully turned into a session of no pages at all.
+    public func logReaderSession(
+        bookID: String,
+        pages: Double,
+        minutes: Double,
+        note: String = "",
+        at date: Date = Date()
+    ) {
+        commit { state in
+            guard let i = state.books.firstIndex(where: { $0.id == bookID }) else { return }
+            state.books[i].appendSession(pages: max(0, pages), minutes: minutes, note: note, at: date)
         }
     }
 
@@ -245,6 +255,35 @@ public struct ShelfStorage: Sendable {
         var value: Data? {
             get { lock.lock(); defer { lock.unlock() }; return stored }
             set { lock.lock(); defer { lock.unlock() }; stored = newValue }
+        }
+    }
+}
+
+private extension WireBook {
+
+    /// Append a session and, if it's the first, take the book off the to-read pile.
+    ///
+    /// Shared by both logging paths. Only the page number differs between them, and
+    /// letting the rest drift is how one entry point ends up not starting a book
+    /// that the other one does.
+    mutating func appendSession(
+        pages: Double,
+        minutes: Double,
+        mood: String = "",
+        note: String,
+        at date: Date
+    ) {
+        logs.append(WireReadingLog(
+            id: UUID().uuidString.lowercased(),
+            date: ISO8601.string(from: date),
+            pages: pages,
+            minutes: minutes,
+            mood: mood,
+            note: note
+        ))
+        if status == .want {
+            status = .reading
+            if startedAt == nil { startedAt = ISO8601.string(from: date) }
         }
     }
 }
