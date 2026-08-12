@@ -34,14 +34,18 @@ struct ReaderDrawer: View {
                 case .highlights: highlightsList
                 }
             }
-            .safeAreaInset(edge: .top) {
+            // spacing: 0 — see the note in ShelfView; the default leaves a gap in
+            // the safe area that no background covers.
+            .safeAreaInset(edge: .top, spacing: 0) {
                 Picker("Section", selection: $tab) {
                     ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
                 .padding(.bottom, 8)
-                .background(.bar)
+                // Not `.bar`: the system material ignores the theme and leaves a
+                // strip of white under the drawer's title.
+                .background(background)
             }
             .themedPage()
             .navigationTitle(record.title)
@@ -101,6 +105,7 @@ struct ReaderDrawer: View {
             } description: {
                 Text("Tap the ribbon while reading to mark where you are.")
             }
+                .themedState()
         } else {
             List {
                 ForEach(record.bookmarks) { bookmark in
@@ -147,6 +152,7 @@ struct ReaderDrawer: View {
             } description: {
                 Text("Select any passage while reading to highlight it.")
             }
+                .themedState()
         } else {
             List {
                 ForEach(record.highlights) { highlight in
@@ -200,8 +206,10 @@ struct ReaderSearchView: View {
                 if !searched {
                     ContentUnavailableView("Search this book", systemImage: "magnifyingglass",
                                            description: Text("Find any phrase across every chapter."))
+                        .themedState()
                 } else if results.isEmpty {
                     ContentUnavailableView.search(text: query)
+                        .themedState()
                 } else {
                     List {
                         ForEach(results) { result in

@@ -26,6 +26,7 @@ struct EPUBShelfView: View {
                         Button("Add an ePub…") { importing = true }
                             .buttonStyle(.borderedProminent)
                     }
+                        .themedState()
                 } else {
                     List {
                         ForEach(library.books) { record in
@@ -48,6 +49,10 @@ struct EPUBShelfView: View {
             .navigationTitle("Reader")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            // A large title vanishes entirely once the list has rows — the shelf
+            // reads as an unlabelled list of books with no clue which tab it is.
+            // Inline is also what every other tab does.
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { ReaderView(recordID: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

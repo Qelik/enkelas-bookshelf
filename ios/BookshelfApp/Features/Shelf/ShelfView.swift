@@ -1,7 +1,7 @@
 import BookshelfCore
 import SwiftUI
 
-/// Want to Read / Library / Owned.
+/// Explore / Want to Read / Library.
 ///
 /// One screen with a segmented control rather than three tabs: the web app files
 /// these as sub-navigation under a single "Shelf" group, and they share a search
@@ -13,25 +13,20 @@ struct ShelfView: View {
     var onAdd: () -> Void
 
     enum Section: String, CaseIterable, Identifiable {
-        /// Shelf mode only. None of the other three contains `.reading`, so
-        /// without this the book in your hand isn't on your bookshelf — which is
-        /// the one place it obviously belongs.
-        case all = "All"
+        /// The catalogue, not the shelf. First because finding a book comes before
+        /// queueing it, and because it's the answer to "what next" — which is what
+        /// somebody opening the Shelf tab with an empty list actually wants.
+        case explore = "Explore"
         case want = "Want to Read"
         case library = "Library"
-        case owned = "Owned"
         var id: String { rawValue }
-
-        /// The three that make sense as a *list*; the shelf adds "All".
-        static var listCases: [Section] { [.want, .library, .owned] }
 
         /// Where a book scanned from this shelf should land.
         var status: BookStatus {
             switch self {
-            case .all, .want: .want
-            // Library and Owned are both places finished books live; a book
-            // you just bought and scanned is one you mean to read.
-            case .library, .owned: .want
+            // A book you're holding the barcode of is one you mean to read, wherever
+            // you happened to be looking when you scanned it.
+            case .explore, .want, .library: .want
             }
         }
     }
@@ -45,10 +40,25 @@ struct ShelfView: View {
         var id: String { rawValue }
     }
 
+    /// Owned used to be a shelf of its own, which split the library in two and
+    /// meant a finished book you own appeared on neither list in full. It's a
+    /// property of a book, so it belongs here with the other filters.
+    enum Ownership: String, CaseIterable, Identifiable {
+        case any = "All books"
+        case owned = "Owned"
+        case unowned = "Not owned"
+        var id: String { rawValue }
+    }
+
     @State private var section: Section = .want
     @State private var query = ""
     @State private var sort: Sort = .recent
     @State private var tag: String?
+    @State private var ownership: Ownership = .any
+    /// Narrows to books currently in someone else's hands. A toggle rather than a
+    /// third state on `Ownership`: a book you lent out is one you own, so it reads
+    /// as an extra condition, not an alternative to it.
+    @State private var lentOut = false
     /// List or shelf. Sticks, because it's a preference about how you like to
     /// look at your books rather than a per-visit choice.
     @AppStorage("shelf-display") private var asShelf = false
@@ -58,7 +68,9 @@ struct ShelfView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-            if asShelf {
+            if section == .explore {
+                ExploreView(query: query)
+            } else if asShelf {
                 BookshelfWallView(books: visibleBooks) { path = [$0] }
             } else {
             List {
@@ -76,11 +88,15 @@ struct ShelfView: View {
             }
             }
             .overlay {
-                if visibleBooks.isEmpty { emptyState }
+                if section != .explore, visibleBooks.isEmpty { emptyState }
             }
-            .safeAreaInset(edge: .top) {
+            // `spacing: 0`, because the default spacing is a gap in the *safe
+            // area* — neither the inset's background nor the content's paints it,
+            // so it showed as a white line under the picker. Obvious against the
+            // dark bookcase, subtle but there against a list.
+            .safeAreaInset(edge: .top, spacing: 0) {
                 Picker("Shelf", selection: $section) {
-                    ForEach(asShelf ? Section.allCases : Section.listCases) {
+                    ForEach(Section.allCases) {
                         Text($0.rawValue).tag($0)
                     }
                 }
@@ -91,13 +107,17 @@ struct ShelfView: View {
                 // theme — the strip of white above the tinted content.
                 .background(background)
             }
-            // "All" only exists on the shelf; leaving it selected on the list
-            // would show a section the picker can't get back to.
-            .onChange(of: asShelf) { _, shelf in
-                if !shelf, section == .all { section = .want }
-                if shelf, section == .want, visibleBooks.isEmpty { section = .all }
-            }
-            .searchable(text: $query, prompt: "Title, author or tag")
+            // The same field, two meanings: on Explore it searches the catalogue,
+            // everywhere else it searches your own books. The prompt is the only
+            // thing that says which, so it has to change.
+            .searchable(
+                text: $query,
+                prompt: section == .explore ? "Find a book to read" : "Title, author or tag"
+            )
+            // A catalogue query means nothing to your own books and vice versa, so
+            // carrying it across the switch would silently filter the list you
+            // just opened by whatever you last searched for.
+            .onChange(of: section) { _, _ in query = "" }
             .navigationTitle("Shelf")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -109,28 +129,36 @@ struct ShelfView: View {
             // The shelf that was on screen decides where a scanned book goes:
             // scanning from Want to Read means you want to read it.
             .sheet(isPresented: $scanning) { ScanBookView(status: section.status) }
+            // Sorting, filtering and the bookcase are all about *your* books, so
+            // they'd do nothing on Explore.
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu("Sort and filter", systemImage: "line.3.horizontal.decrease.circle") {
-                        Picker("Sort", selection: $sort) {
-                            ForEach(Sort.allCases) { Text($0.rawValue).tag($0) }
-                        }
-                        if !store.state.allTags.isEmpty {
-                            Picker("Tag", selection: $tag) {
-                                Text("All tags").tag(String?.none)
-                                ForEach(store.state.allTags, id: \.self) { Text($0).tag(String?.some($0)) }
+                if section != .explore {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu("Sort and filter", systemImage: "line.3.horizontal.decrease.circle") {
+                            Picker("Sort", selection: $sort) {
+                                ForEach(Sort.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            Picker("Owned", selection: $ownership) {
+                                ForEach(Ownership.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            Toggle("Lent out", isOn: $lentOut)
+                            if !store.state.allTags.isEmpty {
+                                Picker("Tag", selection: $tag) {
+                                    Text("All tags").tag(String?.none)
+                                    ForEach(store.state.allTags, id: \.self) { Text($0).tag(String?.some($0)) }
+                                }
                             }
                         }
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(
-                        asShelf ? "Show as a list" : "Show as a shelf",
-                        systemImage: asShelf ? "list.bullet" : "books.vertical"
-                    ) {
-                        withAnimation(.easeInOut(duration: 0.2)) { asShelf.toggle() }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(
+                            asShelf ? "Show as a list" : "Show as a shelf",
+                            systemImage: asShelf ? "list.bullet" : "books.vertical"
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) { asShelf.toggle() }
+                        }
+                        .labelStyle(.iconOnly)
                     }
-                    .labelStyle(.iconOnly)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu("Add a book", systemImage: "plus") {
@@ -146,13 +174,10 @@ struct ShelfView: View {
 
     private var sourceBooks: [WireBook] {
         switch section {
-        // "All" holds everything, including the book currently in your hand.
-        // Want / Library / Owned is a way of *managing* a list and none of them
-        // contains `.reading`, so the shelf defaults here.
-        case .all: store.state.books
         case .want: store.state.want
         case .library: store.state.library
-        case .owned: store.state.owned
+        // Explore never reads this — its books aren't on the shelf yet.
+        case .explore: []
         }
     }
 
@@ -160,6 +185,14 @@ struct ShelfView: View {
         var books = sourceBooks.filter { $0.matches(query) }
         if let tag {
             books = books.filter { $0.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+        }
+        switch ownership {
+        case .any: break
+        case .owned: books = books.filter(\.owned)
+        case .unowned: books = books.filter { !$0.owned }
+        }
+        if lentOut {
+            books = books.filter { !$0.lentTo.trimmingCharacters(in: .whitespaces).isEmpty }
         }
         return books.sorted(by: sortComparator)
     }
@@ -188,18 +221,13 @@ struct ShelfView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if !query.isEmpty || tag != nil {
+        if !query.isEmpty || tag != nil || ownership != .any || lentOut {
             ContentUnavailableView.search
+                .themedState()
         } else {
             switch section {
-            case .all:
-                ContentUnavailableView {
-                    Label("No books yet", systemImage: "books.vertical")
-                } description: {
-                    Text("Everything you add shows up on the shelf.")
-                } actions: {
-                    Button("Add a book", action: onAdd).buttonStyle(.borderedProminent)
-                }
+            case .explore:
+                EmptyView()
             case .want:
                 ContentUnavailableView {
                     Label("Nothing queued up", systemImage: "bookmark")
@@ -208,18 +236,14 @@ struct ShelfView: View {
                 } actions: {
                     Button("Add a book", action: onAdd).buttonStyle(.borderedProminent)
                 }
+                    .themedState()
             case .library:
                 ContentUnavailableView {
                     Label("No finished books yet", systemImage: "books.vertical")
                 } description: {
                     Text("Books you finish — and ones you give up on — end up here.")
                 }
-            case .owned:
-                ContentUnavailableView {
-                    Label("Nothing marked as owned", systemImage: "house")
-                } description: {
-                    Text("Mark the books you own to check your shelf at home before buying a duplicate.")
-                }
+                    .themedState()
             }
         }
     }

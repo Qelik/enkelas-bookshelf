@@ -18,6 +18,7 @@ public struct OpenLibrary: Sendable {
         public var cover_i: Int?
         public var isbn: [String]?
         public var subject: [String]?
+        public var edition_count: Int?
 
         public var authorLine: String { (author_name ?? []).joined(separator: ", ") }
         public var coverURL: URL? { cover_i.flatMap { OpenLibrary.coverURL(id: $0) } }
@@ -55,7 +56,10 @@ public struct OpenLibrary: Sendable {
 
     private var timeout: TimeInterval = 10
 
-    private func get(_ url: URL) async throws -> Data {
+    /// Not private: the discovery calls in `Explore.swift` need the same timeout
+    /// and the same "an empty result and an outage are different things" error
+    /// mapping, and duplicating either would let them drift.
+    func get(_ url: URL) async throws -> Data {
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         let data: Data

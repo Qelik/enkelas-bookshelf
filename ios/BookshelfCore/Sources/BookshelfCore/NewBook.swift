@@ -25,6 +25,7 @@ public enum NewBook {
         public var seriesNumber: Double?
         public var publishedYear: Double?
         public var genre: String = ""
+        public var description: String = ""
         public var review: String = ""
         public var format: BookFormat = .physical
         public var owned: Bool = false
@@ -46,6 +47,7 @@ public enum NewBook {
             "coverUrl": .string(draft.coverURL),
             "seriesName": .string(draft.seriesName.trimmingCharacters(in: .whitespaces)),
             "genre": .string(draft.genre),
+            "description": .string(draft.description),
             "review": .string(draft.review),
             "format": .string(draft.format.rawValue),
             "status": .string(draft.status.rawValue),
