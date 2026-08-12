@@ -40,11 +40,36 @@ public enum ShelfLayout {
         }
     }
 
-    /// Thickness bounds, in points. A 1,200-page hardback should look like one
-    /// next to a novella, but a spine under ~20pt can't hold a title and one over
-    /// ~52 crowds the shelf.
-    public static let minWidth = 22.0
+    /// Thickness bounds, in points. A 1,200-page hardback should look like one next
+    /// to a novella, but a spine much under this can't hold a title and reads as a
+    /// hairline, and one over ~52 is a brick that crowds the shelf.
+    public static let minWidth = 24.0
     public static let maxWidth = 52.0
+
+    /// The page counts that map onto the *ends* of that range.
+    ///
+    /// Not 0…1,200. Mapping the whole conceivable range onto the band left every
+    /// normal novel inside a 5pt sliver — 200 pages came out 34pt and 400 came out
+    /// 39pt, so a shelf of ordinary books looked machine-milled, which is the one
+    /// thing a bookcase shouldn't. These are the counts a real shelf actually
+    /// spans; a novella and a doorstop clamp to the ends and keep their bounds.
+    public static let thinPages = 120.0
+    public static let thickPages = 900.0
+
+    /// Where a book with no page count sits: an average novel. Plenty of shelves
+    /// have them (Goodreads exports especially), and both extremes would be a
+    /// claim the data doesn't support.
+    static let unknownThickness = 0.35
+
+    /// How thick a book of this many pages is, as a fraction of the width range.
+    ///
+    /// Square root rather than linear, because the eye reads it that way: the gap
+    /// between 150 pages and 300 is worth more than the gap between 900 and 1,050.
+    static func thickness(pages: Double) -> Double {
+        let lo = thinPages.squareRoot(), hi = thickPages.squareRoot()
+        guard hi > lo, pages > 0, pages.isFinite else { return unknownThickness }
+        return min(1, max(0, (pages.squareRoot() - lo) / (hi - lo)))
+    }
     /// Height bounds. Real books on one shelf vary by a couple of centimetres, not
     /// by half; too much variation reads as a broken layout rather than as books.
     public static let minHeight = 118.0
@@ -61,11 +86,7 @@ public enum ShelfLayout {
         // which is the difference between a bookshelf and a lava lamp.
         let jitter = book.id.isEmpty ? book.title.stableHue : book.id.stableHue
 
-        // Page count drives thickness, on a square-root curve: linear mapping put
-        // every normal novel in the same narrow band and let one doorstop use the
-        // entire range.
-        let pages = max(0, book.totalPages)
-        let thickness = pages > 0 ? (pages / 1_200).squareRoot() : 0.28
+        let thickness = Self.thickness(pages: max(0, book.totalPages))
         // Height is decoration, so it comes from the hash rather than from data
         // that means something — implying a tall book is a long one would be a lie.
         var height = minHeight + (maxHeight - minHeight) * (Double(jitter % 100) / 100)
@@ -82,7 +103,7 @@ public enum ShelfLayout {
             }
             width = max(fromPhoto, minWidth)
         } else {
-            width = minWidth + (maxWidth - minWidth) * min(1, thickness)
+            width = minWidth + (maxWidth - minWidth) * thickness
         }
 
         return Spine(

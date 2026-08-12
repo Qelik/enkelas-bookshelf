@@ -155,6 +155,17 @@ private struct SpineView: View {
             RoundedRectangle(cornerRadius: 2)
                 .strokeBorder(.black.opacity(0.35), lineWidth: 0.5)
         }
+        // The tap target is the book, and only the book.
+        //
+        // `clipShape` masks drawing, not touches: the spine's contents — a title
+        // laid out along the book's *height* and then rotated, a ribbon offset past
+        // the edge — kept their own hit regions, which spill sideways over the
+        // neighbours. An `HStack` hit-tests its children front-to-back, and later
+        // siblings are on top, so a tap landing in that overlap resolved to the book
+        // to the *right* of the one you aimed at.
+        //
+        // Before `rotationEffect`, so a leaning book's target leans with it.
+        .contentShape(.rect(cornerRadius: 2))
         .rotationEffect(.degrees(spine.lean), anchor: .bottom)
         .shadow(color: .black.opacity(0.4), radius: 2, x: 1)
         .accessibilityElement()

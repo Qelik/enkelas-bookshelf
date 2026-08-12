@@ -24,6 +24,33 @@ struct ShelfLayoutTests {
         #expect(doorstop.width <= ShelfLayout.maxWidth)
     }
 
+    @Test("ordinary books are told apart, not milled to the same thickness")
+    func ordinaryLengthsSpreadOut() {
+        // The point of the curve. The shelf is mostly 200–600 page books, and the
+        // previous mapping (0…1,200 onto the whole band) put 200 and 400 pages 5pt
+        // apart — a shelf of novels that looked machine-made.
+        let widths = [200.0, 300, 450, 600].map {
+            ShelfLayout.spine(for: Self.book(id: "\($0)", title: "Book \($0)", pages: $0)).width
+        }
+        for (thinner, thicker) in zip(widths, widths.dropFirst()) {
+            #expect(thicker - thinner >= 4, "\(thinner) → \(thicker) is not a visible difference")
+        }
+        // And end to end, most of the range is actually used.
+        let band = ShelfLayout.maxWidth - ShelfLayout.minWidth
+        #expect((widths.last! - widths.first!) >= band * 0.5)
+    }
+
+    @Test("a novella isn't a hairline and a doorstop isn't a brick")
+    func extremesStayInBounds() {
+        let novella = ShelfLayout.spine(for: Self.book(id: "a", title: "Novella", pages: 100))
+        let doorstop = ShelfLayout.spine(for: Self.book(id: "b", title: "Doorstop", pages: 1_000))
+        // Both clamp to the ends of the range rather than off it.
+        #expect(novella.width == ShelfLayout.minWidth)
+        #expect(doorstop.width == ShelfLayout.maxWidth)
+        // A title has to fit down the spine of the thinnest book on the shelf.
+        #expect(novella.width >= 24)
+    }
+
     @Test("a book with no page count still gets a usable spine")
     func unknownLengthIsStillABook() {
         // Plenty of shelves have books with no page count. A zero-width spine
