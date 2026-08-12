@@ -22,6 +22,8 @@ struct CommunityView: View {
     @State private var category: String?
     @State private var recommending = false
     @State private var reporting: Recommendation?
+    /// The recommendation whose book is open.
+    @State private var viewing: Recommendation?
     @State private var showingAuth = false
     @State private var notice: String?
 
@@ -82,6 +84,19 @@ struct CommunityView: View {
             .refreshable { await community.loadBoard() }
             .sheet(isPresented: $recommending) { RecommendView() }
             .sheet(isPresented: $showingAuth) { AuthView() }
+            // A recommendation is a book someone thinks you should read, so opening
+            // it offers the same thing Explore does: put it on your shelf. Same
+            // screen, so the two can't drift.
+            .sheet(item: $viewing) { rec in
+                let book = ExploreBook(recommendation: rec)
+                ExploreDetailView(
+                    book: book,
+                    onShelf: CatalogueAdd.onShelf(book, in: store.state),
+                    note: rec.note
+                ) { status, owned in
+                    await CatalogueAdd.add(book, as: status, owned: owned, store: store)
+                }
+            }
             .sheet(item: $reporting) { rec in
                 ReportView(what: "recommendation") { reason, detail in
                     let hidden = await community.report(rec, reason: reason, detail: detail)
@@ -132,7 +147,12 @@ struct CommunityView: View {
         } else {
             List {
                 ForEach(visible) { rec in
-                    RecommendationRow(rec: rec, onReport: { reporting = rec })
+                    RecommendationRow(
+                        rec: rec,
+                        onReport: { reporting = rec },
+                        onOpen: { viewing = rec },
+                        onSignIn: { showingAuth = true }
+                    )
                         .themedPlainRows()
                 }
                 if community.boardIsCapped {
@@ -151,8 +171,15 @@ struct RecommendationRow: View {
     @Environment(CommunityEngine.self) private var community
     let rec: Recommendation
     var onReport: () -> Void
+    /// Open the book. The row used to have no tap action at all — swipe actions and
+    /// a context menu, but tapping a recommendation did nothing.
+    var onOpen: () -> Void
+    /// Voting needs an account. Offering the sign-in sheet beats a disabled button,
+    /// which is indistinguishable from a broken one.
+    var onSignIn: () -> Void
 
     @State private var confirmingBlock = false
+    @State private var voteFailure: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -183,12 +210,24 @@ struct RecommendationRow: View {
 
             Spacer(minLength: 0)
 
-            VStack(spacing: 6) {
+            VStack(spacing: 2) {
                 voteButton(1, "hand.thumbsup", count: rec.up ?? 0)
                 voteButton(-1, "hand.thumbsdown", count: rec.down ?? 0)
             }
         }
         .padding(.vertical, 4)
+        // The book, everywhere except the vote column. `contentShape` because a
+        // gesture on an HStack of text and images otherwise only lands on the glyphs
+        // themselves, leaving most of the row dead.
+        .contentShape(.rect)
+        .onTapGesture(perform: onOpen)
+        .alert(
+            "Couldn't save your vote",
+            isPresented: .constant(voteFailure != nil),
+            presenting: voteFailure
+        ) { _ in
+            Button("OK") { voteFailure = nil }
+        } message: { Text($0) }
         .swipeActions(edge: .trailing) {
             if rec.mine == true {
                 Button("Remove", systemImage: "trash", role: .destructive) {
@@ -223,16 +262,26 @@ struct RecommendationRow: View {
 
     private func voteButton(_ value: Int, _ symbol: String, count: Int) -> some View {
         Button {
-            Task { await community.vote(rec, value) }
+            guard community.isSignedIn else { onSignIn(); return }
+            Task {
+                if await community.vote(rec, value) == false {
+                    voteFailure = community.errorMessage ?? "Please try again."
+                }
+            }
         } label: {
             VStack(spacing: 1) {
                 Image(systemName: rec.myVote == value ? "\(symbol).fill" : symbol)
                 Text("\(count)").font(.caption2.monospacedDigit())
             }
             .foregroundStyle(rec.myVote == value ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            // A tap target, not a glyph. An unframed Image over a Text is hit-tested
+            // as the drawn shapes themselves, with dead space between them — two of
+            // these stacked came to a pair of ~16pt targets separated by a gap,
+            // which is why voting felt broken rather than merely fiddly.
+            .frame(width: 46, height: 32)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(!community.isSignedIn)
     }
 }
 

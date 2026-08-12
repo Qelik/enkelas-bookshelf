@@ -132,10 +132,13 @@ public final class CommunityEngine {
         }
     }
 
-    public func vote(_ rec: Recommendation, _ value: Int) async {
+    /// Returns false when the vote didn't land, so the caller can say so. A vote
+    /// that silently does nothing is indistinguishable from a broken button.
+    @discardableResult
+    public func vote(_ rec: Recommendation, _ value: Int) async -> Bool {
         do {
             let now = try await client.vote(recID: rec.id, vote: value)
-            guard let i = recommendations.firstIndex(where: { $0.id == rec.id }) else { return }
+            guard let i = recommendations.firstIndex(where: { $0.id == rec.id }) else { return true }
             // Adjust locally rather than refetching the whole board: a vote
             // should feel immediate, and the tallies are simple enough to keep
             // in step.
@@ -149,8 +152,10 @@ public final class CommunityEngine {
             recommendations[i].up = max(0, up)
             recommendations[i].down = max(0, down)
             recommendations[i].myVote = now
+            return true
         } catch {
-            errorMessage = error.localizedDescription
+            record(error)
+            return false
         }
     }
 

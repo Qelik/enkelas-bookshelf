@@ -16,6 +16,10 @@ public struct ExploreBook: Identifiable, Sendable, Hashable, Codable {
     public var pages: Int?
     public var isbn: String?
     public var coverID: Int?
+    /// A cover that arrived as a URL rather than as an Open Library id — which is
+    /// how the community board stores it, having been handed the URL by whichever
+    /// client posted the recommendation.
+    public var coverURLString: String?
     public var subjects: [String]
     /// How many editions exist — a rough stand-in for how well known a book is,
     /// and the only popularity signal the free API gives away.
@@ -24,7 +28,7 @@ public struct ExploreBook: Identifiable, Sendable, Hashable, Codable {
     public init(
         workKey: String? = nil, title: String, author: String = "", year: Int? = nil,
         pages: Int? = nil, isbn: String? = nil, coverID: Int? = nil,
-        subjects: [String] = [], editions: Int? = nil
+        coverURLString: String? = nil, subjects: [String] = [], editions: Int? = nil
     ) {
         self.workKey = workKey
         self.title = title
@@ -33,6 +37,7 @@ public struct ExploreBook: Identifiable, Sendable, Hashable, Codable {
         self.pages = pages
         self.isbn = isbn
         self.coverID = coverID
+        self.coverURLString = coverURLString
         self.subjects = subjects
         self.editions = editions
     }
@@ -44,7 +49,14 @@ public struct ExploreBook: Identifiable, Sendable, Hashable, Codable {
         workKey ?? "\(title)|\(author)".lowercased()
     }
 
-    public var coverURL: URL? { coverID.flatMap { OpenLibrary.coverURL(id: $0) } }
+    /// An explicit URL wins over an id: it's the one the recommendation actually
+    /// carries, and looking a cover up by id would just be a guess at the edition.
+    public var coverURL: URL? {
+        if let coverURLString, !coverURLString.isEmpty, let url = URL(string: coverURLString) {
+            return url
+        }
+        return coverID.flatMap { OpenLibrary.coverURL(id: $0) }
+    }
 
     /// "1954 · 320 pages" — whichever of the two the catalogue actually knows.
     public var detailLine: String {
@@ -156,7 +168,7 @@ public extension OpenLibrary {
     /// shelf is for. One search closes the gap, so it runs when a book is being
     /// added rather than for every row in a feed.
     func fill(_ book: ExploreBook) async -> ExploreBook {
-        guard book.pages == nil || book.isbn == nil else { return book }
+        guard book.pages == nil || book.isbn == nil || book.workKey == nil else { return book }
         guard let hits = try? await search(title: book.title, author: book.author) else { return book }
         // Guard the match: a bare title search happily returns a different book
         // with the same name, and attaching its page count would be worse than
@@ -170,6 +182,11 @@ public extension OpenLibrary {
         if filled.isbn == nil { filled.isbn = hit.isbn?.first }
         if filled.coverID == nil { filled.coverID = hit.cover_i }
         if filled.subjects.isEmpty { filled.subjects = hit.subject ?? [] }
+        if filled.year == nil { filled.year = hit.first_publish_year }
+        // The work id too: a book that arrived from somewhere other than a
+        // catalogue feed — a recommendation off the community board, say — has no
+        // id of its own, and without one there's no blurb to show.
+        if filled.workKey == nil { filled.workKey = hit.key }
         return filled
     }
 

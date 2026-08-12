@@ -279,19 +279,7 @@ struct ExploreView: View {
     /// differently often enough that an exact-string check would call almost
     /// nothing a duplicate.
     private func onShelf(_ book: ExploreBook) -> WireBook? {
-        store.state.books.first { existing in
-            if let isbn = book.isbn, !existing.isbn.isEmpty,
-               let a = ISBN.normalize(isbn), let b = ISBN.normalize(existing.isbn), a == b {
-                return true
-            }
-            guard existing.title.compare(
-                book.title, options: [.caseInsensitive, .diacriticInsensitive]
-            ) == .orderedSame else { return false }
-            // Same title by a different author is a different book — but a shelf
-            // entry with no author at all shouldn't block the match.
-            return book.author.isEmpty || existing.author.isEmpty
-                || OpenLibrary.authorMatches(book.author, [existing.author])
-        }
+        CatalogueAdd.onShelf(book, in: store.state)
     }
 
     private func whereItIs(_ book: WireBook) -> String {
@@ -306,41 +294,7 @@ struct ExploreView: View {
         guard onShelf(book) == nil, !adding.contains(book.id) else { return }
         adding.insert(book.id)
         defer { adding.remove(book.id) }
-
-        // The trending and subject feeds carry no page count, and a book with no
-        // page count has no progress bar — so fill it in before the book exists
-        // rather than leaving the reader to notice and edit it.
-        async let filled = catalogue.fill(book)
-        async let fetchedBlurb = blurb(for: book)
-
-        var draft = NewBook.Draft()
-        let final = await filled
-        draft.title = final.title
-        draft.author = final.author
-        draft.status = status
-        draft.totalPages = final.pages.map(Double.init)
-        draft.isbn = final.isbn ?? ""
-        draft.coverURL = final.coverURL?.absoluteString ?? ""
-        draft.publishedYear = final.year.map(Double.init)
-        draft.genre = final.genre
-        // Tags are what the library's genre filter reads, and the web app fills
-        // them from Open Library subjects on add too — so a book found here is
-        // filterable straight away rather than needing an edit.
-        draft.tags = Array(final.genres.prefix(3))
-        draft.description = await fetchedBlurb ?? ""
-        draft.owned = owned
-
-        guard let made = NewBook.make(draft) else { return }
-        store.add(book: made)
-        Haptics.saved()
-    }
-
-    private func blurb(for book: ExploreBook) async -> String? {
-        guard let key = book.workKey else { return nil }
-        if ExploreCache.shared.knowsBlurb(for: key) { return ExploreCache.shared.blurb(for: key) }
-        let fetched = await catalogue.blurb(workKey: key)
-        ExploreCache.shared.store(blurb: fetched, for: key)
-        return fetched
+        await CatalogueAdd.add(book, as: status, owned: owned, store: store, catalogue: catalogue)
     }
 }
 
@@ -350,11 +304,28 @@ struct ExploreDetailView: View {
     @Environment(\.themeBackground) private var background
     @Environment(\.dismiss) private var dismiss
 
-    let book: ExploreBook
+    /// Held in state because it grows: a book that came from the community board
+    /// arrives with a title, an author and a cover and nothing else, and the
+    /// catalogue is asked for the rest once this screen opens.
+    @State private var book: ExploreBook
     /// Set when this book is already on the shelf — then this screen is a
     /// reference rather than an add form.
     let onShelf: WireBook?
+    /// Why somebody recommended it, when this book came from the board.
+    let note: String?
     var onAdd: (BookStatus, Bool) async -> Void
+
+    init(
+        book: ExploreBook,
+        onShelf: WireBook?,
+        note: String? = nil,
+        onAdd: @escaping (BookStatus, Bool) async -> Void
+    ) {
+        _book = State(initialValue: book)
+        self.onShelf = onShelf
+        self.note = note
+        self.onAdd = onAdd
+    }
 
     @State private var blurb: String?
     @State private var loadingBlurb = true
@@ -422,6 +393,14 @@ struct ExploreDetailView: View {
                     }
                 }
 
+                // The recommender's own words come before the catalogue's: they're
+                // the reason this book is on the board at all.
+                if let note, !note.isEmpty {
+                    SwiftUI.Section("Why they recommend it") {
+                        Text(note).font(.callout)
+                    }
+                }
+
                 if loadingBlurb {
                     SwiftUI.Section { ProgressView() }
                 } else if let blurb {
@@ -447,6 +426,11 @@ struct ExploreDetailView: View {
             }
             .task {
                 defer { loadingBlurb = false }
+                // A recommendation carries no page count, no year and no work id, so
+                // there is nothing to fetch a blurb *with* until the catalogue has
+                // been asked. Free for a book that came from a feed already carrying
+                // all three.
+                book = await OpenLibrary().fill(book)
                 guard let key = book.workKey else { return }
                 // Already fetched in this sitting — most likely by the add flow, or
                 // by opening this same book a moment ago.
