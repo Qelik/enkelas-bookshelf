@@ -19,15 +19,24 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 
-	<!-- Barcode scanning. Says what it's for and nothing more: iOS shows this
-	     string verbatim in the permission prompt, and a vague one gets denied. -->
+	<!-- Camera. Says what it's for and nothing more: iOS shows this string
+	     verbatim in the permission prompt, and a vague one gets denied. Covers
+	     all three uses — barcodes, a whole shelf, and a single spine — because
+	     one string is shown whichever of them asked. -->
 	<key>NSCameraUsageDescription</key>
-	<string>To add a book by scanning the barcode on its back cover.</string>
+	<string>To scan a book's barcode, photograph a shelf to add the books on it, or photograph a book's spine.</string>
 
-	<!-- Choosing an existing photo of a spine. Read-only: the app never writes
-	     to the library, so NSPhotoLibraryAddUsageDescription is not needed. -->
+	<!-- Reading a photo you already took: a shelf to scan, or a spine for the
+	     bookcase. -->
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>To use one of your photos as a book's spine on the shelf.</string>
+	<string>To read a photo of your shelf and find the books on it, or use one of your photos as a book's spine.</string>
+
+	<!-- Saving a share card back to Photos. Declared separately so that saving
+	     one asks only for permission to *add* a photo rather than for access to
+	     the whole library — without this key iOS falls back to the read string
+	     above and demands full access for what is only ever a save. -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>To save a card about your reading to your photos.</string>
 
 	<!-- ActivityKit refuses to start an activity without this, and does so
 	     silently — the call returns an error rather than the Lock Screen simply

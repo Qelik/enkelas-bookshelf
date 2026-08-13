@@ -25,6 +25,7 @@ struct BookDetailView: View {
     @State private var addingNote: AddNoteView.Kind?
     @State private var placing = false
     @State private var findingOnShelf = false
+    @State private var showingKeepsake = false
     /// This book's measured reading speed — its own where it has enough timed
     /// sittings, the shelf's otherwise. Derived off the main actor because it
     /// walks every log; recomputed only when the shelf actually changes.
@@ -99,6 +100,7 @@ struct BookDetailView: View {
                 .sheet(isPresented: $findingOnShelf) {
                     ShelfLocationsView(findingBookID: book.id)
                 }
+                .sheet(isPresented: $showingKeepsake) { KeepsakeView(bookID: book.id) }
                 .sheet(isPresented: $borrowing) { BorrowedView(book: book) }
                 .sheet(item: $addingNote) { AddNoteView(book: book, kind: $0) }
                 .confirmationDialog(
@@ -248,6 +250,11 @@ struct BookDetailView: View {
                 // pages you never logged.
                 Button("I finished it", systemImage: "checkmark.circle") { finishing = .finish }
                 Button("Give up on it", systemImage: "xmark.circle") { markingDNF = true }
+            }
+            // Offered once a book is over, which is when there's a record to
+            // look back on rather than a book still being read.
+            if book.status == .finished || book.status == .dnf, book.keepsake().hasAnything {
+                Button("Your record of this book", systemImage: "book.closed") { showingKeepsake = true }
             }
             Picker("Status", selection: Binding(
                 get: { book.status },
