@@ -26,6 +26,7 @@ struct BookDetailView: View {
     @State private var placing = false
     @State private var findingOnShelf = false
     @State private var showingKeepsake = false
+    @State private var readingTogether = false
     /// This book's measured reading speed — its own where it has enough timed
     /// sittings, the shelf's otherwise. Derived off the main actor because it
     /// walks every log; recomputed only when the shelf actually changes.
@@ -101,6 +102,9 @@ struct BookDetailView: View {
                     ShelfLocationsView(findingBookID: book.id)
                 }
                 .sheet(isPresented: $showingKeepsake) { KeepsakeView(bookID: book.id) }
+                .sheet(isPresented: $readingTogether) {
+                    CreateClubView(book: book, asBuddyRead: true)
+                }
                 .sheet(isPresented: $borrowing) { BorrowedView(book: book) }
                 .sheet(item: $addingNote) { AddNoteView(book: book, kind: $0) }
                 .confirmationDialog(
@@ -250,6 +254,10 @@ struct BookDetailView: View {
                 // pages you never logged.
                 Button("I finished it", systemImage: "checkmark.circle") { finishing = .finish }
                 Button("Give up on it", systemImage: "xmark.circle") { markingDNF = true }
+                // A 1:1 read, with the server-side spoiler gate the clubs
+                // already enforce — neither of you sees what the other wrote
+                // further into the book than you've got.
+                Button("Read this with someone", systemImage: "person.2") { readingTogether = true }
             }
             // Offered once a book is over, which is when there's a record to
             // look back on rather than a book still being read.

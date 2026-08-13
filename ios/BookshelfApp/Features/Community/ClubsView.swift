@@ -195,6 +195,18 @@ struct ClubDetailView: View {
 
     private func progressBar(_ detail: ClubDetail) -> some View {
         VStack(spacing: 6) {
+            // Reading with one other person: how far apart you are. The one
+            // thing a pair has that a crowd doesn't, and the reason to read
+            // together rather than near each other.
+            if let buddy = detail.buddyRead, let gap = buddy.gapDescription {
+                HStack(spacing: 6) {
+                    Image(systemName: buddy.partnerIsAhead ? "figure.walk.motion" : "figure.walk")
+                        .font(.caption)
+                    Text(gap).font(.caption)
+                    Spacer()
+                }
+                .foregroundStyle(buddy.partnerIsAhead ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            }
             HStack {
                 Text("You're \(Int(progress))% through")
                     .font(.subheadline)
@@ -383,6 +395,13 @@ struct CreateClubView: View {
     @Environment(BookshelfStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
+    /// Opened from a book, to read that one with somebody. Only the wording
+    /// changes — a 1:1 read *is* a two-person club, and giving it a second
+    /// implementation would mean a second spoiler gate to keep in step with the
+    /// server's.
+    var book: WireBook?
+    var asBuddyRead = false
+
     @State private var title = ""
     @State private var author = ""
     @State private var pages = ""
@@ -399,14 +418,19 @@ struct CreateClubView: View {
                             Text(code)
                                 .font(.title.monospaced().weight(.semibold))
                                 .textSelection(.enabled)
-                            ShareLink(item: "Join my reading club with the code \(code)") {
-                                Label("Share invite", systemImage: "square.and.arrow.up")
+                            ShareLink(item: asBuddyRead
+                                      ? "Read \(title) with me — join with the code \(code)"
+                                      : "Join my reading club with the code \(code)") {
+                                Label(asBuddyRead ? "Invite them" : "Share invite",
+                                      systemImage: "square.and.arrow.up")
                             }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                     } footer: {
-                        Text("Up to five friends can join with it.")
+                        Text(asBuddyRead
+                             ? "Send it to the person you're reading with. Neither of you can see what the other writes further into the book than you've read."
+                             : "Up to five friends can join with it.")
                     }
                 } else {
                     Section("What are you reading together?") {
@@ -417,7 +441,9 @@ struct CreateClubView: View {
                                 .keyboardType(.numberPad).multilineTextAlignment(.trailing)
                         }
                     }
-                    if !store.state.reading.isEmpty {
+                    // Opened from a book, the shelf picker would only offer the
+                    // book already filled in.
+                    if book == nil, !store.state.reading.isEmpty {
                         Section("From your shelf") {
                             ForEach(store.state.reading, id: \.id) { book in
                                 Button {
@@ -434,10 +460,16 @@ struct CreateClubView: View {
             }
             .themedPage()
             .themedRows()
-            .navigationTitle("Start a club")
+            .navigationTitle(asBuddyRead ? "Read it together" : "Start a club")
             .toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                guard let book, title.isEmpty else { return }
+                title = book.title
+                author = book.author
+                pages = book.totalPages > 0 ? String(Int(book.totalPages)) : ""
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(code == nil ? "Cancel" : "Done") { dismiss() }
@@ -445,7 +477,7 @@ struct CreateClubView: View {
                 if code == nil {
                     ToolbarItem(placement: .confirmationAction) {
                         if busy { ProgressView() } else {
-                            Button("Create") { Task { await create() } }
+                            Button(asBuddyRead ? "Invite" : "Create") { Task { await create() } }
                                 .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
