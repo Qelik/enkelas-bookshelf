@@ -63,6 +63,7 @@ struct ShelfView: View {
     /// look at your books rather than a per-visit choice.
     @AppStorage("shelf-display") private var asShelf = false
     @State private var scanning = false
+    @State private var shopping = false
     @State private var path: [String] = []
 
     var body: some View {
@@ -129,6 +130,7 @@ struct ShelfView: View {
             // The shelf that was on screen decides where a scanned book goes:
             // scanning from Want to Read means you want to read it.
             .sheet(isPresented: $scanning) { ScanBookView(status: section.status) }
+            .sheet(isPresented: $shopping) { BookshopModeView() }
             // Sorting, filtering and the bookcase are all about *your* books, so
             // they'd do nothing on Explore.
             .toolbar {
@@ -164,6 +166,10 @@ struct ShelfView: View {
                     Menu("Add a book", systemImage: "plus") {
                         Button("Scan a barcode", systemImage: "barcode.viewfinder") { scanning = true }
                         Button("Enter by hand", systemImage: "square.and.pencil", action: onAdd)
+                        Divider()
+                        // Not adding a book — asking about one. Same camera,
+                        // opposite question, so it sits with the other scan.
+                        Button("In a shop?", systemImage: "bag") { shopping = true }
                     }
                 }
             }

@@ -125,6 +125,30 @@ public struct OpenLibrary: Sendable {
         return docs
     }
 
+    /// Which series an edition belongs to — "The Mistborn Saga #3".
+    ///
+    /// A second request rather than one more entry in `fields`, because the
+    /// search index simply doesn't carry `series`: only the *edition* record
+    /// does. Worth the round trip for the one caller that needs it — knowing the
+    /// book in your hand is #3 of something you're two books into is the whole
+    /// point of the shop scanner, and there is no other source for it.
+    ///
+    /// Returns nil rather than throwing: most editions have no series at all, so
+    /// absence is the ordinary case and no caller would treat an error
+    /// differently from an empty answer.
+    public func series(isbn: String) async -> String? {
+        let digits = isbn.filter { $0.isNumber || $0 == "X" || $0 == "x" }
+        guard !digits.isEmpty,
+              let url = URL(string: "https://openlibrary.org/isbn/\(digits).json"),
+              let data = try? await get(url)
+        else { return nil }
+
+        // `/isbn/…` redirects to the book record; URLSession follows it.
+        struct Edition: Decodable { var series: [String]? }
+        let series = (try? JSONDecoder().decode(Edition.self, from: data))?.series?.first
+        return series?.trimmingCharacters(in: .whitespaces).isEmpty == false ? series : nil
+    }
+
     /// Full cover waterfall for a book that hasn't got one. Returns nil rather
     /// than throwing: a missing cover is cosmetic, and a thrown error here would
     /// have to be swallowed by every caller anyway.

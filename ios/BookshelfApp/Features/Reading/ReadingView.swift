@@ -15,6 +15,7 @@ struct ReadingView: View {
     @State private var logging: WireBook?
     @State private var showingSettings = false
     @State private var scanning = false
+    @State private var shopping = false
     /// Book ids pushed on top of this tab. Owned here rather than by the router
     /// so ordinary taps stay plain `NavigationLink`s.
     @State private var path: [String] = []
@@ -44,7 +45,8 @@ struct ReadingView: View {
                     .attachShellSheets(
                         showingSettings: $showingSettings,
                         logging: $logging,
-                        scanning: $scanning
+                        scanning: $scanning,
+                        shopping: $shopping
                     )
             } detail: {
                 NavigationStack {
@@ -93,11 +95,16 @@ struct ReadingView: View {
                     Menu("Add a book", systemImage: "plus") {
                         Button("Scan a barcode", systemImage: "barcode.viewfinder") { scanning = true }
                         Button("Enter by hand", systemImage: "square.and.pencil", action: onAdd)
+                        Divider()
+                        // Not adding a book — asking about one. Same camera,
+                        // opposite question, so it sits with the other scan.
+                        Button("In a shop?", systemImage: "bag") { shopping = true }
                     }
                 }
             }
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(isPresented: $scanning) { ScanBookView(status: .reading) }
+            .sheet(isPresented: $shopping) { BookshopModeView() }
             .sheet(item: $logging) { book in
                 LogSessionView(book: book)
             }
@@ -180,6 +187,10 @@ struct ReadingView: View {
             Menu("Add a book", systemImage: "plus") {
                 Button("Scan a barcode", systemImage: "barcode.viewfinder") { scanning = true }
                 Button("Enter by hand", systemImage: "square.and.pencil", action: onAdd)
+                Divider()
+                // Not adding a book — asking about one. Same camera, opposite
+                // question, so it sits with the other scan.
+                Button("In a shop?", systemImage: "bag") { shopping = true }
             }
         }
     }
@@ -191,11 +202,13 @@ private extension View {
     func attachShellSheets(
         showingSettings: Binding<Bool>,
         logging: Binding<WireBook?>,
-        scanning: Binding<Bool>
+        scanning: Binding<Bool>,
+        shopping: Binding<Bool>
     ) -> some View {
         sheet(isPresented: showingSettings) { SettingsView() }
             .sheet(item: logging) { LogSessionView(book: $0) }
             .sheet(isPresented: scanning) { ScanBookView(status: .reading) }
+            .sheet(isPresented: shopping) { BookshopModeView() }
     }
 }
 
