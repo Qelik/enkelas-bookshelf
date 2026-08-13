@@ -15,7 +15,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.08.12a"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.08.13"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -154,6 +154,50 @@ function unitLabel(book) { return book && book.format === "audio" ? "min" : "pag
 function unitShort(book) { return book && book.format === "audio" ? "m" : "p"; }
 function hashHue(str) { let h = 0; for (let i = 0; i < str.length; i++)
     h = (h * 31 + str.charCodeAt(i)) >>> 0; return h % 360; }
+// ---- ISBNs -----------------------------------------------------------------
+// A barcode is always 13 digits, but shelves are full of 10s — that is what
+// Goodreads exports and what is printed inside older books. Comparing whichever
+// form each side happens to hold means the same book never matches itself: the
+// shop scanner said "safe to buy" about a copy already at home, and the
+// community board failed to hide books you had read. Everything that COMPARES
+// two ISBNs must go through canonicalISBN; the API query builders don't need
+// to, since Open Library and Google Books both accept either form.
+function isbn10Valid(s) {
+    if (s.length !== 10)
+        return false;
+    let sum = 0;
+    for (let i = 0; i < 10; i++) {
+        const c = s[i];
+        const v = c === "X" ? (i === 9 ? 10 : NaN) : Number(c);
+        if (!Number.isFinite(v))
+            return false;
+        sum += v * (10 - i);
+    }
+    return sum % 11 === 0;
+}
+function isbn13CheckDigit(body12) {
+    let sum = 0;
+    for (let i = 0; i < 12; i++)
+        sum += Number(body12[i]) * (i % 2 === 0 ? 1 : 3);
+    return String((10 - (sum % 10)) % 10);
+}
+/** ISBN-10 or -13, in one comparable form. Anything invalid falls back to its
+ *  bare digits, so two identically-mistyped numbers still match each other. */
+function canonicalISBN(raw) {
+    const s = String(raw || "").toUpperCase().replace(/[^0-9X]/g, "");
+    if (s.length === 10 && isbn10Valid(s)) {
+        const body = "978" + s.slice(0, 9);
+        return body + isbn13CheckDigit(body);
+    }
+    if (s.length === 13 && /^97[89]/.test(s)) {
+        let sum = 0;
+        for (let i = 0; i < 13; i++)
+            sum += Number(s[i]) * (i % 2 === 0 ? 1 : 3);
+        if (sum % 10 === 0)
+            return s;
+    }
+    return s;
+}
 function parseList(str) {
     const seen = new Set(), out = [];
     String(str || "").split(",").forEach((t) => {
@@ -4198,7 +4242,10 @@ async function postClubComment() {
 let communityCategory = "", communitySort = "top", communityHideRead = true, lastRecs = null, recsSignedIn = false, recsCapped = false;
 function recsApi(path, opts) { return apiFetch("/api/recs" + path, opts || {}); }
 function normStr(s) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
-function isbnDigits(s) { return String(s || "").replace(/\D/g, ""); }
+// Compared, not displayed — so it goes through canonicalISBN. A board entry
+// carrying an ISBN-13 must match a shelf book stored as an ISBN-10, or a book
+// you have finished stays on the board with "hide read" on.
+function isbnDigits(s) { return canonicalISBN(s); }
 // Normalized keys of everything the reader has finished, for the "hide read" filter.
 function readMatchers() {
     const titles = new Set(), pairs = new Set(), isbns = new Set();
@@ -5497,7 +5544,8 @@ async function checkScannedBook(isbn) {
     box.hidden = false;
     box.innerHTML = `<div class="own-verdict"><p class="muted">Looking up ${esc(digits)}…</p></div>`;
     const normT = (s) => String(s || "").toLowerCase().replace(/\s*\(.*?\)\s*$/, "").replace(/\s*:.*$/, "").trim();
-    let hit = state.books.find((b) => (b.isbn || "").replace(/[^0-9Xx]/g, "") === digits);
+    const scanned = canonicalISBN(digits);
+    let hit = scanned ? state.books.find((b) => canonicalISBN(b.isbn) === scanned) : undefined;
     let scanTitle = "", scanAuthor = "";
     if (!hit) {
         try {
@@ -6749,6 +6797,6 @@ export const BookshelfAPI = {
 };
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl, passwordProblem, passwordStrength };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl, passwordProblem, passwordStrength, canonicalISBN };
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order

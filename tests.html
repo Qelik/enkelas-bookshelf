@@ -117,6 +117,25 @@
         assert(!T.isJunkTag("Historical Fiction"), "genre kept");
       });
 
+      // --- canonicalISBN -----------------------------------------------------
+      test("canonicalISBN makes a 10-digit shelf match a 13-digit barcode", function () {
+        // The bug this exists for: barcodes are always 13 digits, Goodreads
+        // exports 10s. Comparing raw digits meant the scanner said "safe to buy"
+        // about a book already on the shelf at home.
+        eq(T.canonicalISBN("2070516458"), "9782070516452", "ISBN-10 converts");
+        eq(T.canonicalISBN("9782070516452"), "9782070516452", "ISBN-13 unchanged");
+        assert(T.canonicalISBN("0-261-10221-4") === T.canonicalISBN("9780261102217"), "hyphens and forms agree");
+        eq(T.canonicalISBN("080442957X"), "9780804429573", "trailing X check digit");
+      });
+      test("canonicalISBN leaves anything it can't verify comparable to itself", function () {
+        // A mistyped or made-up number still has to equal an identical one, or
+        // a hand-entered ISBN stops matching the book it was typed into.
+        eq(T.canonicalISBN("1234567890"), "1234567890", "bad ISBN-10 check digit");
+        eq(T.canonicalISBN("5901234123457"), "5901234123457", "valid EAN-13, not a book");
+        eq(T.canonicalISBN(""), "", "empty");
+        eq(T.canonicalISBN(null), "", "null");
+      });
+
       // --- authorMatches -----------------------------------------------------
       test("authorMatches agrees on the same author, rejects a different one", function () {
         assert(T.authorMatches("Brandon Sanderson", ["Brandon Sanderson"]), "exact");
