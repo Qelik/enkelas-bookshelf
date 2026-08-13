@@ -23,6 +23,10 @@ struct BookDetailView: View {
     @State private var borrowing = false
     @State private var photographing = false
     @State private var addingNote: AddNoteView.Kind?
+    /// This book's measured reading speed — its own where it has enough timed
+    /// sittings, the shelf's otherwise. Derived off the main actor because it
+    /// walks every log; recomputed only when the shelf actually changes.
+    @State private var pace: ReadingPace?
 
     private var book: WireBook? { store.state.book(id: bookID) }
 
@@ -111,6 +115,20 @@ struct BookDetailView: View {
                     .themedState()
             }
         }
+        .task(id: store.state.updatedAt) { await refreshPace() }
+    }
+
+    /// A book's own pace beats the shelf's — a dense history and a thriller are
+    /// not read at the same speed — so this is measured per book rather than
+    /// taken from the Progress digest, and pays for its own pass over the logs.
+    private func refreshPace() async {
+        let state = store.state
+        let id = bookID
+        let measured = await Task.detached(priority: .userInitiated) {
+            state.readingPace(forBookID: id)
+        }.value
+        guard !Task.isCancelled else { return }
+        pace = measured
     }
 
     // MARK: - Sections
@@ -142,7 +160,7 @@ struct BookDetailView: View {
 
     @ViewBuilder
     private func progressSection(_ book: WireBook) -> some View {
-        Section("Progress") {
+        Section {
             if let progress = book.progress {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: progress)
@@ -166,7 +184,49 @@ struct BookDetailView: View {
                 }
                 .foregroundStyle(.secondary)
             }
+
+            // Reading hours left, as distinct from calendar days above: one is
+            // how much book there is, the other is when you'll get to the end of
+            // it. Both are useful and they answer different questions.
+            if let remaining = readingTimeLeft(book) {
+                LabeledContent("Reading time left", value: remaining)
+                    .foregroundStyle(.secondary)
+            }
+            if let pace, book.format != .audio, pace.fitsInOneSitting(pages: book.pagesRemaining) {
+                Label("You could finish this in one sitting", systemImage: "moon.stars")
+                    .foregroundStyle(.tint)
+                    .font(.callout)
+            }
+        } header: {
+            Text("Progress")
+        } footer: {
+            // Where the number came from. A measured pace is only worth more
+            // than a guess if you can see that it was measured — but only when
+            // there's a number above for it to be explaining.
+            if let pace, readingTimeLeft(book) != nil {
+                Text(pace.summary)
+            }
         }
+    }
+
+    /// "about 9 hr · about 3 weeks" for a book you haven't started.
+    ///
+    /// Only for the want list: on a book in progress the Progress section says
+    /// it better, and on one you've finished or abandoned it's an estimate of
+    /// something that already happened.
+    private func commitment(_ book: WireBook) -> String? {
+        guard book.status == .want, book.format != .audio, book.totalPages > 0, let pace else { return nil }
+        guard let hours = pace.readingTimeDescription(pages: book.totalPages) else { return nil }
+        guard let days = pace.calendarDescription(pages: book.totalPages) else { return hours }
+        return "\(hours) · \(days)"
+    }
+
+    /// "about 2 hr 40 min" of actual reading, at the speed this reader reads.
+    private func readingTimeLeft(_ book: WireBook) -> String? {
+        guard let pace, book.format != .audio, book.totalPages > 0 else { return nil }
+        let remaining = book.pagesRemaining
+        guard remaining > 0 else { return nil }
+        return ReadingPace.describe(minutes: pace.minutes(forPages: remaining))
     }
 
     @ViewBuilder
@@ -195,6 +255,12 @@ struct BookDetailView: View {
         Section("Details") {
             if book.totalPages > 0 {
                 LabeledContent("Length", value: "\(Int(book.totalPages)) \(book.unitLabelShort)")
+            }
+            // What a book on the pile would actually cost you, before you start
+            // it — the question "600 pages" doesn't answer for anybody.
+            if let commitment = commitment(book) {
+                LabeledContent("At your pace", value: commitment)
+                    .foregroundStyle(.secondary)
             }
             LabeledContent("Format", value: book.format.displayName)
             if !book.seriesName.isEmpty {

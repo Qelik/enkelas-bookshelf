@@ -58,6 +58,12 @@ struct BookCover: View {
 /// same whether you meet it in Reading, Want or Library.
 struct BookRow: View {
     let book: WireBook
+    /// Your measured reading speed, when the screen showing this row has it.
+    ///
+    /// Passed in rather than derived here: measuring it walks every session log
+    /// on the shelf, and a list row redrawn on every scroll is the last place
+    /// that should happen. Nil simply means the line isn't shown.
+    var pace: ReadingPace?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -89,6 +95,11 @@ struct BookRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                    if let pace = paceLine {
+                        Text(pace.text)
+                            .font(.caption)
+                            .foregroundStyle(pace.tonight ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                    }
                 } else if let meta = metaLine {
                     Text(meta)
                         .font(.caption)
@@ -118,6 +129,20 @@ struct BookRow: View {
         let read = Int(book.pagesRead)
         let total = Int(book.totalPages)
         return "\(read) of \(total) \(book.unitLabelShort) · \(Int(progress * 100))%"
+    }
+
+    /// What's left, in minutes you'd actually spend — and whether that's an
+    /// evening. Tinted when it is, because "you could finish this tonight" is
+    /// the one line here that changes what somebody does next.
+    ///
+    /// Audiobooks are skipped: their pages field holds minutes, so the maths
+    /// that produces this doesn't apply to them.
+    private var paceLine: (text: String, tonight: Bool)? {
+        guard let pace, book.format != .audio, book.totalPages > 0 else { return nil }
+        let remaining = book.pagesRemaining
+        guard remaining > 0, let left = pace.timeLeftDescription(pages: remaining) else { return nil }
+        guard pace.fitsInOneSitting(pages: remaining) else { return (left, false) }
+        return ("\(left) — you could finish tonight", true)
     }
 
     private var metaLine: String? {

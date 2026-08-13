@@ -210,7 +210,7 @@ struct ReaderView: View {
 
             Spacer()
 
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 ProgressView(value: bookProgress)
                     .tint(settings.ink.opacity(0.6))
                 HStack {
@@ -226,6 +226,14 @@ struct ReaderView: View {
                 }
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
+                // On its own line and tinted: it's the figure someone deciding
+                // whether to read on is looking for, and it shouldn't have to be
+                // picked out of a row of three.
+                if let chapterLeft = chapterTimeLeft {
+                    Text(chapterLeft)
+                        .font(.caption2)
+                        .foregroundStyle(settings.ink.opacity(0.75))
+                }
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
@@ -310,6 +318,25 @@ struct ReaderView: View {
         let total = characters.reduce(0, +)
         let remaining = Int(Double(total) * (1 - bookProgress))
         return ReadingSession.timeLeftDescription(characters: remaining, at: record.charactersPerMinute)
+    }
+
+    /// Time to the end of *this chapter* — the one people actually decide on.
+    ///
+    /// "Six hours left in the book" doesn't answer the question being asked at
+    /// half past eleven at night; "nine minutes left in the chapter" does. Built
+    /// on the same measured characters-per-minute as the whole-book figure, so
+    /// the two can't disagree.
+    private var chapterTimeLeft: String? {
+        guard let record,
+              let characters = record.chapterCharacters,
+              let chapterChars = characters[safe: chapter],
+              chapterChars > 0
+        else { return nil }
+        let remaining = ReadingSession.charactersRemaining(inChapter: chapterChars, read: pageFraction)
+        guard let minutes = ReadingSession.minutesRemaining(characters: remaining, at: record.charactersPerMinute),
+              let described = ReadingPace.describe(minutes: minutes)
+        else { return nil }
+        return "\(described) left in this chapter"
     }
 
     private var charactersPerPage: Int {

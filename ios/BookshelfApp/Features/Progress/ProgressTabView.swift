@@ -10,6 +10,9 @@ struct ProgressTabView: View {
     @Environment(BookshelfStore.self) private var store
     @Environment(\.themeAccent) private var accent
     @Environment(\.themeBackground) private var background
+    /// For the reader's own characters-per-minute, which is a finer measurement
+    /// than the shelf's pages-per-minute and worth showing alongside it.
+    @Environment(EPUBLibrary.self) private var epubs
     @State private var editingGoal = false
     @State private var showingYearReview = false
 
@@ -37,6 +40,7 @@ struct ProgressTabView: View {
                 VStack(spacing: 20) {
                     goalCard
                     streakCard
+                    paceCard
                     if !digest.insights.isEmpty { insightsCard }
                     heatmapCard
                     dailyChart
@@ -173,6 +177,75 @@ struct ProgressTabView: View {
             Text(label).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Pace
+
+    /// How fast you actually read — measured, not asked for.
+    ///
+    /// The card exists in two states on purpose. Before there's evidence it says
+    /// so and explains how to produce some; it never fills the gap with an
+    /// assumed 200 words a minute, because a guess shown in the same place as a
+    /// measurement is indistinguishable from one.
+    @ViewBuilder
+    private var paceCard: some View {
+        if let pace = digest.pace {
+            Card(title: "Your pace", subtitle: pace.sittingDescription.map { "\($0) a sitting" }) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 24) {
+                        stat("⏱", "\(pace.pagesPerHour)", "pages an hour")
+                        Divider().frame(height: 34)
+                        if let perDay = pace.pagesPerDay {
+                            stat("📅", "\(Int(perDay.rounded()))", "pages a day")
+                            Divider().frame(height: 34)
+                        }
+                        stat("📚", "\(pace.timedSessions)", "timed sittings")
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    // The provenance line. This is the claim no competitor can
+                    // make, so it's worth spelling out that it's a measurement.
+                    Text(measuredNote(pace))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        } else {
+            Card(title: "Your pace") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Not measured yet.")
+                        .font(.subheadline)
+                    Text("Time \(ReadingPace.minimumSessions) sittings — with the stopwatch in “Log a session”, or just by reading in the app's own reader — and this becomes a real number instead of a guess.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    /// Adds the reader's own measurement when there is one: it counts characters
+    /// rather than pages, so it's the more exact of the two and it's the number
+    /// people recognise their reading speed by.
+    private func measuredNote(_ pace: ReadingPace) -> String {
+        var text = "Measured from \(pace.timedSessions) timed sitting\(pace.timedSessions == 1 ? "" : "s")"
+        if pace.pagesPerDay != nil, pace.activeDays > 0 {
+            text += ", and \(pace.activeDays) day\(pace.activeDays == 1 ? "" : "s") of reading in the last \(pace.windowDays)"
+        }
+        text += "."
+        if let wpm = readerWordsPerMinute {
+            text += " In the reader you average about \(wpm) words a minute."
+        }
+        return text
+    }
+
+    /// The reader's learned characters-per-minute, blended across every ePub
+    /// that has one. Nil until a book has been read long enough to learn from.
+    private var readerWordsPerMinute: Int? {
+        let rates = epubs.books.compactMap(\.charactersPerMinute).filter { $0 > 0 }
+        guard !rates.isEmpty else { return nil }
+        return ReadingPace.wordsPerMinute(charactersPerMinute: rates.reduce(0, +) / Double(rates.count))
     }
 
     private var insightsCard: some View {

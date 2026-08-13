@@ -46,6 +46,22 @@ struct ReadingSessionTests {
         #expect(session.charactersRead == 0)
     }
 
+    @Test("what's left of a chapter survives an out-of-range page")
+    func chapterRemainderIsClamped() {
+        #expect(ReadingSession.charactersRemaining(inChapter: 10_000, read: 0) == 10_000)
+        #expect(ReadingSession.charactersRemaining(inChapter: 10_000, read: 0.25) == 7_500)
+        #expect(ReadingSession.charactersRemaining(inChapter: 10_000, read: 1) == 0)
+
+        // The page index is written by the paginator and by three navigation
+        // paths, and briefly goes out of range between a chapter change and the
+        // web view reporting its new page count. Unclamped that reads as
+        // "-8 min left in this chapter".
+        #expect(ReadingSession.charactersRemaining(inChapter: 10_000, read: 1.8) == 0)
+        #expect(ReadingSession.charactersRemaining(inChapter: 10_000, read: -0.5) == 10_000)
+        #expect(ReadingSession.charactersRemaining(inChapter: 10_000, read: .nan) == 10_000)
+        #expect(ReadingSession.charactersRemaining(inChapter: 0, read: 0.5) == 0)
+    }
+
     @Test("a short pause is the same session")
     func shortGapContinues() {
         var session = ReadingSession()

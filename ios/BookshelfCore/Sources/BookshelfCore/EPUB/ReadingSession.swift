@@ -124,6 +124,19 @@ public struct ReadingSession: Sendable, Equatable {
         return Double(characters) / cpm
     }
 
+    /// Characters left in a chapter you're `fraction` of the way through.
+    ///
+    /// Clamped, because `fraction` is derived from a page index that the
+    /// paginator and three navigation paths all write to — it goes out of range
+    /// in the moment between a chapter change and the web view reporting its new
+    /// page count. Unclamped, that shows as a negative estimate or one longer
+    /// than the chapter, which is the sort of number a reader notices.
+    public static func charactersRemaining(inChapter characters: Int, read fraction: Double) -> Int {
+        guard characters > 0 else { return 0 }
+        let done = fraction.isFinite ? min(1, max(0, fraction)) : 0
+        return Int((Double(characters) * (1 - done)).rounded())
+    }
+
     /// "about 12 min left", "about 1 hr 5 min left" — or nil when there's
     /// nothing useful to say.
     public static func timeLeftDescription(characters: Int, at rate: Double?) -> String? {

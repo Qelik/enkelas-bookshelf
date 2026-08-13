@@ -23,6 +23,9 @@ public struct ProgressDigest: Sendable {
     public let totalPagesRead: Double
     public let pagesGoal: (target: Int, done: Int)?
     public let yearsWithReading: [Int]
+    /// Measured reading speed, or nil while there aren't enough timed sittings
+    /// to claim one. Derived here with the rest: it walks every log too.
+    public let pace: ReadingPace?
 
     /// Cheap series for the charts, also derived once.
     public let pagesPerDay: [StatPoint]
@@ -49,6 +52,7 @@ public struct ProgressDigest: Sendable {
             totalPagesRead: state.totalPagesRead,
             pagesGoal: state.pagesGoal,
             yearsWithReading: state.yearsWithReading(calendar: calendar),
+            pace: state.readingPace(now: now, calendar: calendar),
             pagesPerDay: state.dailyPages(days: 30),
             pagesPerMonth: state.monthlyPages(months: 12),
             genres: state.topGenres(),
@@ -68,6 +72,7 @@ public struct ProgressDigest: Sendable {
         totalPagesRead: 0,
         pagesGoal: nil,
         yearsWithReading: [],
+        pace: nil,
         pagesPerDay: [],
         pagesPerMonth: [],
         genres: [],

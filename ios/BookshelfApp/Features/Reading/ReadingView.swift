@@ -22,6 +22,13 @@ struct ReadingView: View {
     /// selection where a stack keeps a history — the same book has to be
     /// expressible in both, and the two must not fight over which is showing.
     @State private var selected: String?
+    /// Measured reading speed, for the "about 3 hr left" line on each row.
+    ///
+    /// Derived once here rather than per row: it walks every log on the shelf.
+    /// It rides along in the Progress digest, which is cached by `updatedAt` and
+    /// warmed at launch — so this is usually a free lookup, and never a
+    /// main-thread one.
+    @State private var pace: ReadingPace?
 
     var body: some View {
         // On an iPad the list and the book sit side by side; on a phone the book
@@ -112,6 +119,19 @@ struct ReadingView: View {
     /// two layouts can't drift into having different swipe actions.
     @ViewBuilder
     private func bookList(selection: Binding<String?>?) -> some View {
+        // Wrapped so the pace refresh is attached in exactly one place — the
+        // phone and the iPad call this, and a `.task` added to only one of them
+        // is a line that silently never appears on the other.
+        listContent(selection: selection)
+            .task(id: store.state.updatedAt) {
+                let fresh = await DigestCache.shared.make(from: store.state)
+                guard !Task.isCancelled else { return }
+                pace = fresh.pace
+            }
+    }
+
+    @ViewBuilder
+    private func listContent(selection: Binding<String?>?) -> some View {
         if store.state.reading.isEmpty {
             ContentUnavailableView {
                 Label("Nothing on the go", systemImage: "book")
@@ -124,7 +144,7 @@ struct ReadingView: View {
                 .themedState()
         } else if let selection {
             List(store.state.reading, id: \.id, selection: selection) { book in
-                BookRow(book: book)
+                BookRow(book: book, pace: pace)
                     .tag(book.id)
                     .swipeActions(edge: .leading) {
                         Button("Log", systemImage: "plus.circle") { logging = book }
@@ -136,7 +156,7 @@ struct ReadingView: View {
             List {
                 ForEach(store.state.reading, id: \.id) { book in
                     NavigationLink(value: book.id) {
-                        BookRow(book: book)
+                        BookRow(book: book, pace: pace)
                     }
                     .swipeActions(edge: .leading) {
                         Button("Log", systemImage: "plus.circle") { logging = book }
