@@ -64,6 +64,7 @@ struct ShelfView: View {
     @AppStorage("shelf-display") private var asShelf = false
     @State private var scanning = false
     @State private var shopping = false
+    @State private var browsingShelves = false
     @State private var path: [String] = []
 
     var body: some View {
@@ -131,6 +132,7 @@ struct ShelfView: View {
             // scanning from Want to Read means you want to read it.
             .sheet(isPresented: $scanning) { ScanBookView(status: section.status) }
             .sheet(isPresented: $shopping) { BookshopModeView() }
+            .sheet(isPresented: $browsingShelves) { ShelfLocationsView() }
             // Sorting, filtering and the bookcase are all about *your* books, so
             // they'd do nothing on Explore.
             .toolbar {
@@ -144,6 +146,13 @@ struct ShelfView: View {
                                 ForEach(Ownership.allCases) { Text($0.rawValue).tag($0) }
                             }
                             Toggle("Lent out", isOn: $lentOut)
+                            Divider()
+                            // Not a filter — a different question entirely
+                            // ("where in the room is it?"), but it belongs with
+                            // the other things you do to your own books.
+                            Button("Where things are", systemImage: "mappin.and.ellipse") {
+                                browsingShelves = true
+                            }
                             if !store.state.allTags.isEmpty {
                                 Picker("Tag", selection: $tag) {
                                     Text("All tags").tag(String?.none)

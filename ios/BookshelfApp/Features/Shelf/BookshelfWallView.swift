@@ -13,6 +13,12 @@ struct BookshelfWallView: View {
     @Environment(ThemeStore.self) private var themes
 
     let books: [WireBook]
+    /// One book to pick out of the row — the answer to "where is my copy?".
+    ///
+    /// Everything else dims rather than the spine merely glowing: on a full case
+    /// a highlight competes with forty other coloured spines, and the eye finds
+    /// the one lit object in a dark room far faster than the brightest of many.
+    var highlight: String?
     var onSelect: (String) -> Void
 
     /// Inset from the pane edge to the inside of the case.
@@ -71,7 +77,9 @@ struct BookshelfWallView: View {
                     SpineView(
                         spine: spine,
                         accent: accent,
-                        photo: SpineImageCache.shared.image(for: spine.id, from: photos)
+                        photo: SpineImageCache.shared.image(for: spine.id, from: photos),
+                        dimmed: highlight != nil && highlight != spine.id,
+                        lit: highlight == spine.id
                     )
                         .onTapGesture {
                             Haptics.pageTurn()
@@ -131,6 +139,10 @@ private struct SpineView: View {
     /// entirely — printed title, bands and all — because a photograph with our
     /// lettering on top of the publisher's is worse than either alone.
     let photo: UIImage?
+    /// Pushed back because another book is being pointed at.
+    var dimmed = false
+    /// This is the one you're looking for.
+    var lit = false
 
     private var base: Color {
         Color(hue: Double(spine.hue) / 360, saturation: 0.42, brightness: 0.52)
@@ -155,6 +167,19 @@ private struct SpineView: View {
             RoundedRectangle(cornerRadius: 2)
                 .strokeBorder(.black.opacity(0.35), lineWidth: 0.5)
         }
+        // Everything else recedes; the one you asked for keeps its colour, gains
+        // a rim and stands a little proud of the row — the way a book does when
+        // somebody has pulled it half out for you.
+        .saturation(dimmed ? 0.15 : 1)
+        .opacity(dimmed ? 0.4 : 1)
+        .overlay {
+            if lit {
+                RoundedRectangle(cornerRadius: 2)
+                    .strokeBorder(accent, lineWidth: 2)
+            }
+        }
+        .shadow(color: lit ? accent.opacity(0.9) : .clear, radius: 10)
+        .offset(y: lit ? -8 : 0)
         // The tap target is the book, and only the book.
         //
         // `clipShape` masks drawing, not touches: the spine's contents — a title

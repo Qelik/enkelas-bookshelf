@@ -23,6 +23,8 @@ struct BookDetailView: View {
     @State private var borrowing = false
     @State private var photographing = false
     @State private var addingNote: AddNoteView.Kind?
+    @State private var placing = false
+    @State private var findingOnShelf = false
     /// This book's measured reading speed — its own where it has enough timed
     /// sittings, the shelf's otherwise. Derived off the main actor because it
     /// walks every log; recomputed only when the shelf actually changes.
@@ -91,6 +93,12 @@ struct BookDetailView: View {
                 .sheet(isPresented: $bookmarking) { BookmarkView(book: book) }
                 .sheet(isPresented: $photographing) { SpinePhotoView(book: book) }
                 .sheet(isPresented: $lending) { LendView(book: book) }
+                .sheet(isPresented: $placing) {
+                    LocationPickerView(bookIDs: [book.id], current: book.location)
+                }
+                .sheet(isPresented: $findingOnShelf) {
+                    ShelfLocationsView(findingBookID: book.id)
+                }
                 .sheet(isPresented: $borrowing) { BorrowedView(book: book) }
                 .sheet(item: $addingNote) { AddNoteView(book: book, kind: $0) }
                 .confirmationDialog(
@@ -279,7 +287,25 @@ struct BookDetailView: View {
                 LabeledContent("Finished", value: finished.formatted(date: .abbreviated, time: .omitted))
             }
             if book.owned {
-                LabeledContent("Owned", value: book.location.isEmpty ? "Yes" : book.location)
+                // Tappable, because until now `location` could be displayed and
+                // never set — the field existed in the data model with no way in.
+                Button { placing = true } label: {
+                    LabeledContent {
+                        HStack(spacing: 4) {
+                            Text(book.location.isEmpty ? "Say where" : book.location)
+                            Image(systemName: "chevron.right").font(.caption2)
+                        }
+                        .foregroundStyle(book.location.isEmpty ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    } label: {
+                        Label("On your shelf at", systemImage: "mappin.and.ellipse")
+                            .foregroundStyle(.primary)
+                    }
+                }
+                if !book.location.isEmpty {
+                    // The whole point of the feature: not "it's in the living
+                    // room" but "here it is, on this shelf, this one".
+                    Button("Show me where", systemImage: "sparkle.magnifyingglass") { findingOnShelf = true }
+                }
             }
             if book.readCount > 1 {
                 LabeledContent("Read", value: "\(Int(book.readCount))×")
