@@ -125,6 +125,29 @@ public struct OpenLibrary: Sendable {
         return docs
     }
 
+    /// Free-text search, for when the title/author split isn't confident.
+    ///
+    /// The shelfie scanner gives us some words read off a spine in an order
+    /// nobody can be sure of, and `q=` is the endpoint that copes with that.
+    /// `title=`/`author=` require knowing which is which, and get it wrong in
+    /// exactly the cases this exists for.
+    public func search(freeText: String) async throws -> [Doc] {
+        let query = freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+
+        var comps = URLComponents(string: "https://openlibrary.org/search.json")!
+        comps.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: "5"),
+            URLQueryItem(name: "fields", value: "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,isbn,subject"),
+        ]
+        guard let url = comps.url else { return [] }
+
+        struct Payload: Decodable { var docs: [Doc]? }
+        let data = try await get(url)
+        return try JSONDecoder().decode(Payload.self, from: data).docs ?? []
+    }
+
     /// Which series an edition belongs to — "The Mistborn Saga #3".
     ///
     /// A second request rather than one more entry in `fields`, because the

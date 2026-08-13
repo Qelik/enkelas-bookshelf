@@ -65,6 +65,7 @@ struct ShelfView: View {
     @State private var scanning = false
     @State private var shopping = false
     @State private var browsingShelves = false
+    @State private var shelfie = false
     @State private var path: [String] = []
 
     var body: some View {
@@ -133,6 +134,7 @@ struct ShelfView: View {
             .sheet(isPresented: $scanning) { ScanBookView(status: section.status) }
             .sheet(isPresented: $shopping) { BookshopModeView() }
             .sheet(isPresented: $browsingShelves) { ShelfLocationsView() }
+            .sheet(isPresented: $shelfie) { ShelfieImportView() }
             // Sorting, filtering and the bookcase are all about *your* books, so
             // they'd do nothing on Explore.
             .toolbar {
@@ -174,6 +176,10 @@ struct ShelfView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu("Add a book", systemImage: "plus") {
                         Button("Scan a barcode", systemImage: "barcode.viewfinder") { scanning = true }
+                        // The flagship import: a photo of a shelf beats typing
+                        // in two hundred books, which is why most shelves never
+                        // get catalogued at all.
+                        Button("Scan a whole shelf", systemImage: "books.vertical") { shelfie = true }
                         Button("Enter by hand", systemImage: "square.and.pencil", action: onAdd)
                         Divider()
                         // Not adding a book — asking about one. Same camera,
