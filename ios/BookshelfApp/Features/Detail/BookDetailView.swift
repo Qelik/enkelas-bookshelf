@@ -20,6 +20,7 @@ struct BookDetailView: View {
     @State private var markingDNF = false
     @State private var bookmarking = false
     @State private var lending = false
+    @State private var borrowing = false
     @State private var photographing = false
     @State private var addingNote: AddNoteView.Kind?
 
@@ -65,6 +66,8 @@ struct BookDetailView: View {
                             ) { photographing = true }
                             Button(book.isLentOut ? "Lending…" : "Lend to someone",
                                    systemImage: "arrow.left.arrow.right") { lending = true }
+                            Button(book.loanDueDate == nil ? "I borrowed this" : "Due back…",
+                                   systemImage: "building.columns") { borrowing = true }
                             if book.status == .finished {
                                 Button("Finished a re-read", systemImage: "arrow.clockwise") {
                                     finishing = .reread
@@ -84,6 +87,7 @@ struct BookDetailView: View {
                 .sheet(isPresented: $bookmarking) { BookmarkView(book: book) }
                 .sheet(isPresented: $photographing) { SpinePhotoView(book: book) }
                 .sheet(isPresented: $lending) { LendView(book: book) }
+                .sheet(isPresented: $borrowing) { BorrowedView(book: book) }
                 .sheet(item: $addingNote) { AddNoteView(book: book, kind: $0) }
                 .confirmationDialog(
                     "Delete “\(book.title)”?",
@@ -215,7 +219,13 @@ struct BookDetailView: View {
                 LabeledContent("Read", value: "\(Int(book.readCount))×")
             }
             if let due = book.loanDueDate {
-                LabeledContent("Library due", value: due.formatted(date: .abbreviated, time: .omitted))
+                let late = Calendar.current.startOfDay(for: due) < Calendar.current.startOfDay(for: Date())
+                LabeledContent("Due back") {
+                    Text(due.formatted(date: .abbreviated, time: .omitted))
+                        // Amber once it's late, the same as a lent book that's
+                        // overdue — the two halves of a loan should read alike.
+                        .foregroundStyle(late ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                }
             }
             if !book.dnfReason.isEmpty {
                 LabeledContent("Stopped because", value: book.dnfReason)

@@ -268,6 +268,80 @@ struct LendView: View {
     }
 }
 
+/// A book you borrowed, and when it has to go back.
+///
+/// The other half of lending. `loanDue` has existed on the wire since the web app
+/// wrote it, and the reminder has always read it — but the phone had no way to set
+/// one, so the borrowed half of that switch only ever worked for a date typed into
+/// a browser.
+struct BorrowedView: View {
+    @Environment(\.themeBackground) private var background
+    @Environment(BookshelfStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    let book: WireBook
+    @State private var hasDue = false
+    @State private var due: Date = .now
+
+    /// Three weeks, the usual library loan.
+    private static let defaultLoan = 21
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("Due back on a date", isOn: $hasDue)
+                    if hasDue {
+                        DatePicker("Due", selection: $due, displayedComponents: .date)
+                    }
+                } header: {
+                    Text(book.title)
+                } footer: {
+                    // The day before, unlike a lent book: a library has opening
+                    // hours, and being told on the day it's due is being told late.
+                    Text(hasDue
+                         ? "You'll get a reminder the day before, if reminders are on in Settings."
+                         : "For a library book, or anything else you have to give back.")
+                }
+
+                if book.loanDueDate != nil {
+                    Section {
+                        Button("Gave it back", role: .destructive) {
+                            store.setLoanDue(bookID: book.id, date: nil)
+                            Reminders.loansChanged(state: store.state)
+                            dismiss()
+                        }
+                    }
+                }
+            }
+            .themedPage()
+            .themedRows()
+            .navigationTitle("Borrowed book")
+            .toolbarBackground(background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        store.setLoanDue(bookID: book.id, date: hasDue ? due : nil)
+                        Reminders.loansChanged(state: store.state)
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                if let existing = book.loanDueDate {
+                    hasDue = true
+                    due = existing
+                } else {
+                    due = Calendar.current.date(byAdding: .day, value: Self.defaultLoan, to: .now) ?? .now
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Notes
 
 /// One sheet for all four note kinds — they differ only in their fields, and
