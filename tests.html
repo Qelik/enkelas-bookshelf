@@ -136,6 +136,19 @@
         eq(T.canonicalISBN(null), "", "null");
       });
 
+      // --- holdMovedTooFar (shelf drag on touch) -----------------------------
+      test("a long press tolerates the jitter every finger has", function () {
+        // This was `any pointermove cancels the hold`, which is a threshold no
+        // hand can meet — a finger resting on glass reports a pixel or two, so
+        // hold-and-drag to rearrange the shelf never started on a touchscreen.
+        assert(!T.holdMovedTooFar(100, 100, 100, 100), "dead still");
+        assert(!T.holdMovedTooFar(100, 100, 101, 100), "1px of finger jitter");
+        assert(!T.holdMovedTooFar(100, 100, 108, 94), "still within slop");
+        // But a genuine swipe is a scroll, not a hold.
+        assert(T.holdMovedTooFar(100, 100, 130, 100), "swiped sideways");
+        assert(T.holdMovedTooFar(100, 100, 100, 140), "scrolled down");
+      });
+
       // --- authorMatches -----------------------------------------------------
       test("authorMatches agrees on the same author, rejects a different one", function () {
         assert(T.authorMatches("Brandon Sanderson", ["Brandon Sanderson"]), "exact");

@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.08.13"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.08.13b"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -1726,6 +1726,13 @@ function saveShelfOrderFromDOM(shelf: HTMLElement) {
   state.shelfOrder = mergeShelfOrder(state.shelfOrder || [], visible, state.books.map((b) => b.id));
   commit();
 }
+// How far a finger may drift during a long press before it stops being a hold.
+// Ten CSS pixels is roughly what iOS itself allows; zero — which is what this
+// used to be — is a threshold no hand can meet.
+const HOLD_SLOP = 10;
+function holdMovedTooFar(startX: number, startY: number, x: number, y: number) {
+  return Math.abs(x - startX) > HOLD_SLOP || Math.abs(y - startY) > HOLD_SLOP;
+}
 function setupShelfDnD(root: HTMLElement) {
   let dragEl: HTMLElement | null = null;
   root.addEventListener("dragstart", (e) => {
@@ -1754,14 +1761,24 @@ function setupShelfDnD(root: HTMLElement) {
   });
   // Touch: hold a book for a moment, then drag it along the shelf.
   let touchDrag: HTMLElement | null = null, holdTimer: ReturnType<typeof setTimeout> | null = null, suppressClick = false;
+  // Where the finger landed, so the hold can tolerate the jitter every finger has.
+  let holdX = 0, holdY = 0;
   root.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse") return;
     const slot = (e.target as HTMLElement).closest<HTMLElement>(".shelf-slot");
     if (!slot) return;
+    holdX = e.clientX; holdY = e.clientY;
+    clearTimeout(holdTimer!);           // a previous hold that never resolved
     holdTimer = setTimeout(() => { touchDrag = slot; slot.classList.add("dragging"); }, 350);
   });
   root.addEventListener("pointermove", (e) => {
-    if (!touchDrag) { clearTimeout(holdTimer!); return; }
+    if (!touchDrag) {
+      // Only a real move cancels the hold. Cancelling on *any* pointermove is
+      // what broke this on touch: a finger resting on glass still reports a
+      // pixel or two of movement, so the long press almost never completed.
+      if (holdMovedTooFar(holdX, holdY, e.clientX, e.clientY)) clearTimeout(holdTimer!);
+      return;
+    }
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const over = el && el.closest<HTMLElement>(".shelf-slot");
     if (!over || over === touchDrag || !over.parentNode) return;
@@ -5294,7 +5311,7 @@ export const BookshelfAPI = {
 window.BookshelfAPI = BookshelfAPI; // kept on window for console + backwards-compat
 
 // Pure(ish) helpers exposed for the no-build test harness (tests.html).
-window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl, passwordProblem, passwordStrength, canonicalISBN };
+window.__test = { normalize, parseCSV, bookMatches, isJunkTag, authorMatches, cleanSubjects, parseList, readingStreak, readNextPicks, bufToB64, b64ToBuf, startOfDay, shiftDay, dayspan, streakFromDays, dailyItems, derived, invalidateDerived, mergeShelfOrder, safeCoverUrl, passwordProblem, passwordStrength, canonicalISBN, holdMovedTooFar };
 
 document.addEventListener("DOMContentLoaded", init);
 document.addEventListener("DOMContentLoaded", initReader); // reader wires up second, matching the old script order

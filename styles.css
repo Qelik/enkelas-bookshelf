@@ -696,8 +696,14 @@ html[data-theme="dark"] .view-toggle button.active { background: var(--accent); 
   display: flex; align-items: flex-end;
   position: relative;
   padding: 0 3px var(--board-h);
-  touch-action: pan-y;
 }
+/* The spine as well as the slot, because the spine is a <button> sitting on top
+   and it is what a finger actually lands on. touch-action is read from the
+   touched element, so leaving the button at `auto` let the browser claim a
+   horizontal drag as a pan and fire pointercancel — the hold-and-drag ended
+   before it began. `pan-y` keeps vertical scrolling with the browser and hands
+   horizontal movement to the shelf, which is the only axis it reorders on. */
+.shelf-slot, .shelf-slot .spine { touch-action: pan-y; }
 /* each slot draws its stretch of shelf board; neighbours join into one plank */
 .shelf-slot::after {
   content: "";
