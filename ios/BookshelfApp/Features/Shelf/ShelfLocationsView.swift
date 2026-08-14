@@ -131,7 +131,16 @@ private struct ShelfContentsView: View {
                 .listStyle(.plain)
                 .themedPage()
             } else {
-                BookshelfWallView(books: books, highlight: highlight) { selected = $0 }
+                // Same arrangement as the main bookcase, and rearrangeable here
+                // too — this is a real shelf in a room, so the order on screen
+                // should be able to match the order on the wall. Not while
+                // pointing a book out, though: there the shelf is an answer to
+                // a question, not something to tidy.
+                BookshelfWallView(
+                    books: ShelfOrder.sorted(books, by: store.state.shelfOrder),
+                    highlight: highlight,
+                    onReorder: highlight == nil ? { store.setShelfOrder(visible: $0) } : nil
+                ) { selected = $0 }
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {

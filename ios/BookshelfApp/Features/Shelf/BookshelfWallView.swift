@@ -19,10 +19,32 @@ struct BookshelfWallView: View {
     /// a highlight competes with forty other coloured spines, and the eye finds
     /// the one lit object in a dark room far faster than the brightest of many.
     var highlight: String?
+    /// The books, in the order they were left in. Nil means this shelf can't be
+    /// rearranged — the "where is my copy?" lookup, where dragging would be a
+    /// distraction from the question being asked.
+    var onReorder: (([String]) -> Void)?
     var onSelect: (String) -> Void
 
     /// Inset from the pane edge to the inside of the case.
     private let caseInset = 14.0
+    private let caseSpace = "bookcase"
+
+    /// The book being carried, and where the shelf currently stands as a result.
+    ///
+    /// Held locally rather than committed on every frame: a store write per
+    /// pixel of movement would push a sync on each one. It goes to the store
+    /// once, when the finger lifts.
+    @State private var draggingID: String?
+    @State private var liveOrder: [String] = []
+    @State private var frames: [String: CGRect] = [:]
+
+    /// What to draw: the live arrangement while a book is being carried, and
+    /// whatever the caller passed the rest of the time.
+    private var shown: [WireBook] {
+        guard draggingID != nil, !liveOrder.isEmpty else { return books }
+        let byID = Dictionary(books.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return liveOrder.compactMap { byID[$0] }
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -30,7 +52,7 @@ struct BookshelfWallView: View {
             // The photo's aspect goes into the layout, not just the drawing:
             // a packer measuring one width while the view draws another is how
             // rows overflow the shelf.
-            let spines = books.map { book in
+            let spines = shown.map { book in
                 ShelfLayout.spine(
                     for: book,
                     photoAspect: SpineImageCache.shared.aspect(for: book.id, from: photos)
@@ -55,6 +77,14 @@ struct BookshelfWallView: View {
                 // furniture with room to grow into.
                 .frame(minHeight: geo.size.height, alignment: .top)
             }
+            .coordinateSpace(name: caseSpace)
+            // Where every spine currently sits, so a carried book knows what
+            // it's over. Read from the layout rather than recomputed, or the
+            // packer and the hit test would disagree about where a book is.
+            .onPreferenceChange(SpineFramesKey.self) { frames = $0 }
+            // The scroll view must not follow the finger while a book is being
+            // carried; the drag is the gesture, not a pan.
+            .scrollDisabled(draggingID != nil)
             .scrollIndicators(.hidden)
             // On the scroll view, not the content: a background *inside* the
             // scroll view stops at its container, which left the case ending in
@@ -79,12 +109,22 @@ struct BookshelfWallView: View {
                         accent: accent,
                         photo: SpineImageCache.shared.image(for: spine.id, from: photos),
                         dimmed: highlight != nil && highlight != spine.id,
-                        lit: highlight == spine.id
+                        lit: highlight == spine.id,
+                        carried: draggingID == spine.id
                     )
+                        .background(
+                            GeometryReader { g in
+                                Color.clear.preference(
+                                    key: SpineFramesKey.self,
+                                    value: [spine.id: g.frame(in: .named(caseSpace))]
+                                )
+                            }
+                        )
                         .onTapGesture {
                             Haptics.pageTurn()
                             onSelect(spine.id)
                         }
+                        .gesture(reorderGesture(for: spine.id), isEnabled: onReorder != nil)
                 }
                 Spacer(minLength: 0)
             }
@@ -96,6 +136,65 @@ struct BookshelfWallView: View {
 
             plank
         }
+    }
+
+    // MARK: - Rearranging
+
+    /// Hold a book, then slide it along the shelf.
+    ///
+    /// `LongPressGesture` rather than a hand-rolled timer, and that is the whole
+    /// point: it carries its own movement tolerance, so a finger resting on
+    /// glass doesn't cancel the hold. The web app hand-rolled this and cancelled
+    /// on *any* pointermove, which is a threshold no hand can meet — it was
+    /// broken on touch from the day it shipped.
+    private func reorderGesture(for id: String) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(caseSpace)))
+            .onChanged { value in
+                switch value {
+                case .first(true):
+                    beginCarrying(id)
+                case .second(true, let drag?):
+                    carry(to: drag.location)
+                default:
+                    break
+                }
+            }
+            // Only reached when the hold succeeded, so a plain tap can't land
+            // here and write an order nobody asked for.
+            .onEnded { _ in finishCarrying() }
+    }
+
+    private func beginCarrying(_ id: String) {
+        guard draggingID == nil else { return }
+        Haptics.saved()
+        liveOrder = books.map(\.id)
+        draggingID = id
+    }
+
+    private func carry(to point: CGPoint) {
+        guard let draggingID,
+              let targetID = frames.first(where: { $0.value.contains(point) })?.key,
+              targetID != draggingID,
+              let from = liveOrder.firstIndex(of: draggingID),
+              let to = liveOrder.firstIndex(of: targetID)
+        else { return }
+        withAnimation(.snappy(duration: 0.18)) {
+            liveOrder.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+        Haptics.pageTurn()
+    }
+
+    private func finishCarrying() {
+        defer {
+            draggingID = nil
+            liveOrder = []
+        }
+        guard draggingID != nil, !liveOrder.isEmpty else { return }
+        // Only the ids on screen: the shelf may be filtered, and the store
+        // splices this run back into the full arrangement.
+        onReorder?(liveOrder)
+        Haptics.unlocked()
     }
 
     private var plank: some View {
@@ -131,6 +230,15 @@ struct BookshelfWallView: View {
     }
 }
 
+/// Where each spine sits, gathered from the laid-out rows so the hit test and
+/// the packer can't disagree about where a book is.
+private struct SpineFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 /// One book, seen edge-on.
 private struct SpineView: View {
     let spine: ShelfLayout.Spine
@@ -143,6 +251,8 @@ private struct SpineView: View {
     var dimmed = false
     /// This is the one you're looking for.
     var lit = false
+    /// Being carried to a new place on the shelf.
+    var carried = false
 
     private var base: Color {
         Color(hue: Double(spine.hue) / 360, saturation: 0.42, brightness: 0.52)
@@ -179,7 +289,13 @@ private struct SpineView: View {
             }
         }
         .shadow(color: lit ? accent.opacity(0.9) : .clear, radius: 10)
-        .offset(y: lit ? -8 : 0)
+        // Lifted off the plank and tilted upright while carried, so it's obvious
+        // which book is in your hand and that the shelf is now in a mode.
+        .offset(y: carried ? -18 : (lit ? -8 : 0))
+        .scaleEffect(carried ? 1.06 : 1, anchor: .bottom)
+        .shadow(color: .black.opacity(carried ? 0.5 : 0), radius: 8, y: 6)
+        .zIndex(carried ? 1 : 0)
+        .animation(.snappy(duration: 0.18), value: carried)
         // The tap target is the book, and only the book.
         //
         // `clipShape` masks drawing, not touches: the spine's contents — a title

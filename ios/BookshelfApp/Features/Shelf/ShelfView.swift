@@ -74,7 +74,14 @@ struct ShelfView: View {
             if section == .explore {
                 ExploreView(query: query)
             } else if asShelf {
-                BookshelfWallView(books: visibleBooks) { path = [$0] }
+                // The bookcase always shows the arrangement you made, ignoring
+                // the Sort menu — the same rule the web app's shelf view uses.
+                // A shelf you arranged by hand and then find re-sorted by title
+                // isn't your shelf.
+                BookshelfWallView(
+                    books: ShelfOrder.sorted(visibleBooks, by: store.state.shelfOrder),
+                    onReorder: { store.setShelfOrder(visible: $0) }
+                ) { path = [$0] }
             } else {
             List {
                 if !visibleBooks.isEmpty {
