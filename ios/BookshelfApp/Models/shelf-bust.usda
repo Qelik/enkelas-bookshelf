@@ -1,0 +1,91 @@
+#usda 1.0
+(
+    """
+    A classical bust, built from primitives.
+
+    Hand-authored rather than downloaded: it is original geometry, so it carries
+    no licence, and it exists to prove the 3D path end to end — that a model is
+    found in the bundle, normalised to the shelf's scale, lit from the upper left
+    and rendered with the case showing through behind it.
+
+    It is a placeholder. A sculpted bust replaces this file and nothing else
+    changes; the renderer neither knows nor cares which it got.
+
+    Y is up and the feet sit at y=0, which is what lets the renderer stand any
+    model on the plank by its own bounding box.
+    """
+    defaultPrim = "Bust"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Bust"
+{
+    def Sphere "Head"
+    {
+        double radius = 0.30
+        float3 xformOp:scale = (0.86, 1.12, 0.92)
+        double3 xformOp:translate = (0, 1.20, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.90, 0.89, 0.86)]
+    }
+
+    def Sphere "Hair"
+    {
+        double radius = 0.30
+        float3 xformOp:scale = (0.94, 0.62, 0.98)
+        double3 xformOp:translate = (0, 1.36, -0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.78, 0.77, 0.74)]
+    }
+
+    def Sphere "Beard"
+    {
+        double radius = 0.26
+        float3 xformOp:scale = (0.82, 0.86, 0.72)
+        double3 xformOp:translate = (0, 1.00, 0.06)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.80, 0.79, 0.76)]
+    }
+
+    def Cylinder "Neck"
+    {
+        double radius = 0.13
+        double height = 0.26
+        uniform token axis = "Y"
+        double3 xformOp:translate = (0, 0.86, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        color3f[] primvars:displayColor = [(0.86, 0.85, 0.82)]
+    }
+
+    # Wide at the cut, narrowing to the neck — the shape that reads as a carving
+    # rather than a figure, even in silhouette.
+    def Cone "Shoulders"
+    {
+        double radius = 0.42
+        double height = 0.62
+        uniform token axis = "Y"
+        float3 xformOp:scale = (1.0, 1.0, 0.72)
+        double3 xformOp:translate = (0, 0.62, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.88, 0.87, 0.84)]
+    }
+
+    def Cube "Plinth"
+    {
+        double size = 2.0
+        float3 xformOp:scale = (0.21, 0.14, 0.17)
+        double3 xformOp:translate = (0, 0.14, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.62, 0.61, 0.60)]
+    }
+
+    def Cube "PlinthBase"
+    {
+        double size = 2.0
+        float3 xformOp:scale = (0.27, 0.035, 0.22)
+        double3 xformOp:translate = (0, 0.035, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.55, 0.54, 0.53)]
+    }
+}

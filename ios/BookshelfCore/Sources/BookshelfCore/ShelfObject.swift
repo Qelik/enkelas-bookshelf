@@ -115,6 +115,13 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
     /// Busts are the one kind that names itself. Historical figures, so no
     /// licence question — unlike naming a dragon after somebody's novel.
     public static let philosophers = ["Socrates", "Plato", "Aristotle", "Diogenes", "Hypatia", "Homer"]
+
+    /// The 3D model file this kind renders from, when the app has one bundled.
+    ///
+    /// Kept as a plain name so models can arrive one at a time: an object whose
+    /// file isn't there falls back to its drawing, and the shelf is never half
+    /// broken waiting for the set to be finished.
+    public var modelName: String { "shelf-\(rawValue)" }
 }
 
 // MARK: - On the shelf

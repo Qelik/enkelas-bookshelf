@@ -116,8 +116,26 @@ struct ShelfObjectView: View {
             .accessibilityLabel(object.displayName)
     }
 
+    /// A real model where one is bundled, the drawing everywhere else.
+    ///
+    /// Checked per object rather than globally so the set can be filled in one
+    /// figurine at a time — a shelf with three models and eight drawings is a
+    /// working shelf, not a broken one.
     @ViewBuilder
     private var drawing: some View {
+        if ShelfObjectModelView.hasModel(object.kind.modelName) {
+            ShelfObjectModelView(
+                modelName: object.kind.modelName,
+                tint: object.tint,
+                size: size
+            )
+        } else {
+            drawn
+        }
+    }
+
+    @ViewBuilder
+    private var drawn: some View {
         switch object.kind {
         case .plant: plant
         case .stackedBooks: stackedBooks
