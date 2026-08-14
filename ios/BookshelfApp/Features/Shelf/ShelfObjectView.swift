@@ -116,19 +116,15 @@ struct ShelfObjectView: View {
             .accessibilityLabel(object.displayName)
     }
 
-    /// A real model where one is bundled, the drawing everywhere else.
+    /// A photograph where one is bundled, the drawing everywhere else.
     ///
-    /// Checked per object rather than globally so the set can be filled in one
-    /// figurine at a time — a shelf with three models and eight drawings is a
+    /// Checked per object rather than globally, so the set can be filled in one
+    /// object at a time — a shelf with ten photographs and one drawing is a
     /// working shelf, not a broken one.
     @ViewBuilder
     private var drawing: some View {
-        if ShelfObjectModelView.hasModel(object.kind.modelName) {
-            ShelfObjectModelView(
-                modelName: object.kind.modelName,
-                tint: object.tint,
-                size: size
-            )
+        if ShelfObjectImage.exists(for: object.kind) {
+            ShelfObjectImage(kind: object.kind, height: size.height)
         } else {
             drawn
         }

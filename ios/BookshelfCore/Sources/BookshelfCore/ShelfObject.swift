@@ -116,12 +116,17 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
     /// licence question — unlike naming a dragon after somebody's novel.
     public static let philosophers = ["Socrates", "Plato", "Aristotle", "Diogenes", "Hypatia", "Homer"]
 
-    /// The 3D model file this kind renders from, when the app has one bundled.
+    /// Whether this kind is drawn from a photograph rather than from shapes.
     ///
-    /// Kept as a plain name so models can arrive one at a time: an object whose
-    /// file isn't there falls back to its drawing, and the shelf is never half
-    /// broken waiting for the set to be finished.
-    public var modelName: String { "shelf-\(rawValue)" }
+    /// Core has no business knowing about bundles, so the app decides what it
+    /// actually has; this is the *editorial* half — a photographed object must
+    /// not offer a colour slider, because multiplying a hue over a picture of
+    /// carved wood looks like a bad filter rather than a different object.
+    public var isPhotographic: Bool {
+        // Everything except the book stack, which had no usable public-domain
+        // photograph — every candidate was an engraving.
+        self != .stackedBooks
+    }
 }
 
 // MARK: - On the shelf

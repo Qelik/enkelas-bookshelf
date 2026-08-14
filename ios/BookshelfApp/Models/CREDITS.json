@@ -1,0 +1,82 @@
+{
+  "bookend": {
+    "artist": "",
+    "file": "shelf-bookend.png",
+    "kind": "bookend",
+    "licence": "CC0",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/8/8e/Bookend_MET_138276.jpg",
+    "title": "File:Bookend MET 138276.jpg"
+  },
+  "bust": {
+    "artist": "",
+    "file": "shelf-bust.png",
+    "kind": "bust",
+    "licence": "Public domain",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/a/a4/Socrates_Louvre.jpg",
+    "title": "Bust of Socrates, Louvre"
+  },
+  "candle": {
+    "artist": "<a href=\"//commons.wikimedia.org/wiki/User:Yanachka\" title=\"User:Yanachka\">User:Yanachka</a>",
+    "file": "shelf-candle.png",
+    "kind": "candle",
+    "licence": "Public domain",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/b/bb/Burn_candle.jpg",
+    "title": "File:Burn candle.jpg"
+  },
+  "cat": {
+    "artist": "",
+    "file": "shelf-cat.png",
+    "kind": "cat",
+    "licence": "Public domain",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/7/78/Sleeping_Cat_LACMA_AC1998.249.80.jpg",
+    "title": "Sleeping Cat, LACMA AC1998.249.80"
+  },
+  "clock": {
+    "artist": "",
+    "file": "shelf-clock.png",
+    "kind": "clock",
+    "licence": "CC0",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/8/80/Carriage_Clock_MET_233549.jpg",
+    "title": "Carriage Clock, MET 233549"
+  },
+  "crystal": {
+    "artist": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:Bordercolliez&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:Bordercolliez (page does not exist)\">Bordercolliez</a>",
+    "file": "shelf-crystal.png",
+    "kind": "crystal",
+    "licence": "CC0",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/0/0f/Amethyst_with_white_background.jpg",
+    "title": "File:Amethyst with white background.jpg"
+  },
+  "dragonCoiled": {
+    "artist": "",
+    "file": "shelf-dragonCoiled.png",
+    "kind": "dragonCoiled",
+    "licence": "Public domain",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/1/13/Coiled_Dragon_LACMA_AC1998.249.253.jpg",
+    "title": "File:Coiled Dragon LACMA AC1998.249.253.jpg"
+  },
+  "dragonPerched": {
+    "artist": "<a href=\"//commons.wikimedia.org/wiki/User:Vassil\" title=\"User:Vassil\">Vassil</a>",
+    "file": "shelf-dragonPerched.png",
+    "kind": "dragonPerched",
+    "licence": "CC0",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/c/ca/British_Museum_Chinese_jade_Coiled_dragon_11022019_1652.jpg",
+    "title": "File:British Museum Chinese jade Coiled dragon 11022019 1652.jpg"
+  },
+  "photo": {
+    "artist": "",
+    "file": "shelf-photo.png",
+    "kind": "photo",
+    "licence": "Public domain",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/6/64/Ferdinand_Bol_-_Self-Portrait_-_WGA2366.jpg",
+    "title": "Ferdinand Bol, Self-Portrait"
+  },
+  "plant": {
+    "artist": "",
+    "file": "shelf-plant.png",
+    "kind": "plant",
+    "licence": "CC0",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/9/93/Zz_plant.jpg",
+    "title": "ZZ plant (Zamioculcas zamiifolia) in pot"
+  }
+}

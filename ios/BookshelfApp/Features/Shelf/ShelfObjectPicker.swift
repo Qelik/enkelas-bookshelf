@@ -126,14 +126,17 @@ struct ShelfObjectEditor: View {
                             .listRowInsets(EdgeInsets())
                         }
 
-                        Section("Colour") {
-                            // A hue wheel rather than a palette: one number
-                            // drives the whole drawing, so every value works.
-                            Slider(value: $tint, in: 0...359, step: 1)
-                                .tint(Color(hue: tint / 360, saturation: 0.5, brightness: 0.6))
-                                .onChange(of: tint) { _, new in
-                                    store.updateShelfObject(id: objectID, tint: new)
-                                }
+                        // Only for the drawn objects. A hue drives a drawing
+                        // completely, so every value works; over a photograph
+                        // of carved wood the same slider is a bad filter.
+                        if !object.kind.isPhotographic {
+                            Section("Colour") {
+                                Slider(value: $tint, in: 0...359, step: 1)
+                                    .tint(Color(hue: tint / 360, saturation: 0.5, brightness: 0.6))
+                                    .onChange(of: tint) { _, new in
+                                        store.updateShelfObject(id: objectID, tint: new)
+                                    }
+                            }
                         }
 
                         if object.kind == .bust {
