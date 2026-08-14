@@ -127,6 +127,26 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
         // photograph — every candidate was an engraving.
         self != .stackedBooks
     }
+
+    /// Whether this object needs a display base drawn under it.
+    ///
+    /// Real shelf ornaments stand on something — a plinth, a turned wooden
+    /// stand, a felt-bottomed disc — and an object photographed without one
+    /// looks like it was cut out and dropped on the plank, which is exactly
+    /// what happened.
+    ///
+    /// Not everything gets one: several of these were photographed *on* their
+    /// museum stands, and a second base under the first reads as two objects.
+    public var needsBase: Bool {
+        switch self {
+        // A carved head, a netsuke and a raw crystal have nothing under them.
+        case .bust, .cat, .crystal: true
+        // Already standing on something: the dragons came on their stands, the
+        // clock has feet, the plant is in its pot, the frame leans, the candle
+        // is a jar, and a bookend is meant to sit flat.
+        default: false
+        }
+    }
 }
 
 // MARK: - On the shelf

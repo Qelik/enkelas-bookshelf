@@ -60,10 +60,25 @@ struct BookshelfWallView: View {
         return ShelfOrder.items(books: spines, objects: objects, order: effective)
     }
 
+    /// The shelves to draw: as many as the books need, and never fewer than
+    /// three.
+    ///
+    /// A case with a single occupied plank floating in a tall empty box reads
+    /// as a rendering bug rather than as a bookcase. Real furniture has its
+    /// shelves whether or not they're full, and empty ones are where a growing
+    /// library visibly has room to go.
+    private func planks(width: Double) -> [[ShelfItem]] {
+        let packed = ShelfLayout.rows(shownItems, width: width)
+        let empties = max(0, Self.minimumShelves - packed.count)
+        return packed + Array(repeating: [], count: empties)
+    }
+
+    static let minimumShelves = 3
+
     var body: some View {
         GeometryReader { geo in
             let usable = geo.size.width - caseInset * 2
-            let rows = ShelfLayout.rows(shownItems, width: usable)
+            let rows = planks(width: usable)
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -129,6 +144,10 @@ struct BookshelfWallView: View {
                 }
                 Spacer(minLength: 0)
             }
+            // A floor, so an empty shelf is a shelf rather than a hairline. The
+            // tallest book sets it when there is one; an empty plank still gets
+            // a bay you could stand a book in.
+            .frame(minHeight: ShelfLayout.maxHeight * 0.86, alignment: .bottom)
             .frame(width: width, alignment: .leading)
             // Only the books are inset; the board runs the full width of the
             // case. A plank stopping short of the sides reads as a shelf sawn
@@ -197,16 +216,44 @@ struct BookshelfWallView: View {
     }
 
     private func carry(to point: CGPoint) {
-        guard let draggingID,
-              let targetID = frames.first(where: { $0.value.contains(point) })?.key,
-              targetID != draggingID,
-              let from = liveOrder.firstIndex(of: draggingID),
-              let to = liveOrder.firstIndex(of: targetID)
+        guard let draggingID, let target = target(under: point, carrying: draggingID) else { return }
+        guard let from = liveOrder.firstIndex(of: draggingID),
+              let to = liveOrder.firstIndex(of: target.id)
         else { return }
+        // Landing on the far side of a book means going after it, not before —
+        // otherwise the last slot on a shelf is unreachable, because there is
+        // nothing beyond the last book to aim at.
+        let destination = target.after ? to + 1 : to
+        // `move(fromOffsets:toOffset:)` treats both of these as no-ops, and a
+        // no-op still animates and fires a haptic — which reads as the shelf
+        // twitching under a finger that hasn't crossed anything yet.
+        guard destination != from, destination != from + 1 else { return }
         withAnimation(.snappy(duration: 0.18)) {
-            liveOrder.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+            liveOrder.move(fromOffsets: IndexSet(integer: from), toOffset: destination)
         }
         Haptics.pageTurn()
+    }
+
+    /// What the finger is over, and which side of it.
+    ///
+    /// Two cases, and the second is the one that makes a shelf feel like a
+    /// shelf: over another object, or **past the end of a row**, in the bare
+    /// stretch of plank to the right of the last book. Without that a thing can
+    /// only ever be wedged between two others and the end of a shelf — where
+    /// most ornaments actually live — can't be reached at all.
+    private func target(under point: CGPoint, carrying id: String) -> (id: String, after: Bool)? {
+        if let hit = frames.first(where: { $0.key != id && $0.value.contains(point) }) {
+            return (hit.key, point.x > hit.value.midX)
+        }
+
+        // Which shelf is the finger on? Rows are found by their plank line
+        // rather than by index, because the packer's rows aren't known here.
+        let onThisRow = frames.filter { $0.key != id && point.y >= $0.value.minY && point.y <= $0.value.maxY }
+        guard let last = onThisRow.max(by: { $0.value.maxX < $1.value.maxX }) else { return nil }
+        // Only past the end counts; a gap between two books is already covered
+        // by the hit test above.
+        guard point.x > last.value.maxX else { return nil }
+        return (last.key, true)
     }
 
     private func finishCarrying() {
