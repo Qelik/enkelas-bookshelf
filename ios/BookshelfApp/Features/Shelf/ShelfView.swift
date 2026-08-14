@@ -66,7 +66,30 @@ struct ShelfView: View {
     @State private var shopping = false
     @State private var browsingShelves = false
     @State private var shelfie = false
+    @State private var addingObject = false
+    @State private var editingObject: EditingShelfObject?
     @State private var path: [String] = []
+
+    /// The shelf, drawn as a shelf.
+    ///
+    /// Lifted out of `body` rather than inlined: with the objects added, the
+    /// call has enough arguments that the type checker gave up on the whole
+    /// view — "unable to type-check this expression in reasonable time" on a
+    /// body that was already long.
+    ///
+    /// The bookcase always shows the arrangement you made, ignoring the Sort
+    /// menu — the same rule the web app's shelf view uses. A shelf you arranged
+    /// by hand and then find re-sorted by title isn't your shelf.
+    private var bookcase: some View {
+        BookshelfWallView(
+            books: visibleBooks,
+            objects: store.state.shelfObjects,
+            order: store.state.shelfOrder,
+            onReorder: { store.setShelfOrder(visible: $0) },
+            onSelectObject: { editingObject = EditingShelfObject(id: $0) },
+            onSelect: { path = [$0] }
+        )
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -74,14 +97,7 @@ struct ShelfView: View {
             if section == .explore {
                 ExploreView(query: query)
             } else if asShelf {
-                // The bookcase always shows the arrangement you made, ignoring
-                // the Sort menu — the same rule the web app's shelf view uses.
-                // A shelf you arranged by hand and then find re-sorted by title
-                // isn't your shelf.
-                BookshelfWallView(
-                    books: ShelfOrder.sorted(visibleBooks, by: store.state.shelfOrder),
-                    onReorder: { store.setShelfOrder(visible: $0) }
-                ) { path = [$0] }
+                bookcase
             } else {
             List {
                 if !visibleBooks.isEmpty {
@@ -142,6 +158,8 @@ struct ShelfView: View {
             .sheet(isPresented: $shopping) { BookshopModeView() }
             .sheet(isPresented: $browsingShelves) { ShelfLocationsView() }
             .sheet(isPresented: $shelfie) { ShelfieImportView() }
+            .sheet(isPresented: $addingObject) { ShelfObjectPicker() }
+            .sheet(item: $editingObject) { ShelfObjectEditor(objectID: $0.id) }
             // Sorting, filtering and the bookcase are all about *your* books, so
             // they'd do nothing on Explore.
             .toolbar {
@@ -178,6 +196,17 @@ struct ShelfView: View {
                             withAnimation(.easeInOut(duration: 0.2)) { asShelf.toggle() }
                         }
                         .labelStyle(.iconOnly)
+                    }
+                    // Only on the bookcase: a plant means nothing in a list, and
+                    // an action that does nothing where it's shown is worse than
+                    // one you have to go and find.
+                    if asShelf {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Add something to the shelf", systemImage: "leaf") {
+                                addingObject = true
+                            }
+                            .labelStyle(.iconOnly)
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

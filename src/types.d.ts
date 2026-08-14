@@ -100,12 +100,25 @@ export interface GoalSettings {
   dailyPages: number;
 }
 
+/** Decorative things on the bookcase — a plant, a cat, a bust. Placed among the
+ *  books in `shelfOrder`, which is why that list holds object ids too. */
+export interface ShelfObject {
+  id: string;
+  kind: string;
+  /** 0…359. One drawing, many looks. */
+  tint: number;
+  /** Which philosopher, for a bust. Empty otherwise. */
+  label: string;
+}
+
 export interface AppState {
   version: number;
   updatedAt: string;
   settings: { goal: GoalSettings };
+  /** The order of *things* on the shelf: book ids and object ids alike. */
   shelfOrder: string[];
   books: Book[];
+  shelfObjects: ShelfObject[];
 }
 
 // --- Account / sync ----------------------------------------------------------

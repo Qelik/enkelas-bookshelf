@@ -68,6 +68,7 @@ public struct Normalizer: Sendable {
 
         base.shelfOrder = data["shelfOrder"].arrayValue.map { $0.map(JS.string) } ?? []
         base.books = data["books"].arrayValue.map { $0.map(normalizeBook) } ?? []
+        base.shelfObjects = data["shelfObjects"].arrayValue.map { $0.compactMap(normalizeShelfObject) } ?? []
         healPhantomGoodreadsFinishes(&base.books)
         return base
     }
@@ -92,7 +93,33 @@ public struct Normalizer: Sendable {
                 "dailyPages": .number(0),
             ]),
             shelfOrder: [],
-            books: []
+            books: [],
+            shelfObjects: []
+        )
+    }
+
+    // MARK: - Shelf objects
+
+    /// One decoration, or nil if it isn't one we know how to draw.
+    ///
+    /// Returning nil — dropping it — rather than keeping an unknown kind is the
+    /// same whitelist rule the rest of this file follows. A kind only one
+    /// client knows would make the two emit different blobs from identical
+    /// input, which is the exact failure `normalize` exists to prevent. The
+    /// cost is that a decoration added by a newer version disappears when an
+    /// older one saves, and that is the cheaper of the two failures.
+    func normalizeShelfObject(_ raw: JSONValue) -> ShelfObject? {
+        guard let kind = ShelfObjectKind(rawValue: JS.string(raw["kind"])) else { return nil }
+        let hue = JS.numberIfTruthy(raw["tint"]) ?? kind.defaultTint
+        return ShelfObject(
+            id: {
+                let given = JS.string(raw["id"])
+                return given.isEmpty ? makeID() : given
+            }(),
+            kind: kind,
+            // Wrapped rather than clamped: a hue is a circle, and 380 is 20.
+            tint: hue.isFinite ? ((hue.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360) : kind.defaultTint,
+            label: JS.string(raw["label"])
         )
     }
 

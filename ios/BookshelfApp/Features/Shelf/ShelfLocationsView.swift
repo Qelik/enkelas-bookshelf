@@ -137,7 +137,9 @@ private struct ShelfContentsView: View {
                 // pointing a book out, though: there the shelf is an answer to
                 // a question, not something to tidy.
                 BookshelfWallView(
-                    books: ShelfOrder.sorted(books, by: store.state.shelfOrder),
+                    books: books,
+                    objects: store.state.shelfObjects,
+                    order: store.state.shelfOrder,
                     highlight: highlight,
                     onReorder: highlight == nil ? { store.setShelfOrder(visible: $0) } : nil
                 ) { selected = $0 }

@@ -23,15 +23,28 @@ public struct WireState: Codable, Sendable, Hashable {
     public var version: Int
     public var updatedAt: String
     public var settings: WireSettings
+    /// The order of *things* on the shelf — book ids and object ids alike,
+    /// which is what lets one drag gesture move either.
     public var shelfOrder: [String]
     public var books: [WireBook]
+    /// The plant, the cat, the bust. Decorative, and tiny — an id, a kind and a
+    /// hue — so unlike spine photographs these are cheap enough to sync.
+    public var shelfObjects: [ShelfObject]
 
-    public init(version: Int, updatedAt: String, settings: WireSettings, shelfOrder: [String], books: [WireBook]) {
+    public init(
+        version: Int,
+        updatedAt: String,
+        settings: WireSettings,
+        shelfOrder: [String],
+        books: [WireBook],
+        shelfObjects: [ShelfObject] = []
+    ) {
         self.version = version
         self.updatedAt = updatedAt
         self.settings = settings
         self.shelfOrder = shelfOrder
         self.books = books
+        self.shelfObjects = shelfObjects
     }
 }
 

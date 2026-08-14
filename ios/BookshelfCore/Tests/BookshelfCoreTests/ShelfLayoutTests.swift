@@ -129,12 +129,15 @@ struct ShelfLayoutTests {
 
     @Test("an empty shelf has no rows, and a zero width doesn't hang")
     func degenerateInputs() {
-        #expect(ShelfLayout.rows([], width: 300).isEmpty)
+        // Spelled out because `rows` is generic now — it packs objects as well
+        // as books, and a bare `[]` has no element type to infer.
+        let none: [ShelfLayout.Spine] = []
+        #expect(ShelfLayout.rows(none, width: 300).isEmpty)
         // Width is 0 on the first layout pass before geometry resolves; returning
         // one row beats looping forever or dropping every book.
         let one = [ShelfLayout.spine(for: Self.book(id: "a", title: "A"))]
         #expect(ShelfLayout.rows(one, width: 0).count == 1)
-        #expect(ShelfLayout.rows([], width: 0).isEmpty)
+        #expect(ShelfLayout.rows(none, width: 0).isEmpty)
     }
 }
 

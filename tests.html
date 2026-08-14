@@ -136,6 +136,39 @@
         eq(T.canonicalISBN(null), "", "null");
       });
 
+      // --- shelfObjects ------------------------------------------------------
+      test("decorative shelf objects survive normalize", function () {
+        // This client doesn't draw them yet, but normalize() is a rebuild
+        // whitelist — a field it doesn't know is a field it deletes. Without
+        // this, opening the browser once would wipe every object off the shelf
+        // and sync that deletion back to the phone.
+        var s = T.normalize({
+          books: [],
+          shelfObjects: [
+            { id: "o1", kind: "cat", tint: 28, label: "" },
+            { id: "o2", kind: "bust", tint: 210, label: "Plato" },
+          ],
+        });
+        eq(s.shelfObjects.length, 2, "both kept");
+        eq(s.shelfObjects[1].label, "Plato", "label kept");
+      });
+      test("an unknown object kind is dropped rather than carried through", function () {
+        // Keeping it would make the two clients emit different blobs from the
+        // same input, which is what normalize() exists to prevent.
+        var s = T.normalize({ shelfObjects: [{ id: "a", kind: "hologram" }, { id: "b", kind: "plant" }] });
+        eq(s.shelfObjects.length, 1, "only the known kind");
+        eq(s.shelfObjects[0].kind, "plant");
+      });
+      test("an object hue wraps, because a hue is a circle", function () {
+        var s = T.normalize({ shelfObjects: [{ id: "a", kind: "plant", tint: 380 }, { id: "b", kind: "plant", tint: -20 }] });
+        eq(s.shelfObjects[0].tint, 20);
+        eq(s.shelfObjects[1].tint, 340);
+      });
+      test("a shelf with no objects normalizes to an empty list, not undefined", function () {
+        eq(T.normalize({ books: [] }).shelfObjects, [], "absent");
+        eq(T.normalize({ shelfObjects: "nonsense" }).shelfObjects, [], "wrong type");
+      });
+
       // --- holdMovedTooFar (shelf drag on touch) -----------------------------
       test("a long press tolerates the jitter every finger has", function () {
         // This was `any pointermove cancels the hold`, which is a threshold no

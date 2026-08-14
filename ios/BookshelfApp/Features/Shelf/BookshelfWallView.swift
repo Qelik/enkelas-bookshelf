@@ -13,6 +13,10 @@ struct BookshelfWallView: View {
     @Environment(ThemeStore.self) private var themes
 
     let books: [WireBook]
+    /// The plant, the cat, the bust. They stand in `shelfOrder` alongside the
+    /// books, so they pack and drag exactly the way a book does.
+    var objects: [ShelfObject] = []
+    var order: [String] = []
     /// One book to pick out of the row — the answer to "where is my copy?".
     ///
     /// Everything else dims rather than the spine merely glowing: on a full case
@@ -23,6 +27,8 @@ struct BookshelfWallView: View {
     /// rearranged — the "where is my copy?" lookup, where dragging would be a
     /// distraction from the question being asked.
     var onReorder: (([String]) -> Void)?
+    /// Tapping an object opens its editor rather than a book page.
+    var onSelectObject: ((String) -> Void)?
     var onSelect: (String) -> Void
 
     /// Inset from the pane edge to the inside of the case.
@@ -38,27 +44,26 @@ struct BookshelfWallView: View {
     @State private var liveOrder: [String] = []
     @State private var frames: [String: CGRect] = [:]
 
-    /// What to draw: the live arrangement while a book is being carried, and
-    /// whatever the caller passed the rest of the time.
-    private var shown: [WireBook] {
-        guard draggingID != nil, !liveOrder.isEmpty else { return books }
-        let byID = Dictionary(books.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        return liveOrder.compactMap { byID[$0] }
+    /// What to draw: the live arrangement while something is being carried, and
+    /// the stored one the rest of the time.
+    private var shownItems: [ShelfItem] {
+        // The photo's aspect goes into the layout, not just the drawing: a
+        // packer measuring one width while the view draws another is how rows
+        // overflow the shelf.
+        let spines = books.map { book in
+            ShelfLayout.spine(
+                for: book,
+                photoAspect: SpineImageCache.shared.aspect(for: book.id, from: photos)
+            )
+        }
+        let effective = draggingID != nil && !liveOrder.isEmpty ? liveOrder : order
+        return ShelfOrder.items(books: spines, objects: objects, order: effective)
     }
 
     var body: some View {
         GeometryReader { geo in
             let usable = geo.size.width - caseInset * 2
-            // The photo's aspect goes into the layout, not just the drawing:
-            // a packer measuring one width while the view draws another is how
-            // rows overflow the shelf.
-            let spines = shown.map { book in
-                ShelfLayout.spine(
-                    for: book,
-                    photoAspect: SpineImageCache.shared.aspect(for: book.id, from: photos)
-                )
-            }
-            let rows = ShelfLayout.rows(spines, width: usable)
+            let rows = ShelfLayout.rows(shownItems, width: usable)
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -99,32 +104,28 @@ struct BookshelfWallView: View {
 
     // MARK: - One shelf
 
-    private func shelf(_ row: [ShelfLayout.Spine], width: Double) -> some View {
+    private func shelf(_ row: [ShelfItem], width: Double) -> some View {
         VStack(spacing: 0) {
-            // Bottom-aligned: books stand on the plank, they don't hang from it.
+            // Bottom-aligned: things stand on the plank, they don't hang from it.
             HStack(alignment: .bottom, spacing: 2) {
-                ForEach(row) { spine in
-                    SpineView(
-                        spine: spine,
-                        accent: accent,
-                        photo: SpineImageCache.shared.image(for: spine.id, from: photos),
-                        dimmed: highlight != nil && highlight != spine.id,
-                        lit: highlight == spine.id,
-                        carried: draggingID == spine.id
-                    )
+                ForEach(row) { item in
+                    itemView(item)
                         .background(
                             GeometryReader { g in
                                 Color.clear.preference(
                                     key: SpineFramesKey.self,
-                                    value: [spine.id: g.frame(in: .named(caseSpace))]
+                                    value: [item.id: g.frame(in: .named(caseSpace))]
                                 )
                             }
                         )
                         .onTapGesture {
                             Haptics.pageTurn()
-                            onSelect(spine.id)
+                            switch item {
+                            case .book: onSelect(item.id)
+                            case .object: onSelectObject?(item.id)
+                            }
                         }
-                        .gesture(reorderGesture(for: spine.id), isEnabled: onReorder != nil)
+                        .gesture(reorderGesture(for: item.id), isEnabled: onReorder != nil)
                 }
                 Spacer(minLength: 0)
             }
@@ -135,6 +136,27 @@ struct BookshelfWallView: View {
             .padding(.horizontal, caseInset)
 
             plank
+        }
+    }
+
+    @ViewBuilder
+    private func itemView(_ item: ShelfItem) -> some View {
+        switch item {
+        case .book(let spine):
+            SpineView(
+                spine: spine,
+                accent: accent,
+                photo: SpineImageCache.shared.image(for: spine.id, from: photos),
+                dimmed: highlight != nil && highlight != spine.id,
+                lit: highlight == spine.id,
+                carried: draggingID == spine.id
+            )
+        case .object(let object):
+            ShelfObjectView(object: object, carried: draggingID == object.id)
+                // Dimmed alongside the books when one is being pointed out, or
+                // the plant stays bright while every book behind it recedes.
+                .saturation(highlight != nil ? 0.15 : 1)
+                .opacity(highlight != nil ? 0.4 : 1)
         }
     }
 
@@ -168,7 +190,9 @@ struct BookshelfWallView: View {
     private func beginCarrying(_ id: String) {
         guard draggingID == nil else { return }
         Haptics.saved()
-        liveOrder = books.map(\.id)
+        // Seeded from what's on screen, objects included — otherwise carrying a
+        // book would drop every decoration out of the order it's about to save.
+        liveOrder = shownItems.map(\.id)
         draggingID = id
     }
 

@@ -6,10 +6,15 @@ import Foundation
 /// more usefully, means the packing can be tested. Getting a row to fill without
 /// overflowing is the kind of arithmetic that looks obviously right and is off by
 /// one gap.
+/// Anything that stands on a shelf and takes up room along it.
+public protocol ShelfPackable {
+    var packWidth: Double { get }
+}
+
 public enum ShelfLayout {
 
     /// A single book, sized as an object rather than a row in a list.
-    public struct Spine: Sendable, Hashable, Identifiable {
+    public struct Spine: Sendable, Hashable, Identifiable, ShelfPackable {
         public var id: String
         public var title: String
         public var author: String
@@ -23,6 +28,8 @@ public enum ShelfLayout {
         public var finished: Bool
         /// A hair of rotation so a shelf doesn't look like a bar chart.
         public var lean: Double
+
+        public var packWidth: Double { width }
 
         public init(
             id: String, title: String, author: String, hue: Int,
@@ -120,27 +127,32 @@ public enum ShelfLayout {
         )
     }
 
-    /// Pack spines into rows that fit `width`.
+    /// Pack items into rows that fit `width`.
     ///
-    /// Greedy, in the shelf's own order: books stay in the order the user put them
-    /// in, because a shelf that reorders itself to pack tighter is a shelf you
-    /// can't find anything on.
-    public static func rows(_ spines: [Spine], width: Double, gap: Double = 2) -> [[Spine]] {
-        guard width > 0 else { return spines.isEmpty ? [] : [spines] }
-        var rows: [[Spine]] = []
-        var row: [Spine] = []
+    /// Greedy, in the shelf's own order: things stay where the user put them,
+    /// because a shelf that reorders itself to pack tighter is a shelf you can't
+    /// find anything on.
+    ///
+    /// Generic over what's being packed because a shelf holds objects as well as
+    /// books, and a plant takes up space exactly the way a paperback does. The
+    /// alternative — a second packer for objects — is two implementations that
+    /// have to agree about a row's width forever.
+    public static func rows<Item: ShelfPackable>(_ items: [Item], width: Double, gap: Double = 2) -> [[Item]] {
+        guard width > 0 else { return items.isEmpty ? [] : [items] }
+        var rows: [[Item]] = []
+        var row: [Item] = []
         var used = 0.0
 
-        for spine in spines {
-            let needed = spine.width + (row.isEmpty ? 0 : gap)
-            // A spine wider than the whole shelf still gets a row of its own
+        for item in items {
+            let needed = item.packWidth + (row.isEmpty ? 0 : gap)
+            // Something wider than the whole shelf still gets a row of its own
             // rather than being dropped.
             if !row.isEmpty, used + needed > width {
                 rows.append(row)
-                row = [spine]
-                used = spine.width
+                row = [item]
+                used = item.packWidth
             } else {
-                row.append(spine)
+                row.append(item)
                 used += needed
             }
         }

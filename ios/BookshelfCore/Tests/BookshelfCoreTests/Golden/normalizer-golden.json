@@ -16,7 +16,8 @@
           }
         },
         "shelfOrder": [],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -34,7 +35,8 @@
           }
         },
         "shelfOrder": [],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -52,7 +54,8 @@
           }
         },
         "shelfOrder": [],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -73,7 +76,8 @@
           }
         },
         "shelfOrder": [],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -107,7 +111,8 @@
           }
         },
         "shelfOrder": [],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -128,7 +133,8 @@
           }
         },
         "shelfOrder": [],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -161,7 +167,8 @@
           "null",
           "1.5"
         ],
-        "books": []
+        "books": [],
+        "shelfObjects": []
       }
     },
     {
@@ -361,7 +368,8 @@
               }
             ]
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -427,7 +435,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -556,7 +565,8 @@
               }
             ]
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -663,7 +673,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -752,7 +763,8 @@
               }
             ]
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -838,7 +850,8 @@
               }
             ]
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -996,7 +1009,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1070,7 +1084,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1160,7 +1175,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1245,7 +1261,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1444,7 +1461,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1546,7 +1564,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1855,7 +1874,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -1932,7 +1952,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -2221,7 +2242,8 @@
               }
             ]
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -2359,7 +2381,8 @@
               }
             ]
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -2435,7 +2458,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -2678,7 +2702,8 @@
             "addedAt": "2026-01-10T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -2791,7 +2816,8 @@
             "addedAt": "2026-08-04T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -3066,7 +3092,8 @@
             "addedAt": "2026-01-05T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     },
     {
@@ -3242,7 +3269,8 @@
             "addedAt": "2026-01-05T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       },
       "expected": {
         "version": 1,
@@ -3415,7 +3443,8 @@
             "addedAt": "2026-01-05T00:00:00.000Z",
             "logs": []
           }
-        ]
+        ],
+        "shelfObjects": []
       }
     }
   ]

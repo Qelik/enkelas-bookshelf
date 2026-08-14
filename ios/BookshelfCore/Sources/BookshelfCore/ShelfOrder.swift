@@ -8,7 +8,55 @@ import Foundation
 /// the missing half, and it's a port rather than a reinvention because both
 /// clients write the same field — two different notions of "your order" would
 /// fight over it on every sync.
+/// One thing standing on a shelf: a book, or something you put there.
+///
+/// The two travel together through the packer and the drag gesture because on
+/// a real shelf they are the same kind of thing — an object occupying a stretch
+/// of plank in an order you chose.
+public enum ShelfItem: Identifiable, Sendable, ShelfPackable {
+    case book(ShelfLayout.Spine)
+    case object(ShelfObject)
+
+    public var id: String {
+        switch self {
+        case .book(let spine): spine.id
+        case .object(let object): object.id
+        }
+    }
+
+    public var packWidth: Double {
+        switch self {
+        case .book(let spine): spine.width
+        case .object(let object): object.kind.size.width
+        }
+    }
+}
+
 public enum ShelfOrder {
+
+    /// Books and objects interleaved, in the order they were left in.
+    ///
+    /// Objects with no place yet fall to the end alongside unplaced books, which
+    /// is where a newly added one belongs anyway.
+    public static func items(
+        books: [ShelfLayout.Spine],
+        objects: [ShelfObject],
+        order: [String]
+    ) -> [ShelfItem] {
+        let all: [ShelfItem] = books.map { .book($0) } + objects.map { .object($0) }
+        guard !order.isEmpty else { return all }
+
+        var rank: [String: Int] = [:]
+        for (i, id) in order.enumerated() where rank[id] == nil { rank[id] = i }
+        return all.enumerated()
+            .sorted { a, b in
+                let ra = rank[a.element.id] ?? Int.max
+                let rb = rank[b.element.id] ?? Int.max
+                return ra == rb ? a.offset < b.offset : ra < rb
+            }
+            .map(\.element)
+    }
+
 
     /// Books in the arrangement, with anything unplaced keeping its incoming
     /// position at the end.
@@ -76,7 +124,10 @@ public extension BookshelfStore {
             state.shelfOrder = ShelfOrder.merge(
                 previous: state.shelfOrder,
                 visible: ids,
-                known: state.books.map(\.id)
+                // Objects count as known things, or the merge would treat every
+                // decoration as a deleted book and strip it from the order the
+                // first time any shelf was rearranged.
+                known: state.books.map(\.id) + state.shelfObjects.map(\.id)
             )
         }
     }

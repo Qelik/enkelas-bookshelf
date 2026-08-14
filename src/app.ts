@@ -4,7 +4,7 @@
  */
 
 import { EReader, initReader } from "./reader.js";
-import type { AppState, Auth, Book, BookStatus, ChartItem, Club, ClubComment, ClubMember, OLDoc, ReadingLog, RecRow, SyncStatus } from "./types.js";
+import type { AppState, Auth, Book, BookStatus, ChartItem, Club, ClubComment, ClubMember, OLDoc, ReadingLog, RecRow, ShelfObject, SyncStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -18,7 +18,7 @@ const LASTEXPORT_KEY = "enkelas-last-export";
 const BACKUPNAG_KEY = "enkelas-backup-nag";
 const CONFLICTLOG_KEY = "enkelas-conflict-log";
 const SCHEMA_VERSION = 1;
-const APP_VERSION = "2026.08.13b"; // bump alongside the sw.js CACHE version on each release
+const APP_VERSION = "2026.08.14"; // bump alongside the sw.js CACHE version on each release
 const DAY = 86400000;
 // URL of the Cloudflare sync worker. Empty = no accounts/sync (app stays fully local).
 // Set after deploy; a per-device override can be set via localStorage "enkelas-sync-api".
@@ -261,6 +261,7 @@ function defaultState(): AppState {
     settings: { goal: { year: new Date().getFullYear(), target: 12, pagesTarget: 0, dailyPages: 0 } },
     shelfOrder: [],
     books: [],
+    shelfObjects: [],
   };
 }
 function loadState() {
@@ -273,12 +274,40 @@ function loadState() {
     return defaultState();
   }
 }
+// Decorative objects on the bookcase. The iOS app draws these; this client
+// doesn't yet, but it MUST carry them through normalize() — which is a rebuild
+// whitelist, so a field it doesn't know about is a field it silently deletes.
+// Without this, opening the browser once would wipe every object off the shelf
+// and sync that deletion back to the phone.
+//
+// The kind list is shared with `ShelfObjectKind` in BookshelfCore and has to
+// stay in step: a kind only one client knows is a kind the other one drops.
+const SHELF_OBJECT_KINDS = [
+  "plant", "stackedBooks", "candle", "bookend", "photo", "clock",
+  "cat", "crystal", "bust", "dragonPerched", "dragonCoiled",
+];
+function normalizeShelfObjects(raw: unknown): ShelfObject[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.reduce<ShelfObject[]>((out, o: any) => {
+    if (!o || SHELF_OBJECT_KINDS.indexOf(String(o.kind)) === -1) return out;
+    const tint = Number(o.tint);
+    out.push({
+      id: String(o.id || uid()),
+      kind: String(o.kind),
+      // A hue is a circle, so wrap rather than clamp: 380 is 20.
+      tint: Number.isFinite(tint) ? ((tint % 360) + 360) % 360 : 0,
+      label: String(o.label || ""),
+    });
+    return out;
+  }, []);
+}
 function normalize(data: any): AppState {
   const base = defaultState();
   if (!data || typeof data !== "object") return base;
   if (data.updatedAt) base.updatedAt = data.updatedAt;
   base.settings.goal = Object.assign(base.settings.goal, (data.settings && data.settings.goal) || {});
   base.shelfOrder = Array.isArray(data.shelfOrder) ? data.shelfOrder.map(String) : [];
+  base.shelfObjects = normalizeShelfObjects(data.shelfObjects);
   const STATUSES = ["want", "reading", "finished", "dnf"];
   base.books = Array.isArray(data.books) ? data.books.map((b: any) => ({
     id: b.id || uid(),
@@ -1723,7 +1752,11 @@ function mergeShelfOrder(prevOrder: string[], visible: string[], knownIds: strin
 function saveShelfOrderFromDOM(shelf: HTMLElement) {
   const visible = $$(".shelf-slot", shelf).map((s) => s.dataset.shelfId as string);
   // Anything never ordered before keeps its implicit position at the end.
-  state.shelfOrder = mergeShelfOrder(state.shelfOrder || [], visible, state.books.map((b) => b.id));
+  // Object ids count as known things. Without them the merge treats every
+  // decoration as a deleted book and strips it from the order the first time
+  // this shelf is rearranged — which would scatter the phone's arrangement.
+  const known = state.books.map((b) => b.id).concat((state.shelfObjects || []).map((o) => o.id));
+  state.shelfOrder = mergeShelfOrder(state.shelfOrder || [], visible, known);
   commit();
 }
 // How far a finger may drift during a long press before it stops being a hold.
