@@ -15,14 +15,6 @@
     "source": "https://upload.wikimedia.org/wikipedia/commons/a/a4/Socrates_Louvre.jpg",
     "title": "Bust of Socrates, Louvre"
   },
-  "candle": {
-    "artist": "<a href=\"//commons.wikimedia.org/wiki/User:Yanachka\" title=\"User:Yanachka\">User:Yanachka</a>",
-    "file": "shelf-candle.png",
-    "kind": "candle",
-    "licence": "Public domain",
-    "source": "https://upload.wikimedia.org/wikipedia/commons/b/bb/Burn_candle.jpg",
-    "title": "File:Burn candle.jpg"
-  },
   "cat": {
     "artist": "",
     "file": "shelf-cat.png",
@@ -76,7 +68,15 @@
     "file": "shelf-plant.png",
     "kind": "plant",
     "licence": "CC0",
-    "source": "https://upload.wikimedia.org/wikipedia/commons/9/93/Zz_plant.jpg",
-    "title": "ZZ plant (Zamioculcas zamiifolia) in pot"
+    "source": "https://upload.wikimedia.org/wikipedia/commons/a/ac/Plectranthus_verticillatus_in_a_ceramic_pot.jpg",
+    "title": "Plectranthus verticillatus in a ceramic pot.jpg"
+  },
+  "stackedBooks": {
+    "artist": "",
+    "file": "shelf-stackedBooks.png",
+    "kind": "stackedBooks",
+    "licence": "CC0",
+    "source": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Old_Books_01.JPG",
+    "title": "Old Books 01"
   }
 }

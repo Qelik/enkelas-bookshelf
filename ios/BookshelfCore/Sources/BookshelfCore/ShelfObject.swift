@@ -44,7 +44,6 @@ public struct ShelfObject: Codable, Sendable, Hashable, Identifiable {
 public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
     case plant
     case stackedBooks
-    case candle
     case bookend
     case photo
     case clock
@@ -61,7 +60,6 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
         switch self {
         case .plant: "Trailing plant"
         case .stackedBooks: "Stack of books"
-        case .candle: "Candle"
         case .bookend: "Bookend"
         case .photo: "Framed photo"
         case .clock: "Little clock"
@@ -78,19 +76,25 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
     /// Sizes are the layout's, not the drawing's: the packer measures this and
     /// the view draws to it, and a mismatch between the two is what makes rows
     /// overflow — the same rule spine photos already follow.
+    ///
+    /// The heights are chosen; the widths are not. Each photograph is drawn to
+    /// its height with its own aspect kept, so the width here is that height
+    /// times the shipped image's ratio. They were guesses while these were
+    /// drawings, and after the photographs arrived the guesses were wrong by up
+    /// to a factor of two — a crystal declaring 36pt and drawing 83 sat on top
+    /// of whatever was beside it.
     public var size: (width: Double, height: Double) {
         switch self {
-        case .plant: (46, 148)
-        case .stackedBooks: (64, 58)
-        case .candle: (40, 76)
-        case .bookend: (30, 72)
-        case .photo: (54, 76)
-        case .clock: (56, 64)
-        case .cat: (86, 48)
-        case .crystal: (36, 60)
-        case .bust: (48, 100)
-        case .dragonPerched: (60, 86)
-        case .dragonCoiled: (68, 56)
+        case .plant: (90, 68)
+        case .stackedBooks: (60, 58)
+        case .bookend: (70, 72)
+        case .photo: (71, 76)
+        case .clock: (33, 64)
+        case .cat: (52, 48)
+        case .crystal: (83, 60)
+        case .bust: (50, 100)
+        case .dragonPerched: (81, 86)
+        case .dragonCoiled: (77, 56)
         }
     }
 
@@ -100,7 +104,6 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
         switch self {
         case .plant: 130          // green
         case .stackedBooks: 280   // whatever, they're multicoloured
-        case .candle: 40          // warm wax
         case .bookend: 220        // cold metal
         case .photo: 35           // wood frame
         case .clock: 35
@@ -122,11 +125,7 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
     /// actually has; this is the *editorial* half — a photographed object must
     /// not offer a colour slider, because multiplying a hue over a picture of
     /// carved wood looks like a bad filter rather than a different object.
-    public var isPhotographic: Bool {
-        // Everything except the book stack, which had no usable public-domain
-        // photograph — every candidate was an engraving.
-        self != .stackedBooks
-    }
+    public var isPhotographic: Bool { true }
 
     /// Whether this object needs a display base drawn under it.
     ///
@@ -142,8 +141,8 @@ public enum ShelfObjectKind: String, Codable, Sendable, CaseIterable {
         // A carved head, a netsuke and a raw crystal have nothing under them.
         case .bust, .cat, .crystal: true
         // Already standing on something: the dragons came on their stands, the
-        // clock has feet, the plant is in its pot, the frame leans, the candle
-        // is a jar, and a bookend is meant to sit flat.
+        // clock has feet, the plant is in its pot, the frame leans, and a
+        // bookend is meant to sit flat.
         default: false
         }
     }

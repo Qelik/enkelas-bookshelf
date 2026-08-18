@@ -159,4 +159,15 @@ public enum ShelfLayout {
         if !row.isEmpty { rows.append(row) }
         return rows
     }
+
+    /// Whether everything on a shelf still fits on it.
+    ///
+    /// Asked of the packer rather than worked out again beside the drag: two
+    /// pieces of arithmetic that have to agree about a row's width forever is
+    /// exactly how a row comes to overflow the shelf it was measured for.
+    public static func overflows<Item: ShelfPackable>(
+        _ row: [Item], width: Double, gap: Double = 2
+    ) -> Bool {
+        rows(row, width: width, gap: gap).count > 1
+    }
 }

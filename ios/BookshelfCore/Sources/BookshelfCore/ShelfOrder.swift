@@ -34,6 +34,44 @@ public enum ShelfItem: Identifiable, Sendable, ShelfPackable {
 
 public enum ShelfOrder {
 
+    /// Marks the end of a shelf inside `shelfOrder`.
+    ///
+    /// Without this the packer decides which shelf everything lands on: it
+    /// fills the top plank, then the next, so an ornament could never be put
+    /// on the third shelf while the first had room. A real bookcase is
+    /// arranged by *level* — the cat on top, the dragon two down — and that
+    /// needs somewhere to record which level.
+    ///
+    /// A sentinel rather than a new field because `shelfOrder` is already a
+    /// list of strings that both clients round-trip verbatim. Nothing else can
+    /// collide with it: every real id is a UUID.
+    public static let shelfBreak = "--shelf--"
+
+    /// Split a stored order into one list of ids per shelf.
+    public static func rows(of order: [String]) -> [[String]] {
+        var rows: [[String]] = [[]]
+        for id in order {
+            if id == shelfBreak {
+                rows.append([])
+            } else {
+                rows[rows.count - 1].append(id)
+            }
+        }
+        return rows
+    }
+
+    /// Flatten shelves back into a stored order.
+    ///
+    /// Trailing empty shelves are dropped: the case always draws at least
+    /// three, so recording empties past the last occupied one just accumulates
+    /// breaks every time anything is dragged.
+    public static func flatten(_ rows: [[String]]) -> [String] {
+        var rows = rows
+        while let last = rows.last, last.isEmpty { rows.removeLast() }
+        return Array(rows.map { $0 }.joined(separator: [shelfBreak]))
+    }
+
+
     /// Books and objects interleaved, in the order they were left in.
     ///
     /// Objects with no place yet fall to the end alongside unplaced books, which
@@ -93,8 +131,10 @@ public enum ShelfOrder {
         let onShelf = Set(visible)
         let exists = Set(known)
         // Ids of books that have since been deleted would otherwise accumulate
-        // forever, surviving every sync.
-        let prev = previous.filter { exists.contains($0) }
+        // forever, surviving every sync. Shelf breaks are never "known" ids but
+        // must survive, or rearranging one shelf collapses the whole case back
+        // onto one plank.
+        let prev = previous.filter { exists.contains($0) || $0 == shelfBreak }
 
         var out: [String] = []
         var placed = false

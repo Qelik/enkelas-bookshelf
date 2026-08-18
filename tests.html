@@ -323,6 +323,14 @@
       test("shelf order is unchanged when nothing is filtered out", function () {
         eq(T.mergeShelfOrder(["a", "b", "c"], ["c", "b", "a"], ["a", "b", "c"]), ["c", "b", "a"], "plain reorder");
       });
+      // The phone records which plank a thing stands on by splitting shelfOrder
+      // at "--shelf--". Those aren't book ids, so a merge that filters to known
+      // ids strips every one — and a bookcase arranged in three levels on the
+      // phone collapses onto one the first time anything is dragged here.
+      test("shelf order keeps the phone's shelf breaks", function () {
+        var merged = T.mergeShelfOrder(["a", "--shelf--", "b", "c"], ["a"], ["a", "b", "c"]);
+        assert(merged.indexOf("--shelf--") >= 0, "break survived the merge");
+      });
 
       // --- community cover URLs are attacker-supplied --------------------------
       test("safeCoverUrl only allows the app's own cover hosts", function () {

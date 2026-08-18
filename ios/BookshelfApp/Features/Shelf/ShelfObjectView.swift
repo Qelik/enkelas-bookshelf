@@ -55,7 +55,7 @@ struct ShelfObjectView: View {
         )
     }
 
-    /// A turned surface — a pot, a candle jar, a neck. Lit down one side rather
+    /// A turned surface — a pot, a plinth, a neck. Lit down one side rather
     /// than from a point, the way a cylinder actually takes light.
     private func turnedSolid(_ base: Double, _ saturation: Double = 0.45) -> some ShapeStyle {
         LinearGradient(
@@ -135,7 +135,6 @@ struct ShelfObjectView: View {
         switch object.kind {
         case .plant: plant
         case .stackedBooks: stackedBooks
-        case .candle: candle
         case .bookend: bookend
         case .photo: photo
         case .clock: clock
@@ -282,44 +281,6 @@ struct ShelfObjectView: View {
                 .padding(.top, 3)
         }
         .frame(width: width, height: height)
-    }
-
-    // MARK: - Candle
-
-    private var candle: some View {
-        GeometryReader { g in
-            let w = g.size.width, h = g.size.height
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    flame.frame(width: w * 0.3, height: h * 0.22)
-                    Rectangle().fill(.black.opacity(0.6)).frame(width: 1.6, height: h * 0.07)
-                    // The jar, with wax showing through.
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(shade(0.72, 0.2).opacity(0.5))
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(turnedSolid(0.82, 0.28))
-                            .padding(.horizontal, w * 0.12)
-                            .padding(.top, w * 0.1)
-                            .padding(.bottom, 3)
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(.white.opacity(0.25), lineWidth: 1)
-                    }
-                    .frame(height: h * 0.55)
-                }
-            }
-        }
-    }
-
-    private var flame: some View {
-        ZStack {
-            Ellipse().fill(Color(hue: 0.09, saturation: 0.85, brightness: 1))
-            Ellipse()
-                .fill(Color(hue: 0.14, saturation: 0.35, brightness: 1))
-                .padding(.horizontal, 2)
-                .padding(.top, 4)
-        }
-        .shadow(color: Color(hue: 0.1, saturation: 0.9, brightness: 1).opacity(0.7), radius: 6)
     }
 
     // MARK: - Bookend

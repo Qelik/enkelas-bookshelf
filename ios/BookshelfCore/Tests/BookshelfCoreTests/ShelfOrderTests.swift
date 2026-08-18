@@ -45,6 +45,50 @@ struct ShelfOrderTests {
         #expect(sorted.map(\.id) == ["b", "a"])
     }
 
+    // MARK: - Which shelf things are on
+
+    @Test("an order splits into shelves at its breaks")
+    func splitsIntoShelves() {
+        let rows = ShelfOrder.rows(of: ["a", "b", ShelfOrder.shelfBreak, "c", ShelfOrder.shelfBreak, ShelfOrder.shelfBreak, "d"])
+        #expect(rows == [["a", "b"], ["c"], [], ["d"]])
+    }
+
+    @Test("an order with no breaks is one shelf")
+    func noBreaksIsOneShelf() {
+        #expect(ShelfOrder.rows(of: ["a", "b"]) == [["a", "b"]])
+        #expect(ShelfOrder.rows(of: []) == [[]])
+    }
+
+    @Test("shelves flatten back to an order, empty ones included")
+    func flattenKeepsEmptyShelvesInTheMiddle() {
+        // A gap between two occupied shelves is a *choice* — something on the
+        // top shelf and something on the third, with the second left bare.
+        let flat = ShelfOrder.flatten([["a"], [], ["b"]])
+        #expect(flat == ["a", ShelfOrder.shelfBreak, ShelfOrder.shelfBreak, "b"])
+        #expect(ShelfOrder.rows(of: flat) == [["a"], [], ["b"]])
+    }
+
+    @Test("trailing empty shelves aren't recorded")
+    func flattenDropsTrailingEmpties() {
+        // The case always draws at least three, so storing the empties past the
+        // last occupied one just accumulates breaks on every single drag.
+        #expect(ShelfOrder.flatten([["a"], [], []]) == ["a"])
+        #expect(ShelfOrder.flatten([[], []]) == [])
+    }
+
+    @Test("rearranging one shelf doesn't collapse the rest of the case")
+    func mergeKeepsShelfBreaks() {
+        // Breaks are not book ids, so a `known` filter that doesn't know about
+        // them strips every one — and the whole bookcase falls back onto a
+        // single plank the first time anything is dragged.
+        let merged = ShelfOrder.merge(
+            previous: ["a", ShelfOrder.shelfBreak, "b", "c"],
+            visible: ["a"],
+            known: ["a", "b", "c"]
+        )
+        #expect(merged.contains(ShelfOrder.shelfBreak))
+    }
+
     // MARK: - Saving it
 
     @Test("rearranging a filtered shelf doesn't scramble the books you can't see")

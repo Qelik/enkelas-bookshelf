@@ -2132,10 +2132,21 @@ function shelfHTML(list) {
 // the position of everything a genre/search filter had hidden. Splice the
 // visible run back into the stored order instead, keeping hidden books where
 // they were relative to it.
+// Marks the end of a shelf inside shelfOrder. The iOS app arranges its bookcase
+// by *level* — the cat on the top plank, the dragon two down — and records that
+// by splitting shelfOrder at these. This app draws one long shelf and so has
+// nothing to show for them, but it must not destroy them: both clients write
+// this field, and a field one of them mangles is a field the other loses.
+const SHELF_BREAK = "--shelf--";
 function mergeShelfOrder(prevOrder, visible, knownIds) {
     const onShelf = new Set(visible);
     const known = new Set(knownIds);
-    const prev = (prevOrder || []).filter((id) => known.has(id));
+    // Shelf breaks are not book ids and must survive this filter. The phone
+    // records which plank a thing stands on by putting SHELF_BREAK between the
+    // rows of shelfOrder; dropping them here would flatten a case the user
+    // arranged on their phone down onto one shelf, the first time anything was
+    // dragged in the browser.
+    const prev = (prevOrder || []).filter((id) => known.has(id) || id === SHELF_BREAK);
     const out = [];
     let placed = false;
     for (const id of prev) {

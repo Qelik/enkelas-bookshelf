@@ -41,12 +41,23 @@ struct BookshelfWallView: View {
     /// pixel of movement would push a sync on each one. It goes to the store
     /// once, when the finger lifts.
     @State private var draggingID: String?
-    @State private var liveOrder: [String] = []
+    /// The arrangement mid-drag, as shelves of ids. Modelled the way it looks
+    /// rather than as a flat list, because "which shelf is this on" is the
+    /// thing being edited.
+    @State private var liveRows: [[String]] = []
     @State private var frames: [String: CGRect] = [:]
+    @State private var plankFrames: [Int: CGRect] = [:]
+    /// The arrangement as it stood when the carry began. Every move is worked
+    /// out from this, not from the last frame — see `carry(to:)`.
+    @State private var carryOriginRows: [[String]] = []
+    /// The shelf the carried thing came off, so a drag that can't be placed
+    /// leaves it where it was.
+    @State private var carryStartLevel = 0
+    /// How wide a shelf is, so the drag can ask whether one more thing fits.
+    @State private var caseWidth = 0.0
 
-    /// What to draw: the live arrangement while something is being carried, and
-    /// the stored one the rest of the time.
-    private var shownItems: [ShelfItem] {
+    /// Everything on the shelf, keyed by id.
+    private var itemsByID: [String: ShelfItem] {
         // The photo's aspect goes into the layout, not just the drawing: a
         // packer measuring one width while the view draws another is how rows
         // overflow the shelf.
@@ -56,21 +67,63 @@ struct BookshelfWallView: View {
                 photoAspect: SpineImageCache.shared.aspect(for: book.id, from: photos)
             )
         }
-        let effective = draggingID != nil && !liveOrder.isEmpty ? liveOrder : order
-        return ShelfOrder.items(books: spines, objects: objects, order: effective)
+        var out: [String: ShelfItem] = [:]
+        for spine in spines { out[spine.id] = .book(spine) }
+        for object in objects { out[object.id] = .object(object) }
+        return out
     }
 
-    /// The shelves to draw: as many as the books need, and never fewer than
-    /// three.
+    /// The arrangement the order describes, before anything is measured against
+    /// the width of the case.
     ///
-    /// A case with a single occupied plank floating in a tall empty box reads
-    /// as a rendering bug rather than as a bookcase. Real furniture has its
-    /// shelves whether or not they're full, and empty ones are where a growing
-    /// library visibly has room to go.
+    /// Read from the order's shelf breaks rather than from the packer, because
+    /// the packer only ever fills from the top — which is what stopped anything
+    /// being put on the third shelf while the first had room.
+    private var storedShelves: [[ShelfItem]] {
+        let lookup = itemsByID
+        let effective = ShelfOrder.rows(of: order)
+
+        var rows = effective.map { row in row.compactMap { lookup[$0] } }
+        // Anything the order has never heard of — a book added since, or one
+        // that arrived from another device — goes on the last shelf rather than
+        // vanishing.
+        let placed = Set(effective.joined())
+        let unplaced = lookup.keys.filter { !placed.contains($0) }.sorted().compactMap { lookup[$0] }
+        if !unplaced.isEmpty {
+            if rows.isEmpty { rows = [[]] }
+            rows[rows.count - 1].append(contentsOf: unplaced)
+        }
+        return rows
+    }
+
+    /// The planks to draw. **One plank is one shelf.**
+    ///
+    /// A stored shelf too wide for the case spills onto the plank below, and
+    /// that plank is then a shelf in its own right. It used to stay part of the
+    /// level above it, and with forty books that quietly broke the drag: four
+    /// planks all called level 0, so the frames they reported overwrote each
+    /// other and most of the case belonged to no shelf at all. A book dragged
+    /// down the case would stick to the top row, jump between rows, and never
+    /// reach the third one.
+    ///
+    /// Three minimum: a case with one occupied plank floating in a tall empty
+    /// box reads as a rendering bug rather than furniture, and the empty ones
+    /// are where a growing library visibly has room to go.
     private func planks(width: Double) -> [[ShelfItem]] {
-        let packed = ShelfLayout.rows(shownItems, width: width)
-        let empties = max(0, Self.minimumShelves - packed.count)
-        return packed + Array(repeating: [], count: empties)
+        // Mid-drag the shelves are whatever the finger has made of them. Not
+        // re-packed: the packer would wrap an over-full row onto another plank
+        // and every index below the drop would shift out from under the drag.
+        if draggingID != nil, !liveRows.isEmpty {
+            let lookup = itemsByID
+            return liveRows.map { row in row.compactMap { lookup[$0] } }
+        }
+        var out: [[ShelfItem]] = []
+        for shelf in storedShelves {
+            let packed = ShelfLayout.rows(shelf, width: width)
+            out.append(contentsOf: packed.isEmpty ? [[]] : packed)
+        }
+        while out.count < Self.minimumShelves { out.append([]) }
+        return out
     }
 
     static let minimumShelves = 3
@@ -82,10 +135,13 @@ struct BookshelfWallView: View {
 
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                        shelf(row, width: usable)
+                    ForEach(Array(rows.enumerated()), id: \.offset) { level, items in
+                        shelf(items, level: level, width: usable)
                     }
                 }
+                // What the case can hold, published so the drag can pack the
+                // same way the drawing does.
+                .preference(key: CaseWidthKey.self, value: usable)
                 .padding(.top, 10)
                 // The tab bar floats over the content, so the last shelf needs
                 // room to clear it. Padding the *content* rather than insetting
@@ -102,9 +158,12 @@ struct BookshelfWallView: View {
             // it's over. Read from the layout rather than recomputed, or the
             // packer and the hit test would disagree about where a book is.
             .onPreferenceChange(SpineFramesKey.self) { frames = $0 }
+            .onPreferenceChange(PlankFramesKey.self) { plankFrames = $0 }
+            .onPreferenceChange(CaseWidthKey.self) { caseWidth = $0 }
             // The scroll view must not follow the finger while a book is being
             // carried; the drag is the gesture, not a pan.
             .scrollDisabled(draggingID != nil)
+            .simultaneousGesture(carryGesture, isEnabled: onReorder != nil)
             .scrollIndicators(.hidden)
             // On the scroll view, not the content: a background *inside* the
             // scroll view stops at its container, which left the case ending in
@@ -119,7 +178,7 @@ struct BookshelfWallView: View {
 
     // MARK: - One shelf
 
-    private func shelf(_ row: [ShelfItem], width: Double) -> some View {
+    private func shelf(_ row: [ShelfItem], level: Int, width: Double) -> some View {
         VStack(spacing: 0) {
             // Bottom-aligned: things stand on the plank, they don't hang from it.
             HStack(alignment: .bottom, spacing: 2) {
@@ -140,7 +199,13 @@ struct BookshelfWallView: View {
                             case .object: onSelectObject?(item.id)
                             }
                         }
-                        .gesture(reorderGesture(for: item.id), isEnabled: onReorder != nil)
+                        // Only the *hold* belongs to the item — see `carryGesture`
+                        // for why the sliding half can't live here.
+                        .gesture(
+                            LongPressGesture(minimumDuration: 0.35)
+                                .onEnded { _ in beginCarrying(item.id) },
+                            isEnabled: onReorder != nil
+                        )
                 }
                 Spacer(minLength: 0)
             }
@@ -149,6 +214,16 @@ struct BookshelfWallView: View {
             // a bay you could stand a book in.
             .frame(minHeight: ShelfLayout.maxHeight * 0.86, alignment: .bottom)
             .frame(width: width, alignment: .leading)
+            // The whole bay, so a drop can find which *level* the finger is
+            // over — including an empty one, which has no items to hit-test.
+            .background(
+                GeometryReader { g in
+                    Color.clear.preference(
+                        key: PlankFramesKey.self,
+                        value: [level: g.frame(in: .named(caseSpace))]
+                    )
+                }
+            )
             // Only the books are inset; the board runs the full width of the
             // case. A plank stopping short of the sides reads as a shelf sawn
             // off rather than one built into the wall.
@@ -181,28 +256,26 @@ struct BookshelfWallView: View {
 
     // MARK: - Rearranging
 
-    /// Hold a book, then slide it along the shelf.
+    /// Sliding a held book around, attached to the whole case rather than to the
+    /// book.
     ///
-    /// `LongPressGesture` rather than a hand-rolled timer, and that is the whole
-    /// point: it carries its own movement tolerance, so a finger resting on
-    /// glass doesn't cancel the hold. The web app hand-rolled this and cancelled
-    /// on *any* pointermove, which is a threshold no hand can meet — it was
-    /// broken on touch from the day it shipped.
-    private func reorderGesture(for id: String) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(caseSpace)))
-            .onChanged { value in
-                switch value {
-                case .first(true):
-                    beginCarrying(id)
-                case .second(true, let drag?):
-                    carry(to: drag.location)
-                default:
-                    break
-                }
+    /// It has to live here, and this is the bug that cost the most to find:
+    /// moving an item to another shelf moves its view to another `HStack`, so
+    /// SwiftUI tears the old one down — and a gesture dies with the view that
+    /// owns it. `onEnded` never arrived, so a cross-shelf drag looked perfect on
+    /// screen and committed nothing. Sliding *within* a shelf kept the same view
+    /// alive, which is exactly why that half always worked.
+    ///
+    /// The case is never torn down, so its `onEnded` always arrives.
+    /// `simultaneousGesture` rather than `gesture` so taps and scrolling still
+    /// reach the shelf underneath; when nothing is being carried this does
+    /// nothing at all.
+    private var carryGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(caseSpace))
+            .onChanged { drag in
+                guard draggingID != nil else { return }
+                carry(to: drag.location)
             }
-            // Only reached when the hold succeeded, so a plain tap can't land
-            // here and write an order nobody asked for.
             .onEnded { _ in finishCarrying() }
     }
 
@@ -210,61 +283,118 @@ struct BookshelfWallView: View {
         guard draggingID == nil else { return }
         Haptics.saved()
         // Seeded from what's on screen, objects included — otherwise carrying a
-        // book would drop every decoration out of the order it's about to save.
-        liveOrder = shownItems.map(\.id)
+        // book would drop every decoration out of the arrangement it's about to
+        // save. Padded out to the visible planks so an empty shelf is somewhere
+        // a thing can actually be dropped, rather than a gap with no row behind
+        // it.
+        var rows = planks(width: caseWidth).map { $0.map(\.id) }
+        while rows.count < max(Self.minimumShelves, plankFrames.count) { rows.append([]) }
+        liveRows = rows
+        carryOriginRows = rows
+        carryStartLevel = rows.firstIndex { $0.contains(id) } ?? 0
         draggingID = id
     }
 
+    /// Move the carried thing to wherever the finger is now.
+    ///
+    /// Works in shelf-and-slot terms rather than on one flat list, and that is
+    /// the whole point: the packer fills from the top, so on a flat list an
+    /// ornament could never be put on the third shelf while the first still had
+    /// room — it would be pulled straight back up.
+    /// Rebuilt from the arrangement the drag started with, every time, rather
+    /// than nudged from wherever the last frame left it. Dragging from the top
+    /// of the case to the bottom crosses every shelf on the way, and each one
+    /// it touched used to keep the shuffle it got in passing — so a book moved
+    /// three shelves down quietly rearranged the two it travelled through.
+    /// Starting from the original each time means only the shelf under the
+    /// finger ever changes.
     private func carry(to point: CGPoint) {
-        guard let draggingID, let target = target(under: point, carrying: draggingID) else { return }
-        guard let from = liveOrder.firstIndex(of: draggingID),
-              let to = liveOrder.firstIndex(of: target.id)
-        else { return }
-        // Landing on the far side of a book means going after it, not before —
-        // otherwise the last slot on a shelf is unreachable, because there is
-        // nothing beyond the last book to aim at.
-        let destination = target.after ? to + 1 : to
-        // `move(fromOffsets:toOffset:)` treats both of these as no-ops, and a
-        // no-op still animates and fires a haptic — which reads as the shelf
-        // twitching under a finger that hasn't crossed anything yet.
-        guard destination != from, destination != from + 1 else { return }
-        withAnimation(.snappy(duration: 0.18)) {
-            liveOrder.move(fromOffsets: IndexSet(integer: from), toOffset: destination)
-        }
+        guard let draggingID else { return }
+        let level = self.level(at: point.y)
+
+        var rows = carryOriginRows
+        while rows.count <= level { rows.append([]) }
+        for i in rows.indices { rows[i].removeAll { $0 == draggingID } }
+        let slot = insertionSlot(in: rows[level], at: point.x)
+        rows[level].insert(draggingID, at: min(slot, rows[level].count))
+        makeRoom(&rows, from: level, keeping: draggingID)
+
+        // Nothing actually moved. Animating anyway fires a haptic for nothing,
+        // which reads as the shelf twitching under a still finger.
+        guard rows != liveRows else { return }
+        withAnimation(.snappy(duration: 0.18)) { liveRows = rows }
         Haptics.pageTurn()
     }
 
-    /// What the finger is over, and which side of it.
+    /// Push whatever no longer fits onto the shelf below, and keep going.
     ///
-    /// Two cases, and the second is the one that makes a shelf feel like a
-    /// shelf: over another object, or **past the end of a row**, in the bare
-    /// stretch of plank to the right of the last book. Without that a thing can
-    /// only ever be wedged between two others and the end of a shelf — where
-    /// most ornaments actually live — can't be reached at all.
-    private func target(under point: CGPoint, carrying id: String) -> (id: String, after: Bool)? {
-        if let hit = frames.first(where: { $0.key != id && $0.value.contains(point) }) {
-            return (hit.key, point.x > hit.value.midX)
+    /// A case with fifty books on it has no empty shelves, so a drop that
+    /// simply refused when a shelf was full would mean an ornament could never
+    /// be put on the third shelf at all — which is what it felt like. Shoving
+    /// something in makes room the way it does on a real shelf: whatever is on
+    /// the end goes down to the next one, and so on to the bottom of the case.
+    ///
+    /// What moves is never the thing being carried. It stays exactly where it
+    /// was put, or the drop would look like the shelf had thrown it back.
+    private func makeRoom(_ rows: inout [[String]], from level: Int, keeping carried: String) {
+        let lookup = itemsByID
+        var i = level
+        while i < rows.count {
+            while rows[i].count > 1,
+                  ShelfLayout.overflows(rows[i].compactMap { lookup[$0] }, width: caseWidth) {
+                guard let victim = rows[i].last(where: { $0 != carried }),
+                      let at = rows[i].lastIndex(of: victim) else { break }
+                if i + 1 == rows.count { rows.append([]) }
+                rows[i].remove(at: at)
+                rows[i + 1].insert(victim, at: 0)
+            }
+            i += 1
         }
+    }
 
-        // Which shelf is the finger on? Rows are found by their plank line
-        // rather than by index, because the packer's rows aren't known here.
-        let onThisRow = frames.filter { $0.key != id && point.y >= $0.value.minY && point.y <= $0.value.maxY }
-        guard let last = onThisRow.max(by: { $0.value.maxX < $1.value.maxX }) else { return nil }
-        // Only past the end counts; a gap between two books is already covered
-        // by the hit test above.
-        guard point.x > last.value.maxX else { return nil }
-        return (last.key, true)
+    /// Which shelf level the finger is over.
+    ///
+    /// Falls back to the nearest bay rather than giving up, because the bands
+    /// don't quite tile the case: the plank between two bays belongs to
+    /// neither, and everything below the last one is off the bottom of them
+    /// all. A drop aimed at a board — or dragged past the end of the case,
+    /// which is how you'd reach for a shelf that isn't drawn yet — has to land
+    /// somewhere rather than snapping back.
+    private func level(at y: Double) -> Int {
+        let last = max(0, liveRows.count - 1)
+        guard !plankFrames.isEmpty else { return min(carryStartLevel, last) }
+        if let hit = plankFrames.first(where: { $0.value.minY <= y && y <= $0.value.maxY })?.key {
+            return min(hit, last)
+        }
+        let nearest = plankFrames.min { abs($0.value.midY - y) < abs($1.value.midY - y) }?.key
+        return min(nearest ?? carryStartLevel, last)
+    }
+
+    /// Where in a shelf the finger falls, counting slots from the left.
+    ///
+    /// Past the last item gives the end slot, which is why this is a scan
+    /// rather than a hit test against other items: the bare stretch of plank
+    /// beyond the last book is where most ornaments actually live, and there is
+    /// nothing there to aim at.
+    private func insertionSlot(in row: [String], at x: Double) -> Int {
+        var slot = 0
+        for candidate in row {
+            guard let frame = frames[candidate] else { continue }
+            if x > frame.midX { slot += 1 } else { break }
+        }
+        return slot
     }
 
     private func finishCarrying() {
         defer {
             draggingID = nil
-            liveOrder = []
+            liveRows = []
+            carryOriginRows = []
         }
-        guard draggingID != nil, !liveOrder.isEmpty else { return }
-        // Only the ids on screen: the shelf may be filtered, and the store
+        guard draggingID != nil, !liveRows.isEmpty else { return }
+        // Only what's on screen: the shelf may be filtered, and the store
         // splices this run back into the full arrangement.
-        onReorder?(liveOrder)
+        onReorder?(ShelfOrder.flatten(liveRows))
         Haptics.unlocked()
     }
 
@@ -308,6 +438,29 @@ private struct SpineFramesKey: PreferenceKey {
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue()) { _, new in new }
     }
+}
+
+/// Where each shelf level's bay is. Separate from the spine frames because an
+/// *empty* shelf has nothing in it to hit-test, and an empty shelf is exactly
+/// where somebody wants to put the first ornament.
+private struct PlankFramesKey: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        // Last one wins, and the keys are unique now that a plank *is* a shelf.
+        // They weren't always: several planks shared a level, this merged their
+        // bands into one, and level 0's band then covered most of the case — so
+        // a book dragged anywhere near the middle read as belonging to the top
+        // shelf. Keep it a plain overwrite, so a duplicate key is a visible bug
+        // rather than a band that silently swallows the bookcase.
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// How wide a shelf is, reported up from the layout so the drag can pack the
+/// same way the drawing does.
+private struct CaseWidthKey: PreferenceKey {
+    static let defaultValue = 0.0
+    static func reduce(value: inout Double, nextValue: () -> Double) { value = nextValue() }
 }
 
 /// One book, seen edge-on.

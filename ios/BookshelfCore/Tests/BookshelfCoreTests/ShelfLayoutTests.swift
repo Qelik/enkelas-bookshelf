@@ -139,6 +139,33 @@ struct ShelfLayoutTests {
         #expect(ShelfLayout.rows(one, width: 0).count == 1)
         #expect(ShelfLayout.rows(none, width: 0).isEmpty)
     }
+
+    // MARK: - Whether a shelf is full
+
+    @Test("a shelf knows when it's overfull")
+    func overflowsMatchesThePacker() {
+        // The drag asks this before shoving something in. It has to give the
+        // same answer the packer would, or a drop lands and is immediately
+        // wrapped onto the next plank — which reads as the shelf spitting the
+        // book back out.
+        let spines = ["a", "b", "c", "d"].map { ShelfLayout.spine(for: Self.book(id: $0, title: $0)) }
+        let width = spines.reduce(0) { $0 + $1.width } + 2 * 3
+        #expect(!ShelfLayout.overflows(spines, width: width))
+        #expect(ShelfLayout.overflows(spines, width: width - 1))
+    }
+
+    @Test("an empty shelf and a zero width are never full")
+    func overflowsDegenerateInputs() {
+        let none: [ShelfLayout.Spine] = []
+        #expect(!ShelfLayout.overflows(none, width: 300))
+        // Before geometry resolves. Saying "full" here would refuse every drop
+        // on the first frame of a drag.
+        let one = [ShelfLayout.spine(for: Self.book(id: "a", title: "A"))]
+        #expect(!ShelfLayout.overflows(one, width: 0))
+        // One thing too wide for the case still stands on it rather than being
+        // pushed down the bookcase forever.
+        #expect(!ShelfLayout.overflows(one, width: 4))
+    }
 }
 
 /// A photographed spine is as thick as the photograph says.
